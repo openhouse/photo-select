@@ -3,23 +3,49 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT 4.5 which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+---
+
 ## Requirements
 
-- Node 20+
-- An OpenAI API key (`OPENAI_API_KEY`)
-  ```bash
-  export OPENAI_API_KEY="sk‑..."
-  ```
+| Tool               | Purpose                                     | Quick install                                           |
+| ------------------ | ------------------------------------------- | ------------------------------------------------------- |
+| **nvm**            | Manages Node versions                       | <https://github.com/nvm-sh/nvm#installing-and-updating> |
+| **Node 20 LTS**    | Runtime (auto‑selected by nvm via `.nvmrc`) | `nvm install`                                           |
+| **OpenAI API key** | Access ChatGPT 4.5                          | add to `.env`                                           |
 
-* macOS, Linux, or Windows‑WSL (uses only cross‑platform Node APIs)
+---
 
-## Installation
+### 1  Set up Node with nvm
 
 ```bash
-git clone <repo>
 cd photo-select
+nvm install   # obeys .nvmrc (Node 20.x)
+nvm use
+```
+
+### 2  Configure your API key
+
+1. Copy the template:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Paste your real key in `.env`:
+
+   ```dotenv
+   OPENAI_API_KEY=sk-...
+   ```
+
+No need to `export` the key in every shell—`dotenv` loads it automatically.
+
+### 3  Install dependencies
+
+```bash
 npm install
 ```
+
+---
 
 ## Usage
 
@@ -37,6 +63,8 @@ photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4
 
 The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
 
+---
+
 ## Recursion logic
 
 1. Pick up to 10 random images (all common photo extensions).
@@ -46,15 +74,27 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 5. Re‑run the algorithm on the newly created `_keep` folder.
 6. Stop when a directory has zero unclassified images.
 
+---
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-Vitest covers random selection, safe moves, and response‑parsing.
+The **Vitest** suite covers random selection, safe moves, and response‑parsing.
+
+---
+
+## Development tips
+
+- Use `nvm use` in every new shell (or add a shell hook).
+- Need a different Node version temporarily? `nvm exec 18 npm test`.
+- `.env` is ignored by git—share `.env.example` instead.
+
+---
 
 ## Inspiration
 
-Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
+Replaces a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
