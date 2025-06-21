@@ -1,0 +1,26 @@
+{
+  "name": "photo-select",
+  "version": "0.1.0",
+  "description": "CLI tool to recursively triage fine‑art photos with ChatGPT 4.5",
+  "type": "module",
+  "bin": {
+    "photo-select": "./src/index.js"
+  },
+  "scripts": {
+    "start": "photo-select",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "Jamie Burkart",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0",
+    "openai": "^4.0.0",
+    "sharp": "^0.34.4"
+  },
+  "devDependencies": {
+    "vitest": "^1.5.0"
+  }
+}
