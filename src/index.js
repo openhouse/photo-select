@@ -14,10 +14,19 @@ program
     "OpenAI model id",
     process.env.PHOTO_SELECT_MODEL || "gpt-4o"
   )
+  .option(
+    "-k, --api-key <key>",
+    "OpenAI API key",
+    process.env.OPENAI_API_KEY
+  )
   .option("--no-recurse", "Process a single directory only")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey } = program.opts();
+
+if (apiKey) {
+  process.env.OPENAI_API_KEY = apiKey;
+}
 
 (async () => {
   try {
