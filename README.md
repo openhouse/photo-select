@@ -43,6 +43,7 @@ No need to `export` the key in every shell—`dotenv` loads it automatically.
 
 ```bash
 npm install
+chmod +x src/index.js    # fix permission error when running with npx
 ```
 
 Invoke the CLI from the project directory using `npx`:
@@ -146,10 +147,11 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. Parse the reply for `"keep"` or `"set aside"` decisions.
-4. Move each file to the corresponding sub‑folder.
-5. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-6. Stop when a directory has zero unclassified images.
+3. ChatGPT replies with a JSON object indicating which files to keep or set aside and why.
+4. Parse that JSON to determine the destination folders and capture Ingeborg's notes.
+5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it.
+6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
+7. Stop when a directory has zero unclassified images.
 
 ## Caching
 

@@ -6,6 +6,19 @@ I am going to make some fine art photo prints for an upcoming show.
 
 Would you help me make selections? 
 
-I'm going to share photos with you 10 at a time. Please tell me which ones we should keep in consideration, which ones we should set aside, and why. Please say one or the other for each and every photo
+I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration and which ones we should set aside. Use the **exact** filenames provided.
 
-Please include the filenames, starting with DSCF
+Respond *only* with a JSON object of the form:
+
+{
+  "keep": {
+    "filename1.jpg": "why you want to keep it",
+    ...
+  },
+  "aside": {
+    "filename2.jpg": "why you set it aside",
+    ...
+  }
+}
+
+Every filename must appear exactly once as a key in either "keep" or "aside". Include a concise observation about each image. No other text.
