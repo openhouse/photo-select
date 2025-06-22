@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Sun Jun 22 00:33:59 EDT 2025
+Generated on: Sun Jun 22 12:20:11 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -10,6 +10,8 @@ Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
 Below is the tree of files/folders (excluding .git, node_modules, dist, project-overview*):
 ```
 .
+├── .cache
+│   └── 6ce2eb10d34b0c7b8976fd4025ecd6f742aec1f5577c0664871626b9e047cce9.txt
 ├── .DS_Store
 ├── .env
 ├── .env.example
@@ -33,7 +35,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── chatClient.test.js
     └── imageSelector.test.js
 
-5 directories, 18 files
+6 directories, 19 files
 ```
 
 ---
@@ -119,17 +121,43 @@ const files = [
 
 /** Basic parsing of keep/aside directives */
 describe("parseReply", () => {
-  it("classifies mentioned files", () => {
-    const reply = `DSCF1234.jpg -- keep\nSet aside: DSCF5678.jpg`;
-    const { keep, aside } = parseReply(reply, files);
+  it("classifies mentioned files and captures notes", () => {
+    const reply = `DSCF1234.jpg -- keep - sharp shot\nSet aside: DSCF5678.jpg - blurry`;
+    const { keep, aside, notes } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/sharp/);
     expect(aside).toContain(files[1]);
+    expect(notes.get(files[1])).toMatch(/blurry/);
   });
 
   it("defaults unmentioned files to aside", () => {
     const reply = `keep: DSCF1234.jpg`;
     const { aside } = parseReply(reply, files);
     expect(aside).toContain(files[1]);
+    expect(aside).toContain(files[2]);
+  });
+
+  it("matches filenames when the reply omits prefixes", () => {
+    const prefixed = [
+      "/tmp/2020-01-01-DSCF1234.jpg",
+      "/tmp/2020-01-01-DSCF5678.jpg",
+    ];
+    const reply = `DSCF1234.jpg -- keep\nSet aside: DSCF5678.jpg`;
+    const { keep, aside } = parseReply(reply, prefixed);
+    expect(keep).toContain(prefixed[0]);
+    expect(aside).toContain(prefixed[1]);
+  });
+
+  it("parses JSON responses with reasoning", () => {
+    const json = JSON.stringify({
+      keep: { "DSCF1234.jpg": "good light" },
+      aside: { "DSCF5678.jpg": "out of focus" },
+    });
+    const { keep, aside, notes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[1])).toMatch(/out of focus/);
     expect(aside).toContain(files[2]);
   });
 });
@@ -201,6 +229,7 @@ No need to `export` the key in every shell—`dotenv` loads it automatically.
 
 ```bash
 npm install
+chmod +x src/index.js    # fix permission error when running with npx
 ```
 
 Invoke the CLI from the project directory using `npx`:
@@ -304,10 +333,11 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. Parse the reply for `"keep"` or `"set aside"` decisions.
-4. Move each file to the corresponding sub‑folder.
-5. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-6. Stop when a directory has zero unclassified images.
+3. ChatGPT replies with a JSON object indicating which files to keep or set aside and why.
+4. Parse that JSON to determine the destination folders and capture Ingeborg's notes.
+5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it.
+6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
+7. Stop when a directory has zero unclassified images.
 
 ## Caching
 
@@ -872,9 +902,22 @@ I am going to make some fine art photo prints for an upcoming show.
 
 Would you help me make selections? 
 
-I'm going to share photos with you 10 at a time. Please tell me which ones we should keep in consideration, which ones we should set aside, and why. Please say one or the other for each and every photo
+I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration and which ones we should set aside. Use the **exact** filenames provided.
 
-Please include the filenames, starting with DSCF
+Respond *only* with a JSON object of the form:
+
+{
+  "keep": {
+    "filename1.jpg": "Please share your valued observations and thoughts on this image.",
+    ...
+  },
+  "aside": {
+    "filename2.jpg": "Please share your valued observations and thoughts on this image.",
+    ...
+  }
+}
+
+Every filename must appear exactly once as a key in either "keep" or "aside". Include your observations on each image. No other text.
 ```
 
 ### File: ./.env.example
@@ -882,6 +925,32 @@ Please include the filenames, starting with DSCF
 # Copy to `.env` and paste your real key here.
 OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
+
+### File: ./.cache
+```
+(File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./.cache/6ce2eb10d34b0c7b8976fd4025ecd6f742aec1f5577c0664871626b9e047cce9.txt
+```
+```json
+{
+  "keep": {
+    "20250606T233303000000Z-DSCF0210.jpg": "Vibrant candid shot of group, good composition.",
+    "20250607T002058000000Z-DSCF0653.jpg": "Charming scene of children playing, evokes nostalgia.",
+    "20250607T000732000000Z-DSCF0310.jpg": "Beautiful capture of water and light, serene mood.",
+    "20250606T233302000000Z-DSCF0209.jpg": "Lush greenery with a contemplative figure, mysterious.",
+    "20250607T000916000000Z-DSCF0399.jpg": "Engaging candid moment with group, captures joy."
+  },
+  "aside": {
+    "20250606T233319000000Z-DSCF0274.jpg": "Similar to others, lacks distinctive quality.",
+    "20250606T233313000000Z-DSCF0247.jpg": "Repetitive group scene, less emotional impact.",
+    "20250606T233313000000Z-DSCF0245.jpg": "Similar to other group shots, less dynamic.",
+    "20250606T233305000000Z-DSCF0214.jpg": "Crowded composition, less visual interest.",
+    "20250606T233310000000Z-DSCF0233.jpg": "Repeats themes seen in other images."
+  }
+}
+``````
 
 ### File: ./src
 ```
@@ -1011,26 +1080,86 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles) {
+  const map = new Map();
+  for (const f of allFiles) {
+    map.set(path.basename(f).toLowerCase(), f);
+  }
+
+  const lookup = (name) => {
+    const lc = String(name).toLowerCase();
+    let f = map.get(lc);
+    if (!f) {
+      const idx = lc.indexOf("dscf");
+      if (idx !== -1) f = map.get(lc.slice(idx));
+    }
+    return f;
+  };
+
   const keep = new Set();
   const aside = new Set();
+  const notes = new Map();
 
-  const lines = text.split("\n").map((l) => l.trim().toLowerCase());
-  for (const line of lines) {
-    for (const f of allFiles) {
-      const name = path.basename(f).toLowerCase();
-      if (line.includes(name)) {
-        if (line.includes("keep")) keep.add(f);
-        if (line.includes("aside")) aside.add(f);
+  // Try JSON first
+  try {
+    const obj = JSON.parse(text);
+    if (obj && obj.keep && obj.aside) {
+      const handle = (group, set) => {
+        const val = obj[group];
+        if (Array.isArray(val)) {
+          for (const n of val) {
+            const f = lookup(n);
+            if (f) set.add(f);
+          }
+        } else if (val && typeof val === "object") {
+          for (const [n, reason] of Object.entries(val)) {
+            const f = lookup(n);
+            if (f) {
+              set.add(f);
+              if (reason) notes.set(f, String(reason));
+            }
+          }
+        }
+      };
+
+      handle("keep", keep);
+      handle("aside", aside);
+
+      for (const f of allFiles) {
+        if (!keep.has(f) && !aside.has(f)) aside.add(f);
+      }
+      return { keep: [...keep], aside: [...aside], notes };
+    }
+  } catch {
+    // fall through to plain text handling
+  }
+
+  const lines = text.split("\n");
+  for (const raw of lines) {
+    const line = raw.trim();
+    const lower = line.toLowerCase();
+    for (const [name, f] of map) {
+      let short = name;
+      const idx = name.indexOf("dscf");
+      if (idx !== -1) short = name.slice(idx);
+
+      if (lower.includes(name) || (short !== name && lower.includes(short))) {
+        let decision;
+        if (lower.includes("keep")) decision = "keep";
+        if (lower.includes("aside")) decision = "aside";
+        if (decision === "keep") keep.add(f);
+        if (decision === "aside") aside.add(f);
+
+        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+        if (m && m[1]) notes.set(f, m[1].trim());
       }
     }
   }
 
-  // Unmentioned files default to aside so the recursion always makes progress
   for (const f of allFiles) {
     if (!keep.has(f) && !aside.has(f)) aside.add(f);
   }
 
-  return { keep: [...keep], aside: [...aside] };
+  return { keep: [...keep], aside: [...aside], notes };
 }
 ```
 
@@ -1143,12 +1272,17 @@ export function pickRandom(array, count) {
 }
 
 /** Ensure sub‑directories exist and move each file accordingly. */
-export async function moveFiles(files, targetDir) {
+export async function moveFiles(files, targetDir, notes = new Map()) {
   await fs.mkdir(targetDir, { recursive: true });
   await Promise.all(
     files.map(async (file) => {
       const dest = path.join(targetDir, path.basename(file));
       await fs.rename(file, dest);
+      const note = notes.get(file);
+      if (note) {
+        const txt = dest.replace(/\.[^.]+$/, ".txt");
+        await fs.writeFile(txt, note, "utf8");
+      }
     })
   );
 }
@@ -1194,12 +1328,15 @@ export async function triageDirectory({
   console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
   // Step 3 – parse decisions
-  const { keep, aside } = parseReply(reply, batch);
+  const { keep, aside, notes } = parseReply(reply, batch);
 
   // Step 4 – move files
   const keepDir = path.join(dir, "_keep");
   const asideDir = path.join(dir, "_aside");
-  await Promise.all([moveFiles(keep, keepDir), moveFiles(aside, asideDir)]);
+  await Promise.all([
+    moveFiles(keep, keepDir, notes),
+    moveFiles(aside, asideDir, notes),
+  ]);
 
   console.log(
     `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
@@ -1239,15 +1376,15 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Sun Jun 22 00:34:00 EDT 2025
- 0:34  up 1 day, 12:20, 13 users, load averages: 2.35 2.72 2.95
+Sun Jun 22 12:20:12 EDT 2025
+12:20  up 2 days, 6 mins, 5 users, load averages: 6.00 5.53 4.64
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
 /dev/disk3s1s1   7.3Ti    14Gi   880Gi     2%    425k  4.3G    0%   /
-devfs            224Ki   224Ki     0Bi   100%     774     0  100%   /dev
+devfs            219Ki   219Ki     0Bi   100%     758     0  100%   /dev
 /dev/disk3s6     7.3Ti    24Ki   880Gi     1%       0  9.2G    0%   /System/Volumes/VM
 /dev/disk3s2     7.3Ti    13Gi   880Gi     2%    1.8k  9.2G    0%   /System/Volumes/Preboot
 /dev/disk3s4     7.3Ti   684Mi   880Gi     1%     329  9.2G    0%   /System/Volumes/Update
@@ -1257,11 +1394,11 @@ devfs            224Ki   224Ki     0Bi   100%     774     0  100%   /dev
 /dev/disk3s5     7.3Ti   6.4Ti   880Gi    89%    6.4M  9.2G    0%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk1s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
-/dev/disk3s1     7.3Ti    14Gi   880Gi     2%    426k  4.3G    0%   /System/Volumes/Update/mnt1
 /dev/disk7s1     8.4Gi   8.1Gi   248Mi    98%      13  2.5M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-F5C6F012-5536-4988-8A2F-A3A204D4ABFE
 /dev/disk9s1      18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
 /dev/disk11s1    8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
 /dev/disk13s1     18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
+/dev/disk3s1     7.3Ti    14Gi   880Gi     2%    426k  4.3G    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage

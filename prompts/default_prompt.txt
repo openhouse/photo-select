@@ -12,13 +12,13 @@ Respond *only* with a JSON object of the form:
 
 {
   "keep": {
-    "filename1.jpg": "why you want to keep it",
+    "filename1.jpg": "Please share your valued observations and thoughts on this image.",
     ...
   },
   "aside": {
-    "filename2.jpg": "why you set it aside",
+    "filename2.jpg": "Please share your valued observations and thoughts on this image.",
     ...
   }
 }
 
-Every filename must appear exactly once as a key in either "keep" or "aside". Include a concise observation about each image. No other text.
+Every filename must appear exactly once as a key in either "keep" or "aside". Include your observations on each image. No other text.
