@@ -7,22 +7,33 @@ import { chatCompletion, parseReply } from "./chatClient.js";
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
  */
-export async function triageDirectory({ dir, promptPath, model, recurse = true }) {
+export async function triageDirectory({
+  dir,
+  promptPath,
+  model,
+  recurse = true,
+  depth = 0,
+}) {
+  const indent = "  ".repeat(depth);
   const prompt = await readPrompt(promptPath);
 
+  console.log(`${indent}📁  Scanning ${dir}`);
   let images = await listImages(dir);
   if (images.length === 0) {
-    console.log(`✅  Nothing to do in ${dir}`);
+    console.log(`${indent}✅  Nothing to do in ${dir}`);
     return;
   }
 
+  console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+
   // Step 1 – select ≤10
   const batch = pickRandom(images, 10);
-  console.log(`🔍  Selected ${batch.length} image(s) in ${path.basename(dir)}`);
+  console.log(`${indent}🔍  Selected ${batch.length} image(s)`);
 
   // Step 2 – ask ChatGPT
+  console.log(`${indent}⏳  Sending batch to ChatGPT…`);
   const reply = await chatCompletion({ prompt, images: batch, model });
-  console.log("🤖  ChatGPT reply:\n", reply);
+  console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
   // Step 3 – parse decisions
   const { keep, aside } = parseReply(reply, batch);
@@ -38,6 +49,12 @@ export async function triageDirectory({ dir, promptPath, model, recurse = true }
 
   // Step 5 – recurse into keepDir if enabled
   if (recurse) {
-    await triageDirectory({ dir: keepDir, promptPath, model, recurse });
+    await triageDirectory({
+      dir: keepDir,
+      promptPath,
+      model,
+      recurse,
+      depth: depth + 1,
+    });
   }
 }
