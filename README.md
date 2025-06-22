@@ -19,6 +19,7 @@ moves the files accordingly, and then recurses until a directory is fully triage
 git clone <repo>
 cd photo-select
 npm install
+chmod +x src/index.js    # fix permission error when running with npx
 ```
 
 Invoke the CLI from the project directory using `npx`:
