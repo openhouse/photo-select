@@ -1,9 +1,38 @@
 import { OpenAI } from "openai";
-import { readFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
+
+const CACHE_DIR = path.resolve('.cache');
+
+async function getCachedReply(key) {
+  try {
+    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function setCachedReply(key, text) {
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
+}
+
+export async function cacheKey({ prompt, images, model }) {
+  const hash = crypto.createHash('sha256');
+  hash.update(model);
+  hash.update(prompt);
+  for (const file of images) {
+    const info = await stat(file);
+    hash.update(file);
+    hash.update(String(info.mtimeMs));
+    hash.update(String(info.size));
+  }
+  return hash.digest('hex');
+}
 
 /**
  * Builds the array of message objects for the Chat Completion API.
@@ -49,7 +78,14 @@ export async function chatCompletion({
   images,
   model = "gpt-4o-mini",
   maxRetries = 3,
+  cache = true,
 }) {
+  const key = await cacheKey({ prompt, images, model });
+  if (cache) {
+    const hit = await getCachedReply(key);
+    if (hit) return hit;
+  }
+
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -60,7 +96,9 @@ export async function chatCompletion({
         messages,
         max_tokens: 1024,
       });
-      return choices[0].message.content;
+      const text = choices[0].message.content;
+      if (cache) await setCachedReply(key, text);
+      return text;
     } catch (err) {
       if (attempt >= maxRetries) throw err;
       attempt += 1;
