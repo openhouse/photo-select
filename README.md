@@ -24,7 +24,7 @@ npm install
 ## Usage
 
 ```bash
-photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4o]
+photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
 ```
 
 ### Flags
@@ -33,7 +33,51 @@ photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | **required**                 | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--model`  | `gpt-4o-mini`                | Any chat‑completion model id you have access to |
+| `--model`  | `gpt-4o-mini`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
+
+## Supported OpenAI models
+
+The tool uses OpenAI's chat completion models with vision support. Notable options include:
+
+* `gpt-4o` – flagship multimodal model
+* `gpt-4o-mini` – smaller, faster, cheaper version (default)
+* `gpt-4-turbo` – high context window model
+* `gpt-4.5` – optional mid‑tier model
+* `gpt-4-vision-preview` – earlier vision model
+
+These names match the model ids provided by the OpenAI Node SDK, as seen in its
+[type definitions](node_modules/openai/resources/beta/assistants.d.ts).
+
+### Estimated costs
+
+The cost depends on the number of tokens generated from your images. Roughly
+speaking, a single 6240 × 4160 image is about 8,000 input tokens. Processing the
+full 315‑photo set therefore uses about 2.5 million input tokens plus roughly
+250k output tokens.
+
+Approximate price per run:
+
+| model          | input $/1M | output $/1M | est. cost on 315 photos |
+| -------------- | ---------- | ----------- | ---------------------- |
+| `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
+| `gpt-4o`       | $2.50      | $10.00      | ~$9 |
+| `gpt-4-turbo`  | $10.00     | $30.00      | ~$33 |
+| `gpt-4.5`      | $75.00     | $150.00     | ~$225 |
+| `gpt-4`        | $30.00     | $60.00      | ~$90 |
+
+These figures are approximate and based on current
+[OpenAI pricing](https://openai.com/pricing). Actual costs will vary with output
+length and any image resizing.
+
+### Measuring model quality
+
+There is no public benchmark for photo triage, so the best approach is to
+create a small validation set—say 30–50 images—with your own "keep" vs. "aside"
+labels. Run the CLI on this set with different models (using `--model` or
+`PHOTO_SELECT_MODEL`) and save the results. Comparing those decisions to your
+labels lets you compute precision, recall, and F1‑score for each model. Repeating
+the process on multiple batches will highlight which model gives the most
+consistent choices.
 
 The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
 
