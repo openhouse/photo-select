@@ -121,10 +121,11 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. Parse the reply for `"keep"` or `"set aside"` decisions.
-4. Move each file to the corresponding sub‑folder.
-5. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-6. Stop when a directory has zero unclassified images.
+3. ChatGPT replies with a JSON object listing which files to keep or set aside.
+4. Parse that JSON to determine the destination folders.
+5. Move each file to the corresponding sub‑folder.
+6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
+7. Stop when a directory has zero unclassified images.
 
 ## Caching
 

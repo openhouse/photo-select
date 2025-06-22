@@ -27,4 +27,26 @@ describe("parseReply", () => {
     expect(aside).toContain(files[1]);
     expect(aside).toContain(files[2]);
   });
+
+  it("matches filenames when the reply omits prefixes", () => {
+    const prefixed = [
+      "/tmp/2020-01-01-DSCF1234.jpg",
+      "/tmp/2020-01-01-DSCF5678.jpg",
+    ];
+    const reply = `DSCF1234.jpg -- keep\nSet aside: DSCF5678.jpg`;
+    const { keep, aside } = parseReply(reply, prefixed);
+    expect(keep).toContain(prefixed[0]);
+    expect(aside).toContain(prefixed[1]);
+  });
+
+  it("parses JSON responses with exact filenames", () => {
+    const json = JSON.stringify({
+      keep: ["DSCF1234.jpg"],
+      aside: ["DSCF5678.jpg"],
+    });
+    const { keep, aside } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(aside).toContain(files[2]);
+  });
 });

@@ -119,21 +119,53 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles) {
+  const map = new Map();
+  for (const f of allFiles) {
+    map.set(path.basename(f).toLowerCase(), f);
+  }
+
+  // Try JSON first
+  try {
+    const obj = JSON.parse(text);
+    if (obj && Array.isArray(obj.keep) && Array.isArray(obj.aside)) {
+      const keep = new Set();
+      const aside = new Set();
+
+      for (const name of obj.keep) {
+        const f = map.get(String(name).toLowerCase());
+        if (f) keep.add(f);
+      }
+      for (const name of obj.aside) {
+        const f = map.get(String(name).toLowerCase());
+        if (f) aside.add(f);
+      }
+
+      for (const f of allFiles) {
+        if (!keep.has(f) && !aside.has(f)) aside.add(f);
+      }
+      return { keep: [...keep], aside: [...aside] };
+    }
+  } catch {
+    // fall through to plain text handling
+  }
+
   const keep = new Set();
   const aside = new Set();
 
   const lines = text.split("\n").map((l) => l.trim().toLowerCase());
   for (const line of lines) {
-    for (const f of allFiles) {
-      const name = path.basename(f).toLowerCase();
-      if (line.includes(name)) {
+    for (const [name, f] of map) {
+      let short = name;
+      const idx = name.indexOf("dscf");
+      if (idx !== -1) short = name.slice(idx);
+
+      if (line.includes(name) || (short !== name && line.includes(short))) {
         if (line.includes("keep")) keep.add(f);
         if (line.includes("aside")) aside.add(f);
       }
     }
   }
 
-  // Unmentioned files default to aside so the recursion always makes progress
   for (const f of allFiles) {
     if (!keep.has(f) && !aside.has(f)) aside.add(f);
   }
