@@ -1,7 +1,12 @@
 import { OpenAI } from "openai";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { delay } from "./config.js";
+
+const CACHE_DIR = process.env.PHOTOSELECT_CACHE
+  ? path.resolve(process.env.PHOTOSELECT_CACHE)
+  : path.resolve(".cache");
 
 const openai = new OpenAI();
 
@@ -50,6 +55,10 @@ export async function chatCompletion({
   model = "gpt-4o-mini",
   maxRetries = 3,
 }) {
+  const key = createCacheKey(prompt, images, model);
+  const cached = await readCache(key);
+  if (cached) return cached;
+
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -60,7 +69,9 @@ export async function chatCompletion({
         messages,
         max_tokens: 1024,
       });
-      return choices[0].message.content;
+      const content = choices[0].message.content;
+      await writeCache(key, content);
+      return content;
     } catch (err) {
       if (attempt >= maxRetries) throw err;
       attempt += 1;
@@ -71,6 +82,29 @@ export async function chatCompletion({
       await delay(wait);
     }
   }
+}
+
+function createCacheKey(prompt, images, model) {
+  const hash = crypto.createHash("sha1");
+  hash.update(model);
+  hash.update(prompt);
+  for (const img of images) hash.update(img);
+  return hash.digest("hex");
+}
+
+async function readCache(key) {
+  try {
+    const file = path.join(CACHE_DIR, `${key}.txt`);
+    return await readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function writeCache(key, content) {
+  const file = path.join(CACHE_DIR, `${key}.txt`);
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(file, content, "utf8");
 }
 
 /**

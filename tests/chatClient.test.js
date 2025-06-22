@@ -1,9 +1,26 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs/promises";
 
-let parseReply;
+const createMock = vi.fn().mockResolvedValue({ choices: [{ message: { content: "ok" } }] });
+
+vi.mock("openai", () => ({
+  OpenAI: vi.fn().mockImplementation(() => ({
+    chat: { completions: { create: createMock } },
+  })),
+}));
+
+let parseReply, chatCompletion;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
-  ({ parseReply } = await import('../src/chatClient.js'));
+  const cacheDir = path.join(os.tmpdir(), 'ps-cache');
+  process.env.PHOTOSELECT_CACHE = cacheDir;
+  ({ parseReply, chatCompletion } = await import('../src/chatClient.js'));
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
 const files = [
@@ -26,5 +43,18 @@ describe("parseReply", () => {
     const { aside } = parseReply(reply, files);
     expect(aside).toContain(files[1]);
     expect(aside).toContain(files[2]);
+  });
+});
+
+describe("chatCompletion caching", () => {
+  it("reuses cached response", async () => {
+    const tmp = path.join(os.tmpdir(), "img.jpg");
+    await fs.writeFile(tmp, "data");
+    const params = { prompt: "p", images: [tmp], model: "gpt" };
+    const first = await chatCompletion(params);
+    const second = await chatCompletion(params);
+    expect(second).toBe(first);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    await fs.unlink(tmp);
   });
 });
