@@ -11,7 +11,11 @@ const program = new Command();
 program
   .requiredOption("-d, --dir <path>", "Source directory of images")
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
-  .option("-m, --model <id>", "OpenAI model id", "gpt-4o-mini")
+  .option(
+    "-m, --model <id>",
+    "OpenAI model id",
+    process.env.PHOTO_SELECT_MODEL || "gpt-4o-mini"
+  )
   .parse(process.argv);
 
 const { dir, prompt: promptPath, model } = program.opts();
