@@ -76,7 +76,7 @@ export async function buildMessages(prompt, images) {
 export async function chatCompletion({
   prompt,
   images,
-  model = "gpt-4o-mini",
+  model = "gpt-4o",
   maxRetries = 3,
   cache = true,
 }) {

@@ -21,4 +21,18 @@ fi
 
 cd "$SCRIPT_DIR"
 
-npx photo-select "$@" --dir "$TARGET_DIR"
+dir_specified=false
+for arg in "$@"; do
+  case "$arg" in
+    -d|--dir|--dir=*|-d=*)
+      dir_specified=true
+      break
+      ;;
+  esac
+done
+
+if [ "$dir_specified" = true ]; then
+  npx photo-select "$@"
+else
+  npx photo-select "$@" --dir "$TARGET_DIR"
+fi
