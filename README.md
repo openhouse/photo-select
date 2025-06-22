@@ -127,6 +127,12 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. Stop when a directory has zero unclassified images.
 
+### JSON mode
+
+The OpenAI request uses `response_format: { type: "json_object" }` so the
+assistant replies with strict JSON. This avoids needing to strip Markdown
+fences and guarantees parseable output.
+
 ## Caching
 
 Responses from OpenAI are cached under a `.cache` directory using a hash of the

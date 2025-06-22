@@ -95,6 +95,7 @@ export async function chatCompletion({
         model,
         messages,
         max_tokens: 1024,
+        response_format: { type: "json_object" },
       });
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
@@ -119,6 +120,12 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles) {
+  // Strip Markdown code fences like ```json ... ``` if present
+  const fenced = text.trim();
+  if (fenced.startsWith('```')) {
+    const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
+    if (match) text = match[1];
+  }
   const map = new Map();
   for (const f of allFiles) {
     map.set(path.basename(f).toLowerCase(), f);

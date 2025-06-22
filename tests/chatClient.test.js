@@ -53,4 +53,14 @@ describe("parseReply", () => {
     expect(notes.get(files[1])).toMatch(/out of focus/);
     expect(aside).toContain(files[2]);
   });
+
+  it("handles JSON wrapped in Markdown fences", () => {
+    const fenced =
+      '```json\n' +
+      JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] }) +
+      '\n```';
+    const { keep, aside } = parseReply(fenced, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+  });
 });
