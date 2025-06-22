@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Sun Jun 22 12:20:11 EDT 2025
+Generated on: Sun Jun 22 17:24:01 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -11,7 +11,12 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 ```
 .
 ├── .cache
-│   └── 6ce2eb10d34b0c7b8976fd4025ecd6f742aec1f5577c0664871626b9e047cce9.txt
+│   ├── 24153a9135c8bb49dd09039663de48905fdb2c9262adeddcbe706b8e6cddffb1.txt
+│   ├── 600f911f9c7d599ece02281469b470fc61b1f6989fedb63301402c74bfad5a54.txt
+│   ├── 63a78362b6fc1a1d79a7385330cb5f1d23dc406b82b23cfdf42c91ee12f405c4.txt
+│   ├── 6b568335af7c77fb19441327fbc61b097b153e98d68acf290f0c52d60955a012.txt
+│   ├── 6ce2eb10d34b0c7b8976fd4025ecd6f742aec1f5577c0664871626b9e047cce9.txt
+│   └── 85fd961cc307e96074b5b55468938826ee136e59dc5135b851abd512da7bee24.txt
 ├── .DS_Store
 ├── .env
 ├── .env.example
@@ -35,7 +40,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── chatClient.test.js
     └── imageSelector.test.js
 
-6 directories, 19 files
+6 directories, 24 files
 ```
 
 ---
@@ -159,6 +164,16 @@ describe("parseReply", () => {
     expect(aside).toContain(files[1]);
     expect(notes.get(files[1])).toMatch(/out of focus/);
     expect(aside).toContain(files[2]);
+  });
+
+  it("handles JSON wrapped in Markdown fences", () => {
+    const fenced =
+      '```json\n' +
+      JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] }) +
+      '\n```';
+    const { keep, aside } = parseReply(fenced, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
   });
 });
 ```
@@ -338,6 +353,12 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. Stop when a directory has zero unclassified images.
+
+### JSON mode
+
+The OpenAI request uses `response_format: { type: "json_object" }` so the
+assistant replies with strict JSON. This avoids needing to strip Markdown
+fences and guarantees parseable output.
 
 ## Caching
 
@@ -952,6 +973,66 @@ OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 }
 ``````
 
+### File: ./.cache/24153a9135c8bb49dd09039663de48905fdb2c9262adeddcbe706b8e6cddffb1.txt
+```
+{
+  "keep": {
+    "20250607T000911000000Z-DSCF0387.jpg": "Rich colors and dynamic movement of the water make this image compelling. The composition captures a serene yet lively scene, ideal for an exhibit.",
+    "20250606T233311000000Z-DSCF0235.jpg": "Captures a vibrant group moment with excellent lighting and expressions. The sense of joy and community shines through, offering a captivating human element."
+  },
+  "aside": {
+    "20250607T000854000000Z-DSCF0377.jpg": "Similar to the first one but less dynamic in water movement, making it less striking for an exhibit setting."
+  }
+}```
+
+### File: ./.cache/63a78362b6fc1a1d79a7385330cb5f1d23dc406b82b23cfdf42c91ee12f405c4.txt
+```
+{
+  "keep": {
+    "20250606T233311000000Z-DSCF0235.jpg": "Please share your valued observations and thoughts on this image."
+  },
+  "aside": {}
+}```
+
+### File: ./.cache/6b568335af7c77fb19441327fbc61b097b153e98d68acf290f0c52d60955a012.txt
+```
+{
+    "keep": {
+        "20250606T233311000000Z-DSCF0235.jpg": "Captures a lively group celebration, full of energy and joy. Great for displaying community spirit.",
+        "20250607T000911000000Z-DSCF0387.jpg": "A candid portrait with a genuine smile, conveys warmth and openness. Could add a personal touch to the collection.",
+        "20250607T000854000000Z-DSCF0377.jpg": "Dynamic and expressive shot capturing a moment of joy and interaction, ideal for conveying a vibrant atmosphere."
+    },
+    "aside": {
+        "20250607T000745000000Z-DSCF0325.jpg": "The image is blurry, which might distract from its overall impact.",
+        "20250607T000644000000Z-DSCF0296.jpg": "The composition is straightforward but lacks strong visual interest.",
+        "20250607T002058000000Z-DSCF0653.jpg": "Nice water movement, but similar shots are more effective.",
+        "20250607T000817000000Z-DSCF0353.jpg": "This water shot feels repetitive with other similar images present.",
+        "20250607T000911000000Z-DSCF0386.jpg": "It’s a nice scene of people, but doesn’t stand out as much as other group images.",
+        "20250607T001949000000Z-DSCF0563.jpg": "Includes elements like solar panels but lacks emotional or artistic impact.",
+        "20250606T232204000000Z-DSCF0012.jpg": "Kids playing is always charming, but this lacks a focal point or unique element."
+    }
+}```
+
+### File: ./.cache/85fd961cc307e96074b5b55468938826ee136e59dc5135b851abd512da7bee24.txt
+```
+{
+  "keep": {
+    "20250606T233311000000Z-DSCF0235.jpg": "This image captures a joyful moment with a diverse group of people, vibrant expressions, and a natural setting. It reflects a sense of community and celebration, which could resonate well in an exhibition."
+  },
+  "aside": {}
+}```
+
+### File: ./.cache/600f911f9c7d599ece02281469b470fc61b1f6989fedb63301402c74bfad5a54.txt
+```
+{
+    "keep": {
+        "20250606T233311000000Z-DSCF0235.jpg": "Please share your valued observations and thoughts on this image."
+    },
+    "aside": {
+        "20250607T000911000000Z-DSCF0387.jpg": "Please share your valued observations and thoughts on this image."
+    }
+}```
+
 ### File: ./src
 ```
 (File type is inode/directory — skipping raw dump.)
@@ -1056,6 +1137,7 @@ export async function chatCompletion({
         model,
         messages,
         max_tokens: 1024,
+        response_format: { type: "json_object" },
       });
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
@@ -1080,6 +1162,12 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles) {
+  // Strip Markdown code fences like ```json ... ``` if present
+  const fenced = text.trim();
+  if (fenced.startsWith('```')) {
+    const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
+    if (match) text = match[1];
+  }
   const map = new Map();
   for (const f of allFiles) {
     map.set(path.basename(f).toLowerCase(), f);
@@ -1376,29 +1464,30 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Sun Jun 22 12:20:12 EDT 2025
-12:20  up 2 days, 6 mins, 5 users, load averages: 6.00 5.53 4.64
+Sun Jun 22 17:24:02 EDT 2025
+17:24  up 2 days,  5:10, 6 users, load averages: 3.28 3.74 4.33
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi   880Gi     2%    425k  4.3G    0%   /
-devfs            219Ki   219Ki     0Bi   100%     758     0  100%   /dev
-/dev/disk3s6     7.3Ti    24Ki   880Gi     1%       0  9.2G    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi   880Gi     2%    1.8k  9.2G    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   684Mi   880Gi     1%     329  9.2G    0%   /System/Volumes/Update
+/dev/disk3s1s1   7.3Ti    14Gi   870Gi     2%    425k  4.3G    0%   /
+devfs            222Ki   222Ki     0Bi   100%     768     0  100%   /dev
+/dev/disk3s6     7.3Ti    24Ki   870Gi     1%       0  9.1G    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi   870Gi     2%    1.8k  9.1G    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   684Mi   870Gi     1%     329  9.1G    0%   /System/Volumes/Update
 /dev/disk2s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk2s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk2s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   6.4Ti   880Gi    89%    6.4M  9.2G    0%   /System/Volumes/Data
+/dev/disk3s5     7.3Ti   6.4Ti   870Gi    89%    6.4M  9.1G    0%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk1s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
 /dev/disk7s1     8.4Gi   8.1Gi   248Mi    98%      13  2.5M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-F5C6F012-5536-4988-8A2F-A3A204D4ABFE
 /dev/disk9s1      18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
 /dev/disk11s1    8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
 /dev/disk13s1     18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
-/dev/disk3s1     7.3Ti    14Gi   880Gi     2%    426k  4.3G    0%   /System/Volumes/Update/mnt1
+/dev/disk3s1     7.3Ti    14Gi   870Gi     2%    426k  4.3G    0%   /System/Volumes/Update/mnt1
+/dev/disk5s1     119Gi    83Gi    37Gi    70%       1     0  100%   /Volumes/Untitled
 ```
 
 ### Memory Usage

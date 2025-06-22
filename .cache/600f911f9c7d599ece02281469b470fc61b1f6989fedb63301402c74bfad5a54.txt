@@ -1,0 +1,8 @@
+{
+    "keep": {
+        "20250606T233311000000Z-DSCF0235.jpg": "Please share your valued observations and thoughts on this image."
+    },
+    "aside": {
+        "20250607T000911000000Z-DSCF0387.jpg": "Please share your valued observations and thoughts on this image."
+    }
+}

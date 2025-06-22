@@ -1,0 +1,6 @@
+{
+  "keep": {
+    "20250606T233311000000Z-DSCF0235.jpg": "This image captures a joyful moment with a diverse group of people, vibrant expressions, and a natural setting. It reflects a sense of community and celebration, which could resonate well in an exhibition."
+  },
+  "aside": {}
+}
