@@ -21,9 +21,19 @@ cd photo-select
 npm install
 ```
 
+Invoke the CLI from the project directory using `npx`:
+
+```bash
+npx photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+```
+
+You can also install globally with `npm install -g` to run `photo-select` anywhere.
+
 ## Usage
 
 ```bash
+npx photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+# or, if installed globally:
 photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
 ```
 
