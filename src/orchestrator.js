@@ -18,42 +18,45 @@ export async function triageDirectory({
   const prompt = await readPrompt(promptPath);
 
   console.log(`${indent}📁  Scanning ${dir}`);
-  let images = await listImages(dir);
-  if (images.length === 0) {
-    console.log(`${indent}✅  Nothing to do in ${dir}`);
-    return;
+
+  while (true) {
+    const images = await listImages(dir);
+    if (images.length === 0) {
+      console.log(`${indent}✅  Nothing to do in ${dir}`);
+      break;
+    }
+
+    console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+
+    // Step 1 – select ≤10
+    const batch = pickRandom(images, 10);
+    console.log(`${indent}🔍  Selected ${batch.length} image(s)`);
+
+    // Step 2 – ask ChatGPT
+    console.log(`${indent}⏳  Sending batch to ChatGPT…`);
+    const reply = await chatCompletion({ prompt, images: batch, model });
+    console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+
+    // Step 3 – parse decisions
+    const { keep, aside, notes } = parseReply(reply, batch);
+
+    // Step 4 – move files
+    const keepDir = path.join(dir, "_keep");
+    const asideDir = path.join(dir, "_aside");
+    await Promise.all([
+      moveFiles(keep, keepDir, notes),
+      moveFiles(aside, asideDir, notes),
+    ]);
+
+    console.log(
+      `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+    );
   }
-
-  console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
-
-  // Step 1 – select ≤10
-  const batch = pickRandom(images, 10);
-  console.log(`${indent}🔍  Selected ${batch.length} image(s)`);
-
-  // Step 2 – ask ChatGPT
-  console.log(`${indent}⏳  Sending batch to ChatGPT…`);
-  const reply = await chatCompletion({ prompt, images: batch, model });
-  console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-
-  // Step 3 – parse decisions
-  const { keep, aside, notes } = parseReply(reply, batch);
-
-  // Step 4 – move files
-  const keepDir = path.join(dir, "_keep");
-  const asideDir = path.join(dir, "_aside");
-  await Promise.all([
-    moveFiles(keep, keepDir, notes),
-    moveFiles(aside, asideDir, notes),
-  ]);
-
-  console.log(
-    `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-  );
 
   // Step 5 – recurse into keepDir if enabled
   if (recurse) {
     await triageDirectory({
-      dir: keepDir,
+      dir: path.join(dir, "_keep"),
       promptPath,
       model,
       recurse,
