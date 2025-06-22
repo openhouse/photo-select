@@ -22,12 +22,17 @@ export function pickRandom(array, count) {
 }
 
 /** Ensure sub‑directories exist and move each file accordingly. */
-export async function moveFiles(files, targetDir) {
+export async function moveFiles(files, targetDir, notes = new Map()) {
   await fs.mkdir(targetDir, { recursive: true });
   await Promise.all(
     files.map(async (file) => {
       const dest = path.join(targetDir, path.basename(file));
       await fs.rename(file, dest);
+      const note = notes.get(file);
+      if (note) {
+        const txt = dest.replace(/\.[^.]+$/, ".txt");
+        await fs.writeFile(txt, note, "utf8");
+      }
     })
   );
 }

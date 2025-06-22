@@ -11,8 +11,14 @@ I'm going to share photos with you 10 at a time. Please decide which ones we sho
 Respond *only* with a JSON object of the form:
 
 {
-  "keep": ["filename1.jpg", ...],
-  "aside": ["filename2.jpg", ...]
+  "keep": {
+    "filename1.jpg": "why you want to keep it",
+    ...
+  },
+  "aside": {
+    "filename2.jpg": "why you set it aside",
+    ...
+  }
 }
 
-Every file must appear in exactly one of these arrays. No other text.
+Every filename must appear exactly once as a key in either "keep" or "aside". Include a concise observation about each image. No other text.

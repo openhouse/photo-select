@@ -124,44 +124,72 @@ export function parseReply(text, allFiles) {
     map.set(path.basename(f).toLowerCase(), f);
   }
 
+  const lookup = (name) => {
+    const lc = String(name).toLowerCase();
+    let f = map.get(lc);
+    if (!f) {
+      const idx = lc.indexOf("dscf");
+      if (idx !== -1) f = map.get(lc.slice(idx));
+    }
+    return f;
+  };
+
+  const keep = new Set();
+  const aside = new Set();
+  const notes = new Map();
+
   // Try JSON first
   try {
     const obj = JSON.parse(text);
-    if (obj && Array.isArray(obj.keep) && Array.isArray(obj.aside)) {
-      const keep = new Set();
-      const aside = new Set();
+    if (obj && obj.keep && obj.aside) {
+      const handle = (group, set) => {
+        const val = obj[group];
+        if (Array.isArray(val)) {
+          for (const n of val) {
+            const f = lookup(n);
+            if (f) set.add(f);
+          }
+        } else if (val && typeof val === "object") {
+          for (const [n, reason] of Object.entries(val)) {
+            const f = lookup(n);
+            if (f) {
+              set.add(f);
+              if (reason) notes.set(f, String(reason));
+            }
+          }
+        }
+      };
 
-      for (const name of obj.keep) {
-        const f = map.get(String(name).toLowerCase());
-        if (f) keep.add(f);
-      }
-      for (const name of obj.aside) {
-        const f = map.get(String(name).toLowerCase());
-        if (f) aside.add(f);
-      }
+      handle("keep", keep);
+      handle("aside", aside);
 
       for (const f of allFiles) {
         if (!keep.has(f) && !aside.has(f)) aside.add(f);
       }
-      return { keep: [...keep], aside: [...aside] };
+      return { keep: [...keep], aside: [...aside], notes };
     }
   } catch {
     // fall through to plain text handling
   }
 
-  const keep = new Set();
-  const aside = new Set();
-
-  const lines = text.split("\n").map((l) => l.trim().toLowerCase());
-  for (const line of lines) {
+  const lines = text.split("\n");
+  for (const raw of lines) {
+    const line = raw.trim();
+    const lower = line.toLowerCase();
     for (const [name, f] of map) {
       let short = name;
       const idx = name.indexOf("dscf");
       if (idx !== -1) short = name.slice(idx);
 
-      if (line.includes(name) || (short !== name && line.includes(short))) {
-        if (line.includes("keep")) keep.add(f);
-        if (line.includes("aside")) aside.add(f);
+      if (lower.includes(name) || (short !== name && lower.includes(short))) {
+        let decision;
+        if (lower.includes("keep")) decision = "keep";
+        if (lower.includes("aside")) decision = "aside";
+        if (decision === "keep") keep.add(f);
+        if (decision === "aside") aside.add(f);
+
+        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+        if (m && m[1]) notes.set(f, m[1].trim());
       }
     }
   }
@@ -170,5 +198,5 @@ export function parseReply(text, allFiles) {
     if (!keep.has(f) && !aside.has(f)) aside.add(f);
   }
 
-  return { keep: [...keep], aside: [...aside] };
+  return { keep: [...keep], aside: [...aside], notes };
 }

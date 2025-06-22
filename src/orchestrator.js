@@ -36,12 +36,15 @@ export async function triageDirectory({
   console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
   // Step 3 – parse decisions
-  const { keep, aside } = parseReply(reply, batch);
+  const { keep, aside, notes } = parseReply(reply, batch);
 
   // Step 4 – move files
   const keepDir = path.join(dir, "_keep");
   const asideDir = path.join(dir, "_aside");
-  await Promise.all([moveFiles(keep, keepDir), moveFiles(aside, asideDir)]);
+  await Promise.all([
+    moveFiles(keep, keepDir, notes),
+    moveFiles(aside, asideDir, notes),
+  ]);
 
   console.log(
     `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
