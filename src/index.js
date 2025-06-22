@@ -7,7 +7,7 @@ const program = new Command();
 program
   .name("photo-select")
   .description("Randomly triage photos with ChatGPT")
-  .requiredOption("-d, --dir <path>", "Source directory of images")
+  .option("-d, --dir <path>", "Source directory of images", process.cwd())
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
   .option(
     "-m, --model <id>",

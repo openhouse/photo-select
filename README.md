@@ -24,7 +24,7 @@ npm install
 Invoke the CLI from the project directory using `npx`:
 
 ```bash
-npx photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5]
 ```
 
 You can also install globally with `npm install -g` to run `photo-select` anywhere.
@@ -32,9 +32,9 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 ## Usage
 
 ```bash
-npx photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5]
 # or, if installed globally:
-photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5]
 ```
 
 Run `photo-select --help` to see all options.
@@ -43,7 +43,7 @@ Run `photo-select --help` to see all options.
 
 | flag       | default                      | description                                     |
 | ---------- | ---------------------------- | ----------------------------------------------- |
-| `--dir`    | **required**                 | Source directory containing images              |
+| `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
 | `--model`  | `gpt-4o-mini`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
