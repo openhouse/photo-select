@@ -7,7 +7,7 @@ import { chatCompletion, parseReply } from "./chatClient.js";
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
  */
-export async function triageDirectory({ dir, promptPath, model }) {
+export async function triageDirectory({ dir, promptPath, model, recurse = true }) {
   const prompt = await readPrompt(promptPath);
 
   let images = await listImages(dir);
@@ -36,6 +36,8 @@ export async function triageDirectory({ dir, promptPath, model }) {
     `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
   );
 
-  // Step 5 – recurse into keepDir
-  await triageDirectory({ dir: keepDir, promptPath, model });
+  // Step 5 – recurse into keepDir if enabled
+  if (recurse) {
+    await triageDirectory({ dir: keepDir, promptPath, model, recurse });
+  }
 }

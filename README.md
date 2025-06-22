@@ -24,8 +24,10 @@ npm install
 ## Usage
 
 ```bash
-photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5]
+photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--no-recurse]
 ```
+
+Run `photo-select --help` to see all options.
 
 ### Flags
 
@@ -34,6 +36,7 @@ photo-select --dir /path/to/images [--prompt /path/to/prompt.txt] [--model gpt-4
 | `--dir`    | **required**                 | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
 | `--model`  | `gpt-4o-mini`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
+| `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
 ## Supported OpenAI models
 
@@ -87,7 +90,7 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 2. Send them to ChatGPT with the prompt (filenames included).
 3. Parse the reply for `"keep"` or `"set aside"` decisions.
 4. Move each file to the corresponding sub‑folder.
-5. Re‑run the algorithm on the newly created `_keep` folder.
+5. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 6. Stop when a directory has zero unclassified images.
 
 ## Caching
