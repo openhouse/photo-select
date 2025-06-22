@@ -16,7 +16,9 @@ fi
 
 # Use Node version from .nvmrc if nvm is available
 if command -v nvm >/dev/null 2>&1; then
-  nvm use "$SCRIPT_DIR" >/dev/null || true
+  if ! nvm use "$SCRIPT_DIR" >/dev/null 2>&1; then
+    echo "nvm: Node $(cat "$SCRIPT_DIR/.nvmrc") not installed; using system node $(node --version)" >&2
+  fi
 fi
 
 cd "$SCRIPT_DIR"
