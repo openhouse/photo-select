@@ -74,7 +74,11 @@ The tool creates `_keep` and `_aside` sub‑folders inside every directory it to
 5. Re‑run the algorithm on the newly created `_keep` folder.
 6. Stop when a directory has zero unclassified images.
 
----
+## Caching
+
+Responses from OpenAI are cached under a `.cache` directory using a hash of the
+prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
+saved reply instead of hitting the API.
 
 ## Testing
 
