@@ -45,15 +45,15 @@ Run `photo-select --help` to see all options.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--model`  | `gpt-4o-mini`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
+| `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
 ## Supported OpenAI models
 
 The tool uses OpenAI's chat completion models with vision support. Notable options include:
 
-* `gpt-4o` – flagship multimodal model
-* `gpt-4o-mini` – smaller, faster, cheaper version (default)
+* `gpt-4o` – flagship multimodal model (default)
+* `gpt-4o-mini` – smaller, faster, cheaper version
 * `gpt-4-turbo` – high context window model
 * `gpt-4.5` – optional mid‑tier model
 * `gpt-4-vision-preview` – earlier vision model
@@ -72,8 +72,8 @@ Approximate price per run:
 
 | model          | input $/1M | output $/1M | est. cost on 315 photos |
 | -------------- | ---------- | ----------- | ---------------------- |
-| `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
 | `gpt-4o`       | $2.50      | $10.00      | ~$9 |
+| `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
 | `gpt-4-turbo`  | $10.00     | $30.00      | ~$33 |
 | `gpt-4.5`      | $75.00     | $150.00     | ~$225 |
 | `gpt-4`        | $30.00     | $60.00      | ~$90 |

@@ -12,7 +12,7 @@ program
   .option(
     "-m, --model <id>",
     "OpenAI model id",
-    process.env.PHOTO_SELECT_MODEL || "gpt-4o-mini"
+    process.env.PHOTO_SELECT_MODEL || "gpt-4o"
   )
   .option("--no-recurse", "Process a single directory only")
   .parse(process.argv);
