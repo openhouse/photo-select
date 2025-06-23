@@ -97,13 +97,17 @@ through to the script unchanged.
 
 ## Supported OpenAI models
 
-The tool uses OpenAI's chat completion models with vision support. Notable options include:
+The tool works with any OpenAI chat completion model that accepts image parts. Vision-capable models currently listed on OpenAI's [models](https://platform.openai.com/docs/models) page include:
 
-* `gpt-4o` – flagship multimodal model (default)
-* `gpt-4o-mini` – smaller, faster, cheaper version
-* `gpt-4-turbo` – high context window model
-* `gpt-4.5` – optional mid‑tier model
-* `gpt-4-vision-preview` – earlier vision model
+* **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
+* **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
+  `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
+  `gpt-4o-mini-realtime-preview`, `gpt-4o-search-preview`, and
+  `gpt-4o-mini-search-preview`
+* **o‑series reasoning models** – `o4-mini`, `o3`, `o3-pro`, `o3-mini`, `o1`,
+  `o1-pro`, and the deprecated `o1-mini`
+* **Other vision models** – `gpt-4-turbo`, `gpt-4.5` *(deprecated)*, and
+  `gpt-4-vision-preview` *(deprecated)*
 
 These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
@@ -119,6 +123,15 @@ Approximate price per run:
 
 | model          | input $/1M | output $/1M | est. cost on 315 photos |
 | -------------- | ---------- | ----------- | ---------------------- |
+| `gpt-4.1`      | $2.00      | $8.00       | ~$7 |
+| `gpt-4.1-mini` | $0.40      | $1.60       | ~$1.4 |
+| `gpt-4.1-nano` | $0.10      | $0.40       | ~$0.35 |
+| `o4-mini`      | $1.10      | $4.40       | ~$3.85 |
+| `o3`           | $2.00      | $8.00       | ~$7 |
+| `o3-pro`       | $20.00     | $80.00      | ~$70 |
+| `o3-mini`      | $1.10      | $4.40       | ~$3.85 |
+| `o1`           | $15.00     | $60.00      | ~$52.5 |
+| `o1-pro`       | $150.00    | $600.00     | ~$525 |
 | `gpt-4o`       | $2.50      | $10.00      | ~$9 |
 | `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
 | `gpt-4-turbo`  | $10.00     | $30.00      | ~$33 |
