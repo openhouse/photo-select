@@ -63,4 +63,11 @@ describe("parseReply", () => {
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
   });
+
+  it("deduplicates files listed in both groups", () => {
+    const reply = JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] });
+    const { keep, aside } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).not.toContain(files[0]);
+  });
 });

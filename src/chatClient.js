@@ -169,11 +169,7 @@ export function parseReply(text, allFiles) {
 
       handle("keep", keep);
       handle("aside", aside);
-
-      for (const f of allFiles) {
-        if (!keep.has(f) && !aside.has(f)) aside.add(f);
-      }
-      return { keep: [...keep], aside: [...aside], notes };
+      // continue to normalization below
     }
   } catch {
     // fall through to plain text handling
@@ -203,6 +199,11 @@ export function parseReply(text, allFiles) {
 
   for (const f of allFiles) {
     if (!keep.has(f) && !aside.has(f)) aside.add(f);
+  }
+
+  // Prefer keeping when a file appears in both groups
+  for (const f of keep) {
+    aside.delete(f);
   }
 
   return { keep: [...keep], aside: [...aside], notes };
