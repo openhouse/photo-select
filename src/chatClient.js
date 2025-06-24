@@ -6,6 +6,12 @@ import { delay } from "./config.js";
 
 const openai = new OpenAI();
 
+function ensureJsonMention(text) {
+  return /\bjson\b/i.test(text)
+    ? text
+    : `${text}\nRespond in json format.`;
+}
+
 const CACHE_DIR = path.resolve('.cache');
 
 async function getCachedReply(key) {
@@ -126,6 +132,8 @@ export async function chatCompletion({
     const names = curators.join(', ');
     finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
   }
+
+  finalPrompt = ensureJsonMention(finalPrompt);
 
   const key = await cacheKey({ prompt: finalPrompt, images, model });
   if (cache) {
