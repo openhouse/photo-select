@@ -1,4 +1,4 @@
-import { OpenAI } from "openai";
+import { OpenAI, NotFoundError } from "openai";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -69,6 +69,36 @@ export async function buildMessages(prompt, images) {
   return [system, userText];
 }
 
+/** Build input array for the Responses API */
+export async function buildInput(prompt, images) {
+  const imageParts = await Promise.all(
+    images.map(async (file) => {
+      const abs = path.resolve(file);
+      const buffer = await readFile(abs);
+      const base64 = buffer.toString("base64");
+      return {
+        type: "input_image",
+        image_url: `data:image/${path.extname(file).slice(1)};base64,${base64}`,
+        detail: "high",
+      };
+    })
+  );
+
+  const filenames = images.map((f) => path.basename(f)).join("\n");
+  return {
+    instructions: prompt,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: `Here are the images:\n${filenames}` },
+          ...imageParts,
+        ],
+      },
+    ],
+  };
+}
+
 /**
  * Call OpenAI, returning raw text content.
  * Retries with exponential back‑off on 429/5xx.
@@ -101,6 +131,21 @@ export async function chatCompletion({
       if (cache) await setCachedReply(key, text);
       return text;
     } catch (err) {
+      if (
+        err instanceof NotFoundError &&
+        /v1\/responses/.test(err.message || "")
+      ) {
+        const params = await buildInput(prompt, images);
+        const rsp = await openai.responses.create({
+          model,
+          ...params,
+          response_format: { type: "json_object" },
+        });
+        const text = rsp.output_text;
+        if (cache) await setCachedReply(key, text);
+        return text;
+      }
+
       if (attempt >= maxRetries) throw err;
       attempt += 1;
       const wait = 2 ** attempt * 1000;
