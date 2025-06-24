@@ -1,5 +1,5 @@
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
@@ -21,7 +21,6 @@ export async function triageDirectory({
   let prompt = await readPrompt(promptPath);
   if (contextPath) {
     try {
-      const { readFile } = await import('node:fs/promises');
       const context = await readFile(contextPath, 'utf8');
       prompt += `\n\nCurator FYI:\n${context}`;
     } catch (err) {
