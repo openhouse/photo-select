@@ -25,10 +25,14 @@ program
     (value) => value.split(',').map((n) => n.trim()).filter(Boolean),
     []
   )
+  .option(
+    "-x, --context <file>",
+    "Text file with exhibition context for the curators"
+  )
   .option("--no-recurse", "Process a single directory only")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -44,6 +48,7 @@ if (apiKey) {
       model,
       recurse,
       curators,
+      contextPath,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
