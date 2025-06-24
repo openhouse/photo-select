@@ -25,7 +25,7 @@ chmod +x src/index.js    # fix permission error when running with npx
 Invoke the CLI from the project directory using `npx`:
 
 ```bash
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 You can also install globally with `npm install -g` to run `photo-select` anywhere.
@@ -34,9 +34,9 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 
 ```bash
 # run from the project directory
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 # or, if installed globally:
-photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 Run `photo-select --help` to see all options.
@@ -70,6 +70,7 @@ through to the script unchanged.
 | `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
+| `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
 ## Supported OpenAI models
@@ -144,10 +145,10 @@ cp /path/to/source/*.jpg trial-gpt-4o/
 cp /path/to/source/*.jpg trial-gpt-4.5/
 
 # run with GPT‑4o
-/path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-...
+/path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-... --context /path/to/context.txt
 
 # run with GPT‑4.5
-/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-...
+/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-... --context /path/to/context.txt
 ```
 
 If you see repeated `OpenAI error (404)` messages, your API key may not have
