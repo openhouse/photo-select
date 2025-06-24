@@ -131,10 +131,10 @@ export async function chatCompletion({
       if (cache) await setCachedReply(key, text);
       return text;
     } catch (err) {
-      if (
-        err instanceof NotFoundError &&
-        /v1\/responses/.test(err.message || "")
-      ) {
+        if (
+          (err instanceof NotFoundError || err.status === 404) &&
+          /v1\/responses/.test(err.message || "")
+        ) {
         const params = await buildInput(prompt, images);
         const rsp = await openai.responses.create({
           model,
