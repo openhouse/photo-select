@@ -12,13 +12,13 @@ Respond *only* with a JSON object of the form:
 
 {
   "keep": {
-    "filename1.jpg": "Please share your valued observations and thoughts on this image.",
+    "filename1.jpg": "[Please share your valued observations and thoughts on this image, here.]",
     ...
   },
   "aside": {
-    "filename2.jpg": "Please share your valued observations and thoughts on this image.",
+    "filename2.jpg": "[Please share your valued observations and thoughts on this image, here.]",
     ...
   }
 }
 
-Every filename must appear exactly once as a key in either "keep" or "aside". Include your observations on each image. No other text.
+Every filename must appear exactly once as a key in either "keep" or "aside". Please include your valued thoughts and observations on each image. No other text.
