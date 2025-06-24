@@ -139,7 +139,7 @@ export async function chatCompletion({
         const rsp = await openai.responses.create({
           model,
           ...params,
-          response_format: { type: "json_object" },
+          text: { format: { type: "json_object" } },
         });
         const text = rsp.output_text;
         if (cache) await setCachedReply(key, text);
