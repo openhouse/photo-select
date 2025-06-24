@@ -1,4 +1,5 @@
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
@@ -12,10 +13,15 @@ export async function triageDirectory({
   promptPath,
   model,
   recurse = true,
+  curators = [],
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
-  const prompt = await readPrompt(promptPath);
+  let prompt = await readPrompt(promptPath);
+  if (curators.length) {
+    const names = curators.join(', ');
+    prompt = prompt.replace(/\{\{curators\}\}/g, names);
+  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
@@ -34,11 +40,21 @@ export async function triageDirectory({
 
     // Step 2 – ask ChatGPT
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
-    const reply = await chatCompletion({ prompt, images: batch, model });
+    const reply = await chatCompletion({
+      prompt,
+      images: batch,
+      model,
+      curators,
+    });
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes } = parseReply(reply, batch);
+    if (minutes.length) {
+      const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
+      await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+      console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+    }
 
     // Step 4 – move files
     const keepDir = path.join(dir, "_keep");
@@ -66,6 +82,7 @@ export async function triageDirectory({
         promptPath,
         model,
         recurse,
+        curators,
         depth: depth + 1,
       });
     }

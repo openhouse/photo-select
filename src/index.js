@@ -19,10 +19,16 @@ program
     "OpenAI API key",
     process.env.OPENAI_API_KEY
   )
+  .option(
+    "-c, --curators <names>",
+    "Comma-separated list of curator names",
+    (value) => value.split(',').map((n) => n.trim()).filter(Boolean),
+    []
+  )
   .option("--no-recurse", "Process a single directory only")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -32,7 +38,13 @@ if (apiKey) {
   try {
     const absDir = path.resolve(dir);
     const { triageDirectory } = await import("./orchestrator.js");
-    await triageDirectory({ dir: absDir, promptPath, model, recurse });
+    await triageDirectory({
+      dir: absDir,
+      promptPath,
+      model,
+      recurse,
+      curators,
+    });
     console.log("🎉  Finished triaging.");
   } catch (err) {
     console.error("❌  Error:", err);

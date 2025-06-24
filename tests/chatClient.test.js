@@ -70,4 +70,15 @@ describe("parseReply", () => {
     expect(keep).toContain(files[0]);
     expect(aside).not.toContain(files[0]);
   });
+
+  it("parses minutes and nested decision", () => {
+    const reply = JSON.stringify({
+      minutes: [{ speaker: "Curator", text: "looks good" }],
+      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] },
+    });
+    const { keep, aside, minutes } = parseReply(reply, files);
+    expect(minutes[0]).toMatch(/Curator/);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+  });
 });

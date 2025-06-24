@@ -69,6 +69,7 @@ through to the script unchanged.
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
 | `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
+| `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
 ## Supported OpenAI models
@@ -160,9 +161,9 @@ API, so no extra flags are needed.
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. ChatGPT replies with a JSON object indicating which files to keep or set aside and why.
-4. Parse that JSON to determine the destination folders and capture Ingeborg's notes.
-5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it.
+3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
+4. Parse that JSON to determine the destination folders and capture any notes about each image.
+5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. Stop when a directory has zero unclassified images.
 

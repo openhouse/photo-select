@@ -38,8 +38,13 @@ export async function cacheKey({ prompt, images, model }) {
  * Builds the array of message objects for the Chat Completion API.
  * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
  */
-export async function buildMessages(prompt, images) {
-  const system = { role: "system", content: prompt };
+export async function buildMessages(prompt, images, curators = []) {
+  let content = prompt;
+  if (curators.length) {
+    const names = curators.join(', ');
+    content = content.replace(/\{\{curators\}\}/g, names);
+  }
+  const system = { role: "system", content };
 
   /**  Turn each image into base64 data‑URL with filename caption.  */
   const userImageParts = await Promise.all(
@@ -70,7 +75,12 @@ export async function buildMessages(prompt, images) {
 }
 
 /** Build input array for the Responses API */
-export async function buildInput(prompt, images) {
+export async function buildInput(prompt, images, curators = []) {
+  let instructions = prompt;
+  if (curators.length) {
+    const names = curators.join(', ');
+    instructions = instructions.replace(/\{\{curators\}\}/g, names);
+  }
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
@@ -86,7 +96,7 @@ export async function buildInput(prompt, images) {
 
   const filenames = images.map((f) => path.basename(f)).join("\n");
   return {
-    instructions: prompt,
+    instructions,
     input: [
       {
         role: "user",
@@ -109,8 +119,15 @@ export async function chatCompletion({
   model = "gpt-4o",
   maxRetries = 3,
   cache = true,
+  curators = [],
 }) {
-  const key = await cacheKey({ prompt, images, model });
+  let finalPrompt = prompt;
+  if (curators.length) {
+    const names = curators.join(', ');
+    finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
+  }
+
+  const key = await cacheKey({ prompt: finalPrompt, images, model });
   if (cache) {
     const hit = await getCachedReply(key);
     if (hit) return hit;
@@ -120,7 +137,7 @@ export async function chatCompletion({
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      const messages = await buildMessages(prompt, images);
+      const messages = await buildMessages(finalPrompt, images, curators);
       const { choices } = await openai.chat.completions.create({
         model,
         messages,
@@ -135,7 +152,7 @@ export async function chatCompletion({
           (err instanceof NotFoundError || err.status === 404) &&
           /v1\/responses/.test(err.message || "")
         ) {
-        const params = await buildInput(prompt, images);
+        const params = await buildInput(finalPrompt, images, curators);
         const rsp = await openai.responses.create({
           model,
           ...params,
@@ -189,19 +206,38 @@ export function parseReply(text, allFiles) {
   const keep = new Set();
   const aside = new Set();
   const notes = new Map();
+  const minutes = [];
 
   // Try JSON first
   try {
     const obj = JSON.parse(text);
-    if (obj && obj.keep && obj.aside) {
+
+    const extract = (node) => {
+      if (!node || typeof node !== 'object') return null;
+      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+
+      if (node.keep && node.aside) return node;
+      if (node.decision && node.decision.keep && node.decision.aside) {
+        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+        return node.decision;
+      }
+      for (const val of Object.values(node)) {
+        const found = extract(val);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const decision = extract(obj);
+    if (decision) {
       const handle = (group, set) => {
-        const val = obj[group];
+        const val = decision[group];
         if (Array.isArray(val)) {
           for (const n of val) {
             const f = lookup(n);
             if (f) set.add(f);
           }
-        } else if (val && typeof val === "object") {
+        } else if (val && typeof val === 'object') {
           for (const [n, reason] of Object.entries(val)) {
             const f = lookup(n);
             if (f) {
@@ -212,8 +248,8 @@ export function parseReply(text, allFiles) {
         }
       };
 
-      handle("keep", keep);
-      handle("aside", aside);
+      handle('keep', keep);
+      handle('aside', aside);
       // continue to normalization below
     }
   } catch {
@@ -224,6 +260,8 @@ export function parseReply(text, allFiles) {
   for (const raw of lines) {
     const line = raw.trim();
     const lower = line.toLowerCase();
+    const tm = line.match(/^([^:]+):\s*(.+)$/);
+    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
     for (const [name, f] of map) {
       let short = name;
       const idx = name.indexOf("dscf");
@@ -251,5 +289,5 @@ export function parseReply(text, allFiles) {
     aside.delete(f);
   }
 
-  return { keep: [...keep], aside: [...aside], notes };
+  return { keep: [...keep], aside: [...aside], notes, minutes };
 }
