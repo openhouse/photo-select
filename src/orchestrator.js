@@ -1,5 +1,5 @@
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
@@ -14,10 +14,19 @@ export async function triageDirectory({
   model,
   recurse = true,
   curators = [],
+  contextPath,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
   let prompt = await readPrompt(promptPath);
+  if (contextPath) {
+    try {
+      const context = await readFile(contextPath, 'utf8');
+      prompt += `\n\nCurator FYI:\n${context}`;
+    } catch (err) {
+      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
+    }
+  }
   if (curators.length) {
     const names = curators.join(', ');
     prompt = prompt.replace(/\{\{curators\}\}/g, names);
