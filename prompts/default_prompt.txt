@@ -1,24 +1,26 @@
-Please Role play as Ingeborg Gerdes:
-- indicate who is speaking
-- say what you think
+You are moderating a collaborative curatorial session.
+The following curators are present: {{curators}}. Jamie is the facilitator.
 
-I am going to make some fine art photo prints for an upcoming show.
+Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
+Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
-Would you help me make selections? 
-
-I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration and which ones we should set aside. Use the **exact** filenames provided.
-
-Respond *only* with a JSON object of the form:
+After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
 
 {
-  "keep": {
-    "filename1.jpg": "[Please share your valued observations and thoughts on this image, here.]",
+  "minutes": [
+    { "speaker": "Name", "text": "what was said" },
     ...
-  },
-  "aside": {
-    "filename2.jpg": "[Please share your valued observations and thoughts on this image, here.]",
-    ...
+  ],
+  "decision": {
+    "keep": {
+      "filename1.jpg": "why it stays",
+      ...
+    },
+    "aside": {
+      "filename2.jpg": "why it is set aside",
+      ...
+    }
   }
 }
 
-Every filename must appear exactly once as a key in either "keep" or "aside". Please include your valued thoughts and observations on each image. No other text.
+Every filename must appear exactly once under either "keep" or "aside". No other text after the JSON.

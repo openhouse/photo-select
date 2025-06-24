@@ -49,7 +49,7 @@ chmod +x src/index.js    # fix permission error when running with npx
 Invoke the CLI from the project directory using `npx`:
 
 ```bash
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 You can also install globally with `npm install -g` to run `photo-select` anywhere.
@@ -58,9 +58,9 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 
 ```bash
 # run from the project directory
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 # or, if installed globally:
-photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...]
+photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 Run `photo-select --help` to see all options.
@@ -93,6 +93,8 @@ through to the script unchanged.
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
 | `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
+| `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
+| `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
 ## Supported OpenAI models
@@ -167,10 +169,10 @@ cp /path/to/source/*.jpg trial-gpt-4o/
 cp /path/to/source/*.jpg trial-gpt-4.5/
 
 # run with GPT‑4o
-/path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-...
+/path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-... --context /path/to/context.txt
 
 # run with GPT‑4.5
-/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-...
+/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-... --context /path/to/context.txt
 ```
 
 If you see repeated `OpenAI error (404)` messages, your API key may not have
@@ -184,9 +186,9 @@ API, so no extra flags are needed.
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. ChatGPT replies with a JSON object indicating which files to keep or set aside and why.
-4. Parse that JSON to determine the destination folders and capture Ingeborg's notes.
-5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it.
+3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
+4. Parse that JSON to determine the destination folders and capture any notes about each image.
+5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. Stop when a directory has zero unclassified images.
 
