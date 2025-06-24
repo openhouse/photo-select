@@ -53,14 +53,21 @@ export async function triageDirectory({
     );
   }
 
-  // Step 5 – recurse into keepDir if enabled
+  // Step 5 – recurse into keepDir only if both groups exist
   if (recurse) {
-    await triageDirectory({
-      dir: path.join(dir, "_keep"),
-      promptPath,
-      model,
-      recurse,
-      depth: depth + 1,
-    });
+    const keepDir = path.join(dir, "_keep");
+    const asideDir = path.join(dir, "_aside");
+    const keepCount = (await listImages(keepDir).catch(() => [])).length;
+    const asideCount = (await listImages(asideDir).catch(() => [])).length;
+
+    if (keepCount > 0 && asideCount > 0) {
+      await triageDirectory({
+        dir: keepDir,
+        promptPath,
+        model,
+        recurse,
+        depth: depth + 1,
+      });
+    }
   }
 }
