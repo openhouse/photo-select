@@ -1,6 +1,6 @@
 # photo‑select
 
-A command‑line workflow that **selects 10 random images, asks ChatGPT 4.5 which to “keep” or “set aside,”
+A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
 ## Requirements
@@ -73,7 +73,7 @@ through to the script unchanged.
 
 ## Supported OpenAI models
 
-The tool works with any OpenAI chat completion model that accepts image parts. Vision-capable models currently listed on OpenAI's [models](https://platform.openai.com/docs/models) page include:
+The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
 * **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
@@ -129,6 +129,32 @@ the process on multiple batches will highlight which model gives the most
 consistent choices.
 
 The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
+
+### Example: A/B testing models
+
+You can duplicate a directory of images and run the script on each copy with
+different `--model` values. Each run writes its own `_keep` and `_aside` folders
+so you can compare the results side by side.
+
+```bash
+# prepare two identical folders
+mkdir trial-gpt-4o trial-gpt-4.5
+cp /path/to/source/*.jpg trial-gpt-4o/
+cp /path/to/source/*.jpg trial-gpt-4.5/
+
+# run with GPT‑4o
+/path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-...
+
+# run with GPT‑4.5
+/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-...
+```
+
+If you see repeated `OpenAI error (404)` messages, your API key may not have
+access to that model or the id is misspelled. Check `openai models:list` to
+confirm which ids are enabled for your account. Models that require the
+`/v1/responses` endpoint—such as `o1-pro`—are automatically routed through that
+API, so no extra flags are needed.
+
 
 ## Recursion logic
 
