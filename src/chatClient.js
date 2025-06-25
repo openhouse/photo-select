@@ -72,7 +72,7 @@ export async function buildMessages(prompt, images, curators = []) {
   const userText = {
     role: "user",
     content: [
-      { type: "text", text: `Here are the images:\n${filenames}` },
+      { type: "text", text: ensureJsonMention(`Here are the images:\n${filenames}`) },
       ...userImageParts,
     ],
   };
@@ -107,7 +107,7 @@ export async function buildInput(prompt, images, curators = []) {
       {
         role: "user",
         content: [
-          { type: "input_text", text: `Here are the images:\n${filenames}` },
+          { type: "input_text", text: ensureJsonMention(`Here are the images:\n${filenames}`) },
           ...imageParts,
         ],
       },
