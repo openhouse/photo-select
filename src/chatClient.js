@@ -6,6 +6,10 @@ import { delay } from "./config.js";
 
 const openai = new OpenAI();
 
+/** Max response tokens allowed from OpenAI. Large enough to hold
+ * minutes plus the full JSON decision block without truncation. */
+export const MAX_RESPONSE_TOKENS = 4096;
+
 function ensureJsonMention(text) {
   return /\bjson\b/i.test(text)
     ? text
@@ -149,7 +153,8 @@ export async function chatCompletion({
       const { choices } = await openai.chat.completions.create({
         model,
         messages,
-        max_tokens: 1024,
+        // allow ample space for the JSON decision block and minutes
+        max_tokens: MAX_RESPONSE_TOKENS,
         response_format: { type: "json_object" },
       });
       const text = choices[0].message.content;
@@ -288,9 +293,8 @@ export function parseReply(text, allFiles) {
     }
   }
 
-  for (const f of allFiles) {
-    if (!keep.has(f) && !aside.has(f)) aside.add(f);
-  }
+  // Leave any files unmentioned in the reply unmoved so they can be triaged
+  // in a later batch. Only files explicitly marked keep or aside are returned.
 
   // Prefer keeping when a file appears in both groups
   for (const f of keep) {
