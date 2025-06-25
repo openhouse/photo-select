@@ -25,7 +25,7 @@ chmod +x src/index.js    # fix permission error when running with npx
 Invoke the CLI from the project directory using `npx`:
 
 ```bash
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 You can also install globally with `npm install -g` to run `photo-select` anywhere.
@@ -34,9 +34,9 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 
 ```bash
 # run from the project directory
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
+npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
 # or, if installed globally:
-photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4.5] [--api-key sk-...] [--context /path/to/context.txt]
+photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
 Run `photo-select --help` to see all options.
@@ -77,6 +77,7 @@ through to the script unchanged.
 
 The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
+
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
 * **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
   `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
@@ -84,9 +85,53 @@ The CLI calls the Chat Completions API and automatically switches to `/v1/respon
   `gpt-4o-mini-search-preview`
 * **o‑series reasoning models** – `o4-mini`, `o3`, `o3-pro`, `o3-mini`, `o1`,
   `o1-pro`, and the deprecated `o1-mini`
-* **Other vision models** – `gpt-4-turbo`, `gpt-4.5` *(deprecated)*, and
-  `gpt-4-vision-preview` *(deprecated)*
+* **Other vision models** – `gpt-4-turbo`, `gpt-4.5-preview` *(deprecated)*. The
+  `gpt-4-vision-preview` model has been removed.
 
+Example output of `openai api models.list`:
+
+```text
+gpt-4.1-nano
+gpt-4.1-nano-2025-04-14
+gpt-4.5-preview
+gpt-4.5-preview-2025-02-27
+gpt-4o
+gpt-4o-2024-05-13
+gpt-4o-2024-08-06
+gpt-4o-2024-11-20
+gpt-4o-audio-preview
+gpt-4o-audio-preview-2024-10-01
+gpt-4o-audio-preview-2024-12-17
+gpt-4o-audio-preview-2025-06-03
+gpt-4o-mini
+gpt-4o-mini-2024-07-18
+gpt-4o-mini-audio-preview
+gpt-4o-mini-audio-preview-2024-12-17
+gpt-4o-mini-realtime-preview
+gpt-4o-mini-realtime-preview-2024-12-17
+gpt-4o-mini-search-preview
+gpt-4o-mini-search-preview-2025-03-11
+gpt-4o-realtime-preview
+gpt-4o-realtime-preview-2024-10-01
+gpt-4o-realtime-preview-2024-12-17
+gpt-4o-realtime-preview-2025-06-03
+gpt-4o-search-preview
+gpt-4o-search-preview-2025-03-11
+o1
+o1-2024-12-17
+o1-mini
+o1-mini-2024-09-12
+o1-pro
+o1-pro-2025-03-19
+o3
+o3-2025-04-16
+o3-mini
+o3-mini-2025-01-31
+o3-pro
+o3-pro-2025-06-10
+o4-mini
+o4-mini-2025-04-16
+```
 These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
 
@@ -113,7 +158,7 @@ Approximate price per run:
 | `gpt-4o`       | $2.50      | $10.00      | ~$9 |
 | `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
 | `gpt-4-turbo`  | $10.00     | $30.00      | ~$33 |
-| `gpt-4.5`      | $75.00     | $150.00     | ~$225 |
+| `gpt-4.5-preview`      | $75.00     | $150.00     | ~$225 |
 | `gpt-4`        | $30.00     | $60.00      | ~$90 |
 
 These figures are approximate and based on current
@@ -140,15 +185,15 @@ so you can compare the results side by side.
 
 ```bash
 # prepare two identical folders
-mkdir trial-gpt-4o trial-gpt-4.5
+mkdir trial-gpt-4o trial-gpt-4.5-preview
 cp /path/to/source/*.jpg trial-gpt-4o/
-cp /path/to/source/*.jpg trial-gpt-4.5/
+cp /path/to/source/*.jpg trial-gpt-4.5-preview/
 
 # run with GPT‑4o
 /path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-... --context /path/to/context.txt
 
-# run with GPT‑4.5
-/path/to/photo-select/photo-select-here.sh --model gpt-4.5 --dir trial-gpt-4.5 --api-key sk-... --context /path/to/context.txt
+# run with GPT‑4.5-preview
+/path/to/photo-select/photo-select-here.sh --model gpt-4.5-preview --dir trial-gpt-4.5-preview --api-key sk-... --context /path/to/context.txt
 ```
 
 If you see repeated `OpenAI error (404)` messages, your API key may not have
