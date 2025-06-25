@@ -163,8 +163,8 @@ API, so no extra flags are needed.
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
-4. Parse that JSON to determine the destination folders and capture any notes about each image.
-5. Move each file to the corresponding sub‑folder and write a text file containing the notes next to it. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
+4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
+5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Unmentioned files remain in place for the next batch. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. Stop when a directory has zero unclassified images.
 
@@ -173,6 +173,9 @@ API, so no extra flags are needed.
 The OpenAI request uses `response_format: { type: "json_object" }` so the
 assistant replies with strict JSON. This avoids needing to strip Markdown
 fences and guarantees parseable output.
+The CLI allows up to 4096 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
+`src/chatClient.js`) so the minutes and JSON decision block are returned in
+full.
 
 ## Caching
 
