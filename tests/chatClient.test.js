@@ -23,11 +23,12 @@ describe("parseReply", () => {
     expect(notes.get(files[1])).toMatch(/blurry/);
   });
 
-  it("defaults unmentioned files to aside", () => {
+  it("leaves unmentioned files unclassified", () => {
     const reply = `keep: DSCF1234.jpg`;
-    const { aside } = parseReply(reply, files);
-    expect(aside).toContain(files[1]);
-    expect(aside).toContain(files[2]);
+    const { aside, keep } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).not.toContain(files[1]);
+    expect(aside).not.toContain(files[2]);
   });
 
   it("matches filenames when the reply omits prefixes", () => {
@@ -51,7 +52,7 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(aside).toContain(files[1]);
     expect(notes.get(files[1])).toMatch(/out of focus/);
-    expect(aside).toContain(files[2]);
+    expect(aside).not.toContain(files[2]);
   });
 
   it("handles JSON wrapped in Markdown fences", () => {
