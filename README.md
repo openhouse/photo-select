@@ -211,7 +211,8 @@ API, so no extra flags are needed.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
 5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Unmentioned files remain in place for the next batch. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-7. Stop when a directory has zero unclassified images.
+7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
+8. Stop when a directory has zero unclassified images.
 
 ### JSON mode
 

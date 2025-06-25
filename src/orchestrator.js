@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
@@ -33,6 +33,22 @@ export async function triageDirectory({
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
+
+  // Archive original images at this level
+  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const initImages = await listImages(dir);
+  try {
+    await stat(levelDir);
+  } catch {
+    if (initImages.length) {
+      await mkdir(levelDir, { recursive: true });
+      await Promise.all(
+        initImages.map((file) =>
+          copyFile(file, path.join(levelDir, path.basename(file)))
+        )
+      );
+    }
+  }
 
   while (true) {
     const images = await listImages(dir);
@@ -78,22 +94,22 @@ export async function triageDirectory({
     );
   }
 
-  // Step 5 – recurse into keepDir only if both groups exist
+  // Step 5 – recurse into keepDir if it exists
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
-    const asideDir = path.join(dir, "_aside");
-    const keepCount = (await listImages(keepDir).catch(() => [])).length;
-    const asideCount = (await listImages(asideDir).catch(() => [])).length;
-
-    if (keepCount > 0 && asideCount > 0) {
+    try {
+      await stat(keepDir);
       await triageDirectory({
         dir: keepDir,
         promptPath,
         model,
         recurse,
         curators,
+        contextPath,
         depth: depth + 1,
       });
+    } catch {
+      // no _keep folder, done
     }
   }
 }
