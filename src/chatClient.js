@@ -150,13 +150,18 @@ export async function chatCompletion({
   while (true) {
     try {
       const messages = await buildMessages(finalPrompt, images, curators);
-      const { choices } = await openai.chat.completions.create({
+      const baseParams = {
         model,
         messages,
         // allow ample space for the JSON decision block and minutes
-        max_tokens: MAX_RESPONSE_TOKENS,
         response_format: { type: "json_object" },
-      });
+      };
+      if (/^o\d/.test(model)) {
+        baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
+      } else {
+        baseParams.max_tokens = MAX_RESPONSE_TOKENS;
+      }
+      const { choices } = await openai.chat.completions.create(baseParams);
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
       return text;
@@ -170,6 +175,7 @@ export async function chatCompletion({
           model,
           ...params,
           text: { format: { type: "json_object" } },
+          max_completion_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
         if (cache) await setCachedReply(key, text);
