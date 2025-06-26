@@ -159,6 +159,10 @@ o4-mini-2025-04-16
 These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
 
+Models in the `o` series use the new `max_completion_tokens` parameter instead of
+the deprecated `max_tokens`. The CLI handles this automatically based on the
+model you specify.
+
 ### Estimated costs
 
 The cost depends on the number of tokens generated from your images. Roughly
