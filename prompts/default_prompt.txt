@@ -1,10 +1,13 @@
 You are moderating a collaborative curatorial session.
 The following curators are present: {{curators}}. Jamie is the facilitator.
 
-Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
+Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
 After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
+
+If you are uncertain about a photo, **omit it from the decision block**.
+Never invent filenames or keys.
 
 {
   "minutes": [
@@ -23,4 +26,5 @@ After capturing these remarks as meeting minutes, output a JSON object summarisi
   }
 }
 
-Every filename must appear exactly once under either "keep" or "aside". No other text after the JSON.
+Include only those filenames for which you reach a clear decision.
+Return pure JSON and use each label verbatim. No other text after the JSON.
