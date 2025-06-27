@@ -237,7 +237,7 @@ API, so no extra flags are needed.
 2. Send them to ChatGPT with the prompt (filenames included).
 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
-5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Unmentioned files remain in place for the next batch. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
+5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
 8. Stop when a directory has zero unclassified images.

@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-let parseReply;
+let parseReply, buildMessages;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
-  ({ parseReply } = await import('../src/chatClient.js'));
+  ({ parseReply, buildMessages } = await import('../src/chatClient.js'));
 });
 
 const files = [
@@ -25,10 +28,10 @@ describe("parseReply", () => {
 
   it("leaves unmentioned files unclassified", () => {
     const reply = `keep: DSCF1234.jpg`;
-    const { aside, keep } = parseReply(reply, files);
+    const { aside, keep, unclassified } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
-    expect(aside).not.toContain(files[1]);
-    expect(aside).not.toContain(files[2]);
+    expect(unclassified).toContain(files[1]);
+    expect(unclassified).toContain(files[2]);
   });
 
   it("matches filenames when the reply omits prefixes", () => {
@@ -81,5 +84,20 @@ describe("parseReply", () => {
     expect(minutes[0]).toMatch(/Curator/);
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
+  });
+});
+
+/** Verify images are labelled in messages */
+describe("buildMessages", () => {
+  it("labels each image before the encoded data", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-msg-"));
+    const img1 = path.join(dir, "1.jpg");
+    const img2 = path.join(dir, "2.jpg");
+    await fs.writeFile(img1, "a");
+    await fs.writeFile(img2, "b");
+    const [, user] = await buildMessages("prompt", [img1, img2]);
+    expect(user.content[1]).toEqual({ type: "text", text: "1.jpg" });
+    expect(user.content[3]).toEqual({ type: "text", text: "2.jpg" });
+    await fs.rm(dir, { recursive: true, force: true });
   });
 });
