@@ -31,10 +31,11 @@ async function setCachedReply(key, text) {
   await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
 }
 
-export async function cacheKey({ prompt, images, model }) {
+export async function cacheKey({ prompt, images, model, curators = [] }) {
   const hash = crypto.createHash('sha256');
   hash.update(model);
   hash.update(prompt);
+  if (curators.length) hash.update(curators.join(','));
   for (const file of images) {
     const info = await stat(file);
     hash.update(file);
@@ -56,27 +57,31 @@ export async function buildMessages(prompt, images, curators = []) {
   }
   const system = { role: "system", content };
 
-  /**  Turn each image into base64 data‑URL with filename caption.  */
+  /**  Turn each image into base64 data‑URL with a preceding filename label.  */
   const userImageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
       const buffer = await readFile(abs);
       const base64 = buffer.toString("base64");
-      return {
-        type: "image_url",
-        image_url: {
-          url: `data:image/${path.extname(file).slice(1)};base64,${base64}`,
-          detail: "high",
+      const name = path.basename(file);
+      const ext = path.extname(file).slice(1) || "jpeg";
+      return [
+        { type: "text", text: name },
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:image/${ext};base64,${base64}`,
+            detail: "high",
+          },
         },
-      };
+      ];
     })
-  );
+  ).then((parts) => parts.flat());
 
-  const filenames = images.map((f) => path.basename(f)).join("\n");
   const userText = {
     role: "user",
     content: [
-      { type: "text", text: ensureJsonMention(`Here are the images:\n${filenames}`) },
+      { type: "text", text: ensureJsonMention("Here are the images:") },
       ...userImageParts,
     ],
   };
@@ -96,22 +101,26 @@ export async function buildInput(prompt, images, curators = []) {
       const abs = path.resolve(file);
       const buffer = await readFile(abs);
       const base64 = buffer.toString("base64");
-      return {
-        type: "input_image",
-        image_url: `data:image/${path.extname(file).slice(1)};base64,${base64}`,
-        detail: "high",
-      };
+      const name = path.basename(file);
+      const ext = path.extname(file).slice(1) || "jpeg";
+      return [
+        { type: "input_text", text: name },
+        {
+          type: "input_image",
+          image_url: `data:image/${ext};base64,${base64}`,
+          detail: "high",
+        },
+      ];
     })
-  );
+  ).then((parts) => parts.flat());
 
-  const filenames = images.map((f) => path.basename(f)).join("\n");
   return {
     instructions,
     input: [
       {
         role: "user",
         content: [
-          { type: "input_text", text: ensureJsonMention(`Here are the images:\n${filenames}`) },
+          { type: "input_text", text: ensureJsonMention("Here are the images:") },
           ...imageParts,
         ],
       },
@@ -139,7 +148,7 @@ export async function chatCompletion({
 
   finalPrompt = ensureJsonMention(finalPrompt);
 
-  const key = await cacheKey({ prompt: finalPrompt, images, model });
+  const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
   if (cache) {
     const hit = await getCachedReply(key);
     if (hit) return hit;
@@ -307,5 +316,8 @@ export function parseReply(text, allFiles) {
     aside.delete(f);
   }
 
-  return { keep: [...keep], aside: [...aside], notes, minutes };
+  const decided = new Set([...keep, ...aside]);
+  const unclassified = allFiles.filter((f) => !decided.has(f));
+
+  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
 }
