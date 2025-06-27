@@ -94,11 +94,24 @@ export async function triageDirectory({
     );
   }
 
-  // Step 5 – recurse into keepDir if it exists
+  // Step 5 – recurse into keepDir if both keep and aside exist
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
+    const asideDir = path.join(dir, "_aside");
+    let keepCount = 0;
+    let asideCount = 0;
     try {
-      await stat(keepDir);
+      keepCount = (await listImages(keepDir)).length;
+    } catch {
+      // ignore
+    }
+    try {
+      asideCount = (await listImages(asideDir)).length;
+    } catch {
+      // ignore
+    }
+
+    if (keepCount && asideCount) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -108,8 +121,9 @@ export async function triageDirectory({
         contextPath,
         depth: depth + 1,
       });
-    } catch {
-      // no _keep folder, done
+    } else if (keepCount || asideCount) {
+      const status = keepCount ? "kept" : "set aside";
+      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
 }
