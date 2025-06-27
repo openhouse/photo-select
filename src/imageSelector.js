@@ -23,6 +23,7 @@ export function pickRandom(array, count) {
 
 /** Ensure sub‑directories exist and move each file accordingly. */
 export async function moveFiles(files, targetDir, notes = new Map()) {
+  if (!files.length) return;
   await fs.mkdir(targetDir, { recursive: true });
   await Promise.all(
     files.map(async (file) => {
