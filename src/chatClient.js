@@ -208,7 +208,7 @@ export async function chatCompletion({
           model,
           ...params,
           text: { format: { type: "json_object" } },
-          max_completion_tokens: MAX_RESPONSE_TOKENS,
+          max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
         if (cache) await setCachedReply(key, text);

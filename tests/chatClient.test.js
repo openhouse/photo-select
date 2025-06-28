@@ -190,6 +190,8 @@ describe("chatCompletion", () => {
       cache: false,
     });
     expect(responsesSpy).toHaveBeenCalled();
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.max_output_tokens).toBeTruthy();
     expect(result).toBe("ok");
   });
 });

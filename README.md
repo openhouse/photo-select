@@ -173,8 +173,9 @@ These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
 
 Models in the `o` series use the new `max_completion_tokens` parameter instead of
-the deprecated `max_tokens`. The CLI handles this automatically based on the
-model you specify.
+the deprecated `max_tokens`. When the CLI falls back to the Responses API, that
+option is called `max_output_tokens`. Both are handled automatically based on
+the model you specify.
 
 ### Estimated costs
 
