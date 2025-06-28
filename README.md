@@ -97,6 +97,19 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 
+### People metadata (optional)
+
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
+
+Example:
+
+```bash
+PHOTO_FILTER_API_BASE=http://localhost:3000 \
+/path/to/photo-select/photo-select-here.sh --api-key sk-... --model o3 \
+  --curators "Ingeborg Gerdes, Alexandra Munroe, Mandy Steinback, Kendell Harbin, Erin Zona, Madeline Gallucci, Deborah Treisman" \
+  --context /path/to/info.md
+```
+
 ## Supported OpenAI models
 
 The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
