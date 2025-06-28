@@ -120,8 +120,8 @@ The CLI calls the Chat Completions API and automatically switches to `/v1/respon
   `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
   `gpt-4o-mini-realtime-preview`, `gpt-4o-search-preview`, and
   `gpt-4o-mini-search-preview`
-* **o‑series reasoning models** – `o4-mini`, `o3`, `o3-pro`, `o3-mini`, `o1`,
-  `o1-pro`, and the deprecated `o1-mini`
+* **o‑series reasoning models** – `o4-mini`, `o3`, `o3-pro` *(responses API)*,
+  `o3-mini`, `o1`, `o1-pro`, and the deprecated `o1-mini`
 * **Other vision models** – `gpt-4-turbo`, `gpt-4.5-preview` *(deprecated)*. The
   `gpt-4-vision-preview` model has been removed.
 
@@ -173,8 +173,9 @@ These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
 
 Models in the `o` series use the new `max_completion_tokens` parameter instead of
-the deprecated `max_tokens`. The CLI handles this automatically based on the
-model you specify.
+the deprecated `max_tokens`. When the CLI falls back to the Responses API, that
+option is called `max_output_tokens`. Both are handled automatically based on
+the model you specify.
 
 ### Estimated costs
 
@@ -240,8 +241,8 @@ cp /path/to/source/*.jpg trial-gpt-4.5-preview/
 If you see repeated `OpenAI error (404)` messages, your API key may not have
 access to that model or the id is misspelled. Check `openai models:list` to
 confirm which ids are enabled for your account. Models that require the
-`/v1/responses` endpoint—such as `o1-pro`—are automatically routed through that
-API, so no extra flags are needed.
+`/v1/responses` endpoint—such as `o1-pro` or `o3-pro`—are automatically routed
+through that API, so no extra flags are needed.
 
 
 ## Recursion logic
