@@ -1,0 +1,18 @@
+```json
+{
+  "keep": {
+    "20250606T233303000000Z-DSCF0210.jpg": "Vibrant candid shot of group, good composition.",
+    "20250607T002058000000Z-DSCF0653.jpg": "Charming scene of children playing, evokes nostalgia.",
+    "20250607T000732000000Z-DSCF0310.jpg": "Beautiful capture of water and light, serene mood.",
+    "20250606T233302000000Z-DSCF0209.jpg": "Lush greenery with a contemplative figure, mysterious.",
+    "20250607T000916000000Z-DSCF0399.jpg": "Engaging candid moment with group, captures joy."
+  },
+  "aside": {
+    "20250606T233319000000Z-DSCF0274.jpg": "Similar to others, lacks distinctive quality.",
+    "20250606T233313000000Z-DSCF0247.jpg": "Repetitive group scene, less emotional impact.",
+    "20250606T233313000000Z-DSCF0245.jpg": "Similar to other group shots, less dynamic.",
+    "20250606T233305000000Z-DSCF0214.jpg": "Crowded composition, less visual interest.",
+    "20250606T233310000000Z-DSCF0233.jpg": "Repeats themes seen in other images."
+  }
+}
+```

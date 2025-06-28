@@ -3,6 +3,8 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+---
+
 ## Requirements
 
 - Node 20+
@@ -16,8 +18,30 @@ moves the files accordingly, and then recurses until a directory is fully triage
 ## Installation
 
 ```bash
-git clone <repo>
 cd photo-select
+nvm install   # obeys .nvmrc (Node 20.x)
+nvm use
+```
+
+### 2  Configure your API key
+
+1. Copy the template:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Paste your real key in `.env`:
+
+   ```dotenv
+   OPENAI_API_KEY=sk-...
+   ```
+
+No need to `export` the key in every shell—`dotenv` loads it automatically.
+
+### 3  Install dependencies
+
+```bash
 npm install
 chmod +x src/index.js    # fix permission error when running with npx
 ```
@@ -72,6 +96,19 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+
+### People metadata (optional)
+
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
+
+Example:
+
+```bash
+PHOTO_FILTER_API_BASE=http://localhost:3000 \
+/path/to/photo-select/photo-select-here.sh --api-key sk-... --model o3 \
+  --curators "Ingeborg Gerdes, Alexandra Munroe, Mandy Steinback, Kendell Harbin, Erin Zona, Madeline Gallucci, Deborah Treisman" \
+  --context /path/to/info.md
+```
 
 ## Supported OpenAI models
 
@@ -240,7 +277,17 @@ saved reply instead of hitting the API.
 npm test
 ```
 
-Vitest covers random selection, safe moves, and response‑parsing.
+The **Vitest** suite covers random selection, safe moves, and response‑parsing.
+
+---
+
+## Development tips
+
+- Use `nvm use` in every new shell (or add a shell hook).
+- Need a different Node version temporarily? `nvm exec 18 npm test`.
+- `.env` is ignored by git—share `.env.example` instead.
+
+---
 
 ## Inspiration
 

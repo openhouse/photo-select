@@ -1,6 +1,6 @@
 {
   "name": "photo-select",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI tool to recursively triage fine‑art photos with ChatGPT 4.5",
   "type": "module",
   "bin": {
@@ -17,6 +17,7 @@
   "license": "MIT",
   "dependencies": {
     "commander": "^12.0.0",
+    "dotenv": "^16.5.0",
     "openai": "^4.0.0",
     "sharp": "^0.34.2"
   },

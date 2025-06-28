@@ -1,0 +1,127 @@
+Please Role play as Ingeborg Gerdes:
+- indicate who is speaking
+- say what you think
+
+I am going to make some fine art photo prints of my friend Olympia Kazi's 50th birthday party at La Plaza Cultural, her community garden.
+
+Would you help me make selections? 
+
+I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration and which ones we should set aside. Use the **exact** filenames provided.
+
+Respond *only* with a JSON object of the form:
+
+{
+  "keep": {
+    "filename1.jpg": "[Please share your valued observations and thoughts on this image, here.]",
+    ...
+  },
+  "aside": {
+    "filename2.jpg": "[Please share your valued observations and thoughts on this image, here.]",
+    ...
+  }
+}
+
+Every filename must appear exactly once as a key in either "keep" or "aside". Include your observations on each image. No other text.
+
+===
+
+From: Olympia Kazi <olympiakazi@gmail.com>
+Date: Mon, May 19, 2025 at 7:10 PM
+Subject: Party Invitation
+To: Olympia Kazi <olympiakazi@gmail.com>
+
+
+Dear All,
+
+Today is that day of the year for me, I'm passing the half-century mark ... I'm turning 50! 
+
+I'd love to celebrate with you at my beloved community garden — La Plaza, 9th Street & Avenue C — on Friday, June 6th, at 5:00pm.
+
+Pets, kids, lovers — all are welcome. Please let me know if and how many of you can make it.
+
+Yours,
+Olympia
+
+===
+
+From: Olympia Kazi <olympiakazi@gmail.com>
+Date: Tue, Jun 3, 2025 at 11:22 AM
+Subject: Reminder: Party this Friday June 6th - 5pm
+To: Olympia Kazi <olympiakazi@gmail.com>
+
+
+Dear All,
+
+I look forward to celebrating with you at La Plaza (9th Street & Ave C) this Friday June 6th starting at 5pm.
+(If you haven’t rsvp’d yet, please email me if you’re planning to come ; )
+
+Love,
+Olympia
+
+===
+
+From: Jamie Burkart <jamie.burkart@gmail.com>
+Date: Tue, Jun 10, 2025 at 11:40 AM
+Subject: Re: Thank you!
+To: Olympia Kazi <olympiakazi@gmail.com>
+
+
+What an honor and pleasure Olympia, to be friends and to experience your beautifully composed—and well deserved—celebration of you—Olympia Kazi.
+
+Your ability to compose; spaces, places, and conversations—to cultivate, emphasize, elevate, and enact—values of civility, civic concern, and community friendship—is unspeakably rare and was so beautifully activated in your event.
+
+I loved your party so much.
+
+I found myself immersed in the deepest pleasures, of food, warm kindness, and even a discovery, with new friends (the lovely photographer couple from your new building) of fish and turtles!
+
+Such gentle and kind people, stewards, scholars, educators, architects, neighbors, philosophers, gardeners, parents, childrens, artists, actors, electeds, friends—New Yorkers (and some Philadelphians, and an Italian or two, so many facets of our beautiful human experience)—brought together gratitude by our collective gratitude for you in our lives, and cities, and regions of earth.
+
+It was an eye opening pedagogic experience—a symposium in the garden of our city as university, to gain the embodied knowledge of what I take as your thesis—that when the city belongs to all of us equally, needs are met through discourse and design, and we all feel we belong—the benefit to all is greater than we can imagine.
+
+Thank you Olympia, just for being you. What a beautiful light you are in the world.
+
+Yes! The the gifts centered on photography, which is more and more my animating lens.
+
+I think you would like Gabrielle Bendiner-Viani, author of the book, with whom I’ve become collegial. She was so kind to inscribe the book to you at her signing.
+
+Her process is to trace essential civic spaces by asking residents to give her a tour of their neighborhood as they dwell in it. From this emerges alternative landmarks and centers of civic life than the skyline perspective.
+
+I love her academic and aesthetic insights. And she is committed to causes that are near and dear to our hearts. She would answer the call, if you saw one for her.
+
+There is nothing more precious to me than the inclination of children, when given a camera, to photograph their parents.
+
+I love your kiddos so much, and to witness your wonderful parenting as a mother.  Giulio and Clio are so lucky to have you as a mom!  &;-)
+
+What a great tradition—your summer travel!
+
+These cameras—which I carefully sourced to the specification of my friend the children’s book author and illustrator Charlie Mylie—do not have screens.
+
+The idea is to engage with visual composition through photography, while maintaining presence.
+
+Maybe we’ll have some snaps to see after the big trip!
+
+Ooo! And I’ll share photos of your party with you shortly!
+
+All the love in the world,
+j a m i e
+
+
+
+
+On Sun, Jun 8, 2025 at 2:27 PM Olympia Kazi <olympiakazi@gmail.com> wrote:
+>
+> Dear Jamie,
+>
+> Thank you so so much for joining us on Friday and making my birthday celebration ever more joyful! It really felt like a reunion with Rafael, Cat and Paula ; )
+>
+> I’m enjoying the beautiful book you got me while I’m photographed from many angles by Giulio and Clio who said that Jamie knows how to give the best gifts, hands down!
+>
+> We didn’t get to catch up for real… We’re flying away on June 26th but if you’re around one of these mornings for coffee I’m happy to meet you you half way somewhere downtown?
+>
+> xxx
+> Ok
+>
+>
+>
+>
+
