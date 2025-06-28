@@ -5,6 +5,25 @@ import crypto from "node:crypto";
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
+const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
+  "http://localhost:3000";
+const peopleCache = new Map();
+
+async function getPeople(filename) {
+  if (peopleCache.has(filename)) return peopleCache.get(filename);
+  try {
+    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const names = Array.isArray(json.data) ? json.data : [];
+    peopleCache.set(filename, names);
+    return names;
+  } catch {
+    peopleCache.set(filename, []);
+    return [];
+  }
+}
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
@@ -65,8 +84,10 @@ export async function buildMessages(prompt, images, curators = []) {
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
+      const people = await getPeople(name);
+      const info = people.length ? { filename: name, people } : { filename: name };
       return [
-        { type: "text", text: name },
+        { type: "text", text: JSON.stringify(info) },
         {
           type: "image_url",
           image_url: {
@@ -103,8 +124,10 @@ export async function buildInput(prompt, images, curators = []) {
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
+      const people = await getPeople(name);
+      const info = people.length ? { filename: name, people } : { filename: name };
       return [
-        { type: "input_text", text: name },
+        { type: "input_text", text: JSON.stringify(info) },
         {
           type: "input_image",
           image_url: `data:image/${ext};base64,${base64}`,
