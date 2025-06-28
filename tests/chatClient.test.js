@@ -3,11 +3,33 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-let parseReply, buildMessages, buildInput;
+let chatSpy;
+let responsesSpy;
+
+class MockNotFoundError extends Error {
+  constructor(msg) {
+    super(msg);
+    this.status = 404;
+  }
+}
+
+vi.mock("openai", () => {
+  chatSpy = vi.fn();
+  responsesSpy = vi.fn();
+  return {
+    OpenAI: vi.fn(() => ({
+      chat: { completions: { create: chatSpy } },
+      responses: { create: responsesSpy },
+    })),
+    NotFoundError: MockNotFoundError,
+  };
+});
+
+let parseReply, buildMessages, buildInput, chatCompletion;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
-  ({ parseReply, buildMessages, buildInput } = await import('../src/chatClient.js'));
+  ({ parseReply, buildMessages, buildInput, chatCompletion } = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -146,5 +168,28 @@ describe("buildInput", () => {
     expect(meta.filename).toBe("a.jpg");
     expect(meta.people).toEqual(["Alice", "Bob"]);
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("chatCompletion", () => {
+  let chatCompletion;
+
+  beforeAll(async () => {
+    ({ chatCompletion } = await import("../src/chatClient.js"));
+  });
+
+  it("falls back to responses when chat endpoint not supported", async () => {
+    const errMsg =
+      "This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?";
+    chatSpy.mockRejectedValueOnce(new MockNotFoundError(errMsg));
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const result = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "o3-pro",
+      cache: false,
+    });
+    expect(responsesSpy).toHaveBeenCalled();
+    expect(result).toBe("ok");
   });
 });
