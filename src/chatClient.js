@@ -198,16 +198,17 @@ export async function chatCompletion({
       if (cache) await setCachedReply(key, text);
       return text;
     } catch (err) {
-        if (
-          (err instanceof NotFoundError || err.status === 404) &&
-          /v1\/responses/.test(err.message || "")
-        ) {
+      const msg = String(err?.error?.message || err?.message || "");
+      if (
+        (err instanceof NotFoundError || err.status === 404) &&
+        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
+      ) {
         const params = await buildInput(finalPrompt, images, curators);
         const rsp = await openai.responses.create({
           model,
           ...params,
           text: { format: { type: "json_object" } },
-          max_completion_tokens: MAX_RESPONSE_TOKENS,
+          max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
         if (cache) await setCachedReply(key, text);
