@@ -63,7 +63,9 @@ npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model
 photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
 ```
 
-Run `photo-select --help` to see all options.
+Run `photo-select --help` to see all options. When rerun in a partially triaged
+directory, the CLI automatically resumes from the deepest `_keep` folder that
+still contains unclassified images.
 
 ### photo-select-here.sh
 

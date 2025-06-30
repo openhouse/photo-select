@@ -5,6 +5,32 @@ import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 
 /**
+ * Walk down `_keep` folders to find the deepest directory that still
+ * contains unclassified images. Returns `{ dir, depth }` or `null` if none
+ * found.
+ */
+export async function findResumePoint(dir, depth = 0) {
+  const keepDir = path.join(dir, "_keep");
+  try {
+    const info = await stat(keepDir);
+    if (info.isDirectory()) {
+      const deeper = await findResumePoint(keepDir, depth + 1);
+      if (deeper) return deeper;
+    }
+  } catch {
+    // ignore missing _keep
+  }
+  let images = [];
+  try {
+    images = await listImages(dir);
+  } catch {
+    return null;
+  }
+  if (images.length) return { dir, depth };
+  return null;
+}
+
+/**
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
  */
