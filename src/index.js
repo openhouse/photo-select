@@ -50,14 +50,24 @@ if (apiKey) {
       process.exit(1);
     }
     const absDir = path.resolve(dir);
-    const { triageDirectory } = await import("./orchestrator.js");
+    const { triageDirectory, findResumePoint } = await import("./orchestrator.js");
+    const found = await findResumePoint(absDir);
+    let startDir = absDir;
+    let depth = 0;
+    if (found) {
+      ({ dir: startDir, depth } = found);
+      if (startDir !== absDir) {
+        console.log(`\uD83D\uDD01  Resuming in ${startDir}`);
+      }
+    }
     await triageDirectory({
-      dir: absDir,
+      dir: startDir,
       promptPath,
       model,
       recurse,
       curators,
       contextPath,
+      depth,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

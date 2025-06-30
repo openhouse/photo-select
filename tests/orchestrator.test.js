@@ -16,7 +16,7 @@ vi.mock("../src/chatClient.js", async () => {
 });
 
 import { chatCompletion } from "../src/chatClient.js";
-import { triageDirectory } from "../src/orchestrator.js";
+import { triageDirectory, findResumePoint } from "../src/orchestrator.js";
 
 let tmpDir;
 let promptFile;
@@ -84,5 +84,19 @@ describe("triageDirectory", () => {
     expect(chatCompletion).toHaveBeenCalledTimes(1);
     const nested = path.join(tmpDir, "_keep", "_keep");
     await expect(fs.stat(nested)).rejects.toThrow();
+  });
+});
+
+describe("findResumePoint", () => {
+  it("returns deepest unclassified directory", async () => {
+    await fs.mkdir(path.join(tmpDir, "_keep/_keep"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "_keep", "1.jpg"), "a");
+    await fs.writeFile(path.join(tmpDir, "_keep/_keep", "2.jpg"), "b");
+    // remove top-level files to mimic a resumed state
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    const result = await findResumePoint(tmpDir);
+    expect(result.dir).toBe(path.join(tmpDir, "_keep/_keep"));
+    expect(result.depth).toBe(2);
   });
 });
