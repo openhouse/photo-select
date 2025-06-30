@@ -70,19 +70,22 @@ describe("triageDirectory", () => {
     await expect(fs.stat(level2)).resolves.toBeTruthy();
   });
 
-  it("stops recursion when all images kept", async () => {
-    chatCompletion.mockResolvedValueOnce(
-      JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
-    );
+  it("recurses even when all images kept", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+      );
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
       model: "test-model",
       recurse: true,
     });
-    // only initial call should happen
-    expect(chatCompletion).toHaveBeenCalledTimes(1);
-    const nested = path.join(tmpDir, "_keep", "_keep");
-    await expect(fs.stat(nested)).rejects.toThrow();
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
+    await expect(fs.stat(aside2)).resolves.toBeTruthy();
   });
 });
