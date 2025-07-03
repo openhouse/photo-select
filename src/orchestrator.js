@@ -101,19 +101,20 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes, fieldNotesDiff, observations } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotes, observations } = parseReply(reply, batch);
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
     }
     let notesDiff = fieldNotesDiff;
-    if (!notesDiff && notesFile && observations && observations.length) {
+    let notesContent = fieldNotes;
+    if (!notesDiff && !notesContent && notesFile && observations && observations.length) {
       try {
         const current = await readFile(notesFile, 'utf8');
         const obsText = observations.map((o) => `- ${o}`).join('\n');
         // Encourage the model to preserve any uncertainty expressed in the observations
-        const updatePrompt = `Current field notes:\n${current}\n\nThese observations were noted from the photos. Some may include questions or uncertain details—keep that nuance and do not overstate confidence.\n${obsText}\n\nIntegrate them into the document and return a unified diff for field-notes.md as 'field_notes_diff'.`;
+        const updatePrompt = `Current field notes:\n${current}\n\nThese observations were noted from the photos. Some may include questions or uncertain details—keep that nuance and do not overstate confidence.\n${obsText}\n\nRole play as the curators collaborating on these notes. Integrate the observations and respond with JSON { "field_notes": "<full updated file>" } and no other text.`;
         console.log(`${indent}⏳  Updating field notes…`);
         const updateReply = await chatCompletion({
           prompt: updatePrompt,
@@ -123,13 +124,22 @@ export async function triageDirectory({
         });
         console.log(`${indent}🤖  Field notes update reply:\n${updateReply}`);
         const parsed = parseReply(updateReply, []);
-        notesDiff = parsed.fieldNotesDiff;
+        notesContent = parsed.fieldNotes || notesContent;
+        notesDiff = parsed.fieldNotesDiff || notesDiff;
       } catch (err) {
         console.warn(`${indent}⚠️  Field notes second call failed: ${err.message}`);
       }
     }
 
-    if (notesDiff && notesFile) {
+    if (notesContent && notesFile) {
+      try {
+        const content = notesContent.endsWith('\n') ? notesContent : notesContent + '\n';
+        await writeFile(notesFile, content, 'utf8');
+        console.log(`${indent}📒  Updated field notes`);
+      } catch (err) {
+        console.warn(`${indent}⚠️  Field notes update failed: ${err.message}`);
+      }
+    } else if (notesDiff && notesFile) {
       try {
         const current = await readFile(notesFile, 'utf8');
         let patched;

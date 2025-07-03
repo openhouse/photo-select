@@ -260,6 +260,7 @@ export function parseReply(text, allFiles) {
   const notes = new Map();
   const minutes = [];
   let fieldNotesDiff = "";
+  let fieldNotes = "";
   const observations = [];
 
   // Try JSON first
@@ -272,6 +273,11 @@ export function parseReply(text, allFiles) {
         fieldNotesDiff = node.field_notes_diff;
       } else if (typeof node.fieldNotesDiff === 'string' && !fieldNotesDiff) {
         fieldNotesDiff = node.fieldNotesDiff;
+      }
+      if (typeof node.field_notes === 'string' && !fieldNotes) {
+        fieldNotes = node.field_notes;
+      } else if (typeof node.fieldNotes === 'string' && !fieldNotes) {
+        fieldNotes = node.fieldNotes;
       }
       if (Array.isArray(node.observations)) observations.push(...node.observations.map(String));
       if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
@@ -351,5 +357,14 @@ export function parseReply(text, allFiles) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes, fieldNotesDiff, observations };
+  return {
+    keep: [...keep],
+    aside: [...aside],
+    unclassified,
+    notes,
+    minutes,
+    fieldNotesDiff,
+    fieldNotes,
+    observations,
+  };
 }

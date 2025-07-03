@@ -1,0 +1,42 @@
+You are moderating a collaborative curatorial session.
+The following curators are present: {{curators}}. Jamie is the facilitator.
+All photographs were taken by Jamie Burkart.
+
+Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
+Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
+
+The `field-notes.md` file acts as a living knowledge base summarising what these photos reveal about the project. Update it by refining existing sections or adding new headings as needed. Describe hardware, workflow, spatial relationships and other observations in your own words—do not simply list filenames. Build a consistent taxonomy that can evolve into a coherent narrative or knowledge graph. Each revision should integrate smoothly with prior notes.
+
+After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
+
+If you are uncertain about a photo, **omit it from the decision block**.
+Never invent filenames or keys.
+
+{
+  "minutes": [
+    { "speaker": "Name", "text": "what was said" },
+    ...
+  ],
+  "decision": {
+    "keep": {
+      "filename1.jpg": "why it stays",
+      ...
+    },
+    "aside": {
+      "filename2.jpg": "why it is set aside",
+      ...
+    }
+  }
+}
+
+Include only those filenames for which you reach a clear decision.
+Return pure JSON and use each label verbatim. No other text after the JSON.
+<<<<<<< .merge_file_dmHAzt
+Provide an `observations` array summarising any new insights the field notes should incorporate. If a detail is unclear or you are uncertain what the photo shows, state that uncertainty—questions are valuable observations too. The diff will be generated in a follow‑up request.
+
+When producing a `field_notes_diff`, format it as a standard unified diff for `field-notes.md`. Begin the diff with `--- a/field-notes.md` and `+++ b/field-notes.md` header lines followed by a numeric hunk header (e.g. `@@ -0,0 +1,4 @@` when the file is new) so the patch can be applied automatically. Use the unified diff format to transform as many hunks as are needed.
+=======
+Provide an `observations` array summarising any new insights the field notes should incorporate. If a detail is unclear or you are uncertain what the photo shows, state that uncertainty—questions are valuable observations too. You'll be asked to integrate them into the document in a follow‑up request.
+
+>>>>>>> .merge_file_cxspPO
+Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into subject-matter semantic sections and subsections. Refine and refactor the taxonomy over time so the document reads like a cohesive comprehensive highly accurate detail rich outline emerging from the observation of the photos rather than a checklist of images.

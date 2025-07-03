@@ -127,7 +127,7 @@ describe("triageDirectory", () => {
         JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"], observations: ["obs1"] })
       )
       .mockResolvedValueOnce(
-        JSON.stringify({ field_notes_diff: "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n+obs1" })
+        JSON.stringify({ field_notes: "obs1" })
       );
     await triageDirectory({
       dir: tmpDir,

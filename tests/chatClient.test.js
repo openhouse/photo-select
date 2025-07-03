@@ -119,6 +119,13 @@ describe("parseReply", () => {
     const { fieldNotesDiff } = parseReply(reply, files);
     expect(fieldNotesDiff).toBe(diff);
   });
+
+  it("captures full field notes", () => {
+    const text = "# Notes";
+    const reply = JSON.stringify({ keep: [], aside: [], field_notes: text });
+    const { fieldNotes } = parseReply(reply, files);
+    expect(fieldNotes).toBe(text);
+  });
 });
 
 /** Verify images are labelled in messages */
