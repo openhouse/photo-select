@@ -48,7 +48,7 @@ export async function triageDirectory({
       if (existing.trim()) {
         prompt += `\n\nField notes so far:\n${existing}`;
       }
-      prompt += `\n\nInclude a 'field_notes_diff' field with a unified diff for field-notes.md.`;
+      prompt += `\n\nInclude a 'field_notes_diff' field with a unified diff for field-notes.md. Begin the diff with '--- a/field-notes.md' and '+++ b/field-notes.md' header lines followed by a numeric hunk header.`;
     } catch {
       // ignore read errors
     }
@@ -105,11 +105,35 @@ export async function triageDirectory({
     if (fieldNotesDiff && notesFile) {
       try {
         const current = await readFile(notesFile, 'utf8');
-        let patched = applyPatch(current, fieldNotesDiff);
-        if (patched === false) {
-          patched = applyPatch(current, fieldNotesDiff, { fuzzFactor: 10 });
+        let patched;
+        try {
+          patched = applyPatch(current, fieldNotesDiff);
+        } catch {
+          patched = false;
         }
-        if (patched === false) {
+        if (patched === false || patched === current) {
+          try {
+            patched = applyPatch(current, fieldNotesDiff, { fuzzFactor: 10 });
+          } catch {
+            patched = false;
+          }
+        }
+        if ((patched === false || patched === current) && !fieldNotesDiff.trim().startsWith('---')) {
+          const guess = `--- a/field-notes.md\n+++ b/field-notes.md\n${fieldNotesDiff}`;
+          try {
+            patched = applyPatch(current, guess);
+          } catch {
+            patched = false;
+          }
+          if (patched === false || patched === current) {
+            try {
+              patched = applyPatch(current, guess, { fuzzFactor: 10 });
+            } catch {
+              patched = false;
+            }
+          }
+        }
+        if (patched === false || patched === current) {
           const additions = fieldNotesDiff
             .split('\n')
             .filter((l) => l.startsWith('+') && !l.startsWith('+++'))

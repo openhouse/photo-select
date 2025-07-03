@@ -102,4 +102,22 @@ describe("triageDirectory", () => {
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/new/);
   });
+
+  it("handles diffs missing headers", async () => {
+    const diff = "+foo\n+bar";
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"], field_notes_diff: diff })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    const notesPath = path.join(tmpDir, "field-notes.md");
+    const content = await fs.readFile(notesPath, "utf8");
+    expect(content).toMatch(/foo/);
+    expect(content).toMatch(/bar/);
+  });
 });
