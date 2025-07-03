@@ -31,6 +31,7 @@ Never invent filenames or keys.
 
 Include only those filenames for which you reach a clear decision.
 Return pure JSON and use each label verbatim. No other text after the JSON.
+Provide an `observations` array summarising any new insights the field notes should incorporate. If a detail is unclear or you are uncertain what the photo shows, state that uncertainty—questions are valuable observations too. The diff will be generated in a follow‑up request.
 
-When adding a `field_notes_diff` property, format it as a standard unified diff for `field-notes.md`. Begin the diff with `--- a/field-notes.md` and `+++ b/field-notes.md` header lines followed by a numeric hunk header (e.g. `@@ -0,0 +1,4 @@` when the file is new) so the patch can be applied automatically. Use the unified diff format to transform as many hunks as are needed.
-Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into subject-matter semantic sections and subsections. Refine and refactor the taxonomy over time so the document reads like a cohesive comprehensive highly accurate detail rich comprehensive outline—emerging from the observation of the photos—rather than a checklist of images.
+When producing a `field_notes_diff`, format it as a standard unified diff for `field-notes.md`. Begin the diff with `--- a/field-notes.md` and `+++ b/field-notes.md` header lines followed by a numeric hunk header (e.g. `@@ -0,0 +1,4 @@` when the file is new) so the patch can be applied automatically. Use the unified diff format to transform as many hunks as are needed.
+Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into subject-matter semantic sections and subsections. Refine and refactor the taxonomy over time so the document reads like a cohesive comprehensive highly accurate detail rich outline emerging from the observation of the photos rather than a checklist of images.

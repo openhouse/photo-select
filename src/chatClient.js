@@ -102,7 +102,7 @@ export async function buildMessages(prompt, images, curators = []) {
   const userText = {
     role: "user",
     content: [
-      { type: "text", text: ensureJsonMention("Here are the images:") },
+      { type: "text", text: ensureJsonMention(images.length ? "Here are the images:" : "Additional context:") },
       ...userImageParts,
     ],
   };
@@ -143,7 +143,7 @@ export async function buildInput(prompt, images, curators = []) {
       {
         role: "user",
         content: [
-          { type: "input_text", text: ensureJsonMention("Here are the images:") },
+          { type: "input_text", text: ensureJsonMention(images.length ? "Here are the images:" : "Additional context:") },
           ...imageParts,
         ],
       },
@@ -260,6 +260,7 @@ export function parseReply(text, allFiles) {
   const notes = new Map();
   const minutes = [];
   let fieldNotesDiff = "";
+  const observations = [];
 
   // Try JSON first
   try {
@@ -272,6 +273,7 @@ export function parseReply(text, allFiles) {
       } else if (typeof node.fieldNotesDiff === 'string' && !fieldNotesDiff) {
         fieldNotesDiff = node.fieldNotesDiff;
       }
+      if (Array.isArray(node.observations)) observations.push(...node.observations.map(String));
       if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
 
       if (node.keep && node.aside) return node;
@@ -349,5 +351,5 @@ export function parseReply(text, allFiles) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes, fieldNotesDiff };
+  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes, fieldNotesDiff, observations };
 }

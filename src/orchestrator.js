@@ -96,30 +96,52 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes, fieldNotesDiff } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff, observations } = parseReply(reply, batch);
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
     }
-    if (fieldNotesDiff && notesFile) {
+    let notesDiff = fieldNotesDiff;
+    if (!notesDiff && notesFile && observations && observations.length) {
+      try {
+        const current = await readFile(notesFile, 'utf8');
+        const obsText = observations.map((o) => `- ${o}`).join('\n');
+        // Encourage the model to preserve any uncertainty expressed in the observations
+        const updatePrompt = `Current field notes:\n${current}\n\nThese observations were noted from the photos. Some may include questions or uncertain details—keep that nuance and do not overstate confidence.\n${obsText}\n\nIntegrate them into the document and return a unified diff for field-notes.md as 'field_notes_diff'.`;
+        console.log(`${indent}⏳  Updating field notes…`);
+        const updateReply = await chatCompletion({
+          prompt: updatePrompt,
+          images: [],
+          model,
+          curators,
+        });
+        console.log(`${indent}🤖  Field notes update reply:\n${updateReply}`);
+        const parsed = parseReply(updateReply, []);
+        notesDiff = parsed.fieldNotesDiff;
+      } catch (err) {
+        console.warn(`${indent}⚠️  Field notes second call failed: ${err.message}`);
+      }
+    }
+
+    if (notesDiff && notesFile) {
       try {
         const current = await readFile(notesFile, 'utf8');
         let patched;
         try {
-          patched = applyPatch(current, fieldNotesDiff);
+          patched = applyPatch(current, notesDiff);
         } catch {
           patched = false;
         }
         if (patched === false || patched === current) {
           try {
-            patched = applyPatch(current, fieldNotesDiff, { fuzzFactor: 10 });
+            patched = applyPatch(current, notesDiff, { fuzzFactor: 10 });
           } catch {
             patched = false;
           }
         }
-        if ((patched === false || patched === current) && !fieldNotesDiff.trim().startsWith('---')) {
-          const guess = `--- a/field-notes.md\n+++ b/field-notes.md\n${fieldNotesDiff}`;
+        if ((patched === false || patched === current) && !notesDiff.trim().startsWith('---')) {
+          const guess = `--- a/field-notes.md\n+++ b/field-notes.md\n${notesDiff}`;
           try {
             patched = applyPatch(current, guess);
           } catch {
@@ -134,7 +156,7 @@ export async function triageDirectory({
           }
         }
         if (patched === false || patched === current) {
-          const additions = fieldNotesDiff
+          const additions = notesDiff
             .split('\n')
             .filter((l) => l.startsWith('+') && !l.startsWith('+++'))
             .map((l) => l.slice(1));
@@ -190,7 +212,8 @@ export async function triageDirectory({
         try {
           await stat(childNotes);
         } catch {
-          try { await copyFile(notesFile, childNotes); } catch {}
+          // start a fresh field-notes.md at this level
+          try { await writeFile(childNotes, '', { flag: 'a' }); } catch {}
         }
       }
       await triageDirectory({
