@@ -98,7 +98,7 @@ describe("triageDirectory", () => {
       recurse: false,
       fieldNotes: true,
     });
-    const notesPath = path.join(tmpDir, "field-notes.md");
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/new/);
   });
@@ -115,9 +115,66 @@ describe("triageDirectory", () => {
       recurse: false,
       fieldNotes: true,
     });
-    const notesPath = path.join(tmpDir, "field-notes.md");
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/foo/);
     expect(content).toMatch(/bar/);
+  });
+
+  it("updates field notes via second call when observations provided", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"], observations: ["obs1"] })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ field_notes: "obs1" })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
+    const content = await fs.readFile(notesPath, "utf8");
+    expect(content).toMatch(/obs1/);
+  });
+
+  it("starts a new field notes file at each recursion level", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          keep: ["1.jpg"],
+          aside: ["2.jpg"],
+          field_notes_diff: "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n+parent",
+        })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          keep: [],
+          aside: ["1.jpg"],
+          field_notes_diff: "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n+child",
+        })
+      );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      fieldNotes: true,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const parentPath = path.join(tmpDir, "_level-001", "field-notes.md");
+    const childPath = path.join(tmpDir, "_keep", "_level-002", "field-notes.md");
+    const parentContent = await fs.readFile(parentPath, "utf8");
+    const childContent = await fs.readFile(childPath, "utf8");
+    expect(parentContent).toMatch(/parent/);
+    expect(parentContent).not.toMatch(/child/);
+    expect(childContent).toMatch(/child/);
+    expect(childContent).not.toMatch(/parent/);
   });
 });

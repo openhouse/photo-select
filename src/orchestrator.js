@@ -21,6 +21,10 @@ export async function triageDirectory({
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
+  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+
+  const initImages = await listImages(dir);
+
   let prompt = await readPrompt(promptPath);
   if (contextPath) {
     try {
@@ -37,7 +41,8 @@ export async function triageDirectory({
 
   let notesFile;
   if (fieldNotes) {
-    notesFile = notesPath || path.join(dir, 'field-notes.md');
+    await mkdir(levelDir, { recursive: true });
+    notesFile = notesPath || path.join(levelDir, 'field-notes.md');
     try {
       await stat(notesFile);
     } catch {
@@ -57,13 +62,13 @@ export async function triageDirectory({
   console.log(`${indent}📁  Scanning ${dir}`);
 
   // Archive original images at this level
-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  const initImages = await listImages(dir);
   try {
     await stat(levelDir);
   } catch {
-    if (initImages.length) {
+    if (initImages.length || fieldNotes) {
       await mkdir(levelDir, { recursive: true });
+    }
+    if (initImages.length) {
       await Promise.all(
         initImages.map((file) =>
           copyFile(file, path.join(levelDir, path.basename(file)))
@@ -96,30 +101,62 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes, fieldNotesDiff } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotes, observations } = parseReply(reply, batch);
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
     }
-    if (fieldNotesDiff && notesFile) {
+    let notesDiff = fieldNotesDiff;
+    let notesContent = fieldNotes;
+    if (!notesDiff && !notesContent && notesFile && observations && observations.length) {
+      try {
+        const current = await readFile(notesFile, 'utf8');
+        const obsText = observations.map((o) => `- ${o}`).join('\n');
+        // Encourage the model to preserve any uncertainty expressed in the observations
+        const updatePrompt = `Current field notes:\n${current}\n\nThese observations were noted from the photos. Some may include questions or uncertain details—keep that nuance and do not overstate confidence.\n${obsText}\n\nRole play as the curators collaborating on these notes. Integrate the observations and respond with JSON { "field_notes": "<full updated file>" } and no other text.`;
+        console.log(`${indent}⏳  Updating field notes…`);
+        const updateReply = await chatCompletion({
+          prompt: updatePrompt,
+          images: [],
+          model,
+          curators,
+        });
+        console.log(`${indent}🤖  Field notes update reply:\n${updateReply}`);
+        const parsed = parseReply(updateReply, []);
+        notesContent = parsed.fieldNotes || notesContent;
+        notesDiff = parsed.fieldNotesDiff || notesDiff;
+      } catch (err) {
+        console.warn(`${indent}⚠️  Field notes second call failed: ${err.message}`);
+      }
+    }
+
+    if (notesContent && notesFile) {
+      try {
+        const content = notesContent.endsWith('\n') ? notesContent : notesContent + '\n';
+        await writeFile(notesFile, content, 'utf8');
+        console.log(`${indent}📒  Updated field notes`);
+      } catch (err) {
+        console.warn(`${indent}⚠️  Field notes update failed: ${err.message}`);
+      }
+    } else if (notesDiff && notesFile) {
       try {
         const current = await readFile(notesFile, 'utf8');
         let patched;
         try {
-          patched = applyPatch(current, fieldNotesDiff);
+          patched = applyPatch(current, notesDiff);
         } catch {
           patched = false;
         }
         if (patched === false || patched === current) {
           try {
-            patched = applyPatch(current, fieldNotesDiff, { fuzzFactor: 10 });
+            patched = applyPatch(current, notesDiff, { fuzzFactor: 10 });
           } catch {
             patched = false;
           }
         }
-        if ((patched === false || patched === current) && !fieldNotesDiff.trim().startsWith('---')) {
-          const guess = `--- a/field-notes.md\n+++ b/field-notes.md\n${fieldNotesDiff}`;
+        if ((patched === false || patched === current) && !notesDiff.trim().startsWith('---')) {
+          const guess = `--- a/field-notes.md\n+++ b/field-notes.md\n${notesDiff}`;
           try {
             patched = applyPatch(current, guess);
           } catch {
@@ -134,7 +171,7 @@ export async function triageDirectory({
           }
         }
         if (patched === false || patched === current) {
-          const additions = fieldNotesDiff
+          const additions = notesDiff
             .split('\n')
             .filter((l) => l.startsWith('+') && !l.startsWith('+++'))
             .map((l) => l.slice(1));
@@ -184,15 +221,6 @@ export async function triageDirectory({
     }
 
     if (keepCount && asideCount) {
-      let childNotes;
-      if (notesFile) {
-        childNotes = path.join(keepDir, path.basename(notesFile));
-        try {
-          await stat(childNotes);
-        } catch {
-          try { await copyFile(notesFile, childNotes); } catch {}
-        }
-      }
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -201,7 +229,6 @@ export async function triageDirectory({
         curators,
         contextPath,
         fieldNotes,
-        notesPath: childNotes,
         depth: depth + 1,
       });
     } else if (keepCount || asideCount) {

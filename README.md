@@ -98,7 +98,7 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--field-notes` | `false` | Maintain a field-notes.md file at each recursion level |
+| `--field-notes` | `false` | Maintain a field-notes.md file at each recursion level. Each level starts fresh and the notes live under its `_level-XXX` snapshot folder. |
 
 ### People metadata (optional)
 
@@ -255,10 +255,10 @@ through that API, so no extra flags are needed.
 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
 5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
-6. If `--field-notes` is enabled, apply the `field_notes_diff` output to a `field-notes.md` file and copy it into deeper levels. The diff should use standard unified patch headers—`--- a/field-notes.md`, `+++ b/field-notes.md`, and a numeric hunk header such as `@@ -0,0 +1,4 @@` for a new file—so it can be applied automatically.
+6. If `--field-notes` is enabled, the first reply may include an `observations` array. Those observations are sent to a follow‑up OpenAI call which returns `{ "field_notes": "…" }` with the full document. The CLI overwrites `field-notes.md` under the level snapshot directory (e.g. `_level-001/field-notes.md`) with that text. If a `field_notes_diff` or `field_notes` value is returned directly, it’s applied immediately. Each recursion level starts with a blank file instead of copying the parent.
 7. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
-8. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
+8. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing both a snapshot of the images originally present and that level's `field-notes.md` file.
 9. Stop when a directory has zero unclassified images.
 
 ### JSON mode
