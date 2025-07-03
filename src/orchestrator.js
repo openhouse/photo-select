@@ -105,7 +105,19 @@ export async function triageDirectory({
     if (fieldNotesDiff && notesFile) {
       try {
         const current = await readFile(notesFile, 'utf8');
-        const patched = applyPatch(current, fieldNotesDiff);
+        let patched = applyPatch(current, fieldNotesDiff);
+        if (patched === false) {
+          patched = applyPatch(current, fieldNotesDiff, { fuzzFactor: 10 });
+        }
+        if (patched === false) {
+          const additions = fieldNotesDiff
+            .split('\n')
+            .filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+            .map((l) => l.slice(1));
+          if (additions.length) {
+            patched = current + (current.endsWith('\n') ? '' : '\n') + additions.join('\n') + '\n';
+          }
+        }
         if (patched === false) {
           console.warn(`${indent}⚠️  Could not apply field notes diff`);
         } else {
