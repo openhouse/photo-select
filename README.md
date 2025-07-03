@@ -3,6 +3,8 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+All images processed with this tool are presumed to be photographs by **Jamie Burkart**.
+
 ---
 
 ## Requirements
