@@ -32,4 +32,4 @@ Include only those filenames for which you reach a clear decision.
 Return pure JSON and use each label verbatim. No other text after the JSON.
 
 When adding a `field_notes_diff` property, format it as a standard unified diff for `field-notes.md`. Begin the diff with `--- a/field-notes.md` and `+++ b/field-notes.md` header lines followed by a numeric hunk header (e.g. `@@ -0,0 +1,4 @@` when the file is new) so the patch can be applied automatically.
-Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into sections and subsections describing locations, hardware, workflows, or events. Refine the taxonomy over time so the document reads like a cohesive narrative rather than a checklist of images.
+Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into subject-matter semantic sections and subsections. Refine and refactor the taxonomy over time so the document reads like a cohesive comprehensive highly accurate detail rich comprehensive outline—emerging from the observation of the photos—rather than a checklist of images.
