@@ -28,3 +28,7 @@ Never invent filenames or keys.
 
 Include only those filenames for which you reach a clear decision.
 Return pure JSON and use each label verbatim. No other text after the JSON.
+
+When adding a `field_notes_diff` property, format it as a standard unified diff
+for `field-notes.md`. Use numeric hunk headers (e.g. `@@ -0,0 +1,4 @@`) when the
+file is new so the patch can be applied automatically.
