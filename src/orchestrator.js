@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
+import { applyPatch } from "diff";
 
 /**
  * Recursively triage images until the current directory is empty
@@ -15,6 +16,8 @@ export async function triageDirectory({
   recurse = true,
   curators = [],
   contextPath,
+  fieldNotes = false,
+  notesPath,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -30,6 +33,25 @@ export async function triageDirectory({
   if (curators.length) {
     const names = curators.join(', ');
     prompt = prompt.replace(/\{\{curators\}\}/g, names);
+  }
+
+  let notesFile;
+  if (fieldNotes) {
+    notesFile = notesPath || path.join(dir, 'field-notes.md');
+    try {
+      await stat(notesFile);
+    } catch {
+      await writeFile(notesFile, '', { flag: 'a' });
+    }
+    try {
+      const existing = await readFile(notesFile, 'utf8');
+      if (existing.trim()) {
+        prompt += `\n\nField notes so far:\n${existing}`;
+      }
+      prompt += `\n\nInclude a 'field_notes_diff' field with a unified diff for field-notes.md.`;
+    } catch {
+      // ignore read errors
+    }
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
@@ -74,11 +96,25 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff } = parseReply(reply, batch);
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+    }
+    if (fieldNotesDiff && notesFile) {
+      try {
+        const current = await readFile(notesFile, 'utf8');
+        const patched = applyPatch(current, fieldNotesDiff);
+        if (patched === false) {
+          console.warn(`${indent}⚠️  Could not apply field notes diff`);
+        } else {
+          await writeFile(notesFile, patched, 'utf8');
+          console.log(`${indent}📒  Updated field notes`);
+        }
+      } catch (err) {
+        console.warn(`${indent}⚠️  Field notes update failed: ${err.message}`);
+      }
     }
 
     // Step 4 – move files
@@ -112,6 +148,15 @@ export async function triageDirectory({
     }
 
     if (keepCount && asideCount) {
+      let childNotes;
+      if (notesFile) {
+        childNotes = path.join(keepDir, path.basename(notesFile));
+        try {
+          await stat(childNotes);
+        } catch {
+          try { await copyFile(notesFile, childNotes); } catch {}
+        }
+      }
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -119,6 +164,8 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
+        fieldNotes,
+        notesPath: childNotes,
         depth: depth + 1,
       });
     } else if (keepCount || asideCount) {
