@@ -85,4 +85,38 @@ describe("triageDirectory", () => {
     const nested = path.join(tmpDir, "_keep", "_keep");
     await expect(fs.stat(nested)).rejects.toThrow();
   });
+
+  it("updates field notes when diff provided", async () => {
+    const diff = "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n+new";
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"], field_notes_diff: diff })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    const notesPath = path.join(tmpDir, "field-notes.md");
+    const content = await fs.readFile(notesPath, "utf8");
+    expect(content).toMatch(/new/);
+  });
+
+  it("falls back to naive patch when diff header is incomplete", async () => {
+    const diff = "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n+extra";
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"], field_notes_diff: diff })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    const notesPath = path.join(tmpDir, "field-notes.md");
+    const content = await fs.readFile(notesPath, "utf8");
+    expect(content).toMatch(/extra/);
+  });
 });

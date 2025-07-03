@@ -33,9 +33,10 @@ program
     "Text file with exhibition context for the curators"
   )
   .option("--no-recurse", "Process a single directory only")
+  .option("--field-notes", "Maintain field-notes.md at each level")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -58,6 +59,7 @@ if (apiKey) {
       recurse,
       curators,
       contextPath,
+      fieldNotes,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

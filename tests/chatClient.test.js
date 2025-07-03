@@ -112,6 +112,13 @@ describe("parseReply", () => {
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
   });
+
+  it("captures field notes diff", () => {
+    const diff = "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n-old\n+new";
+    const reply = JSON.stringify({ keep: [], aside: [], field_notes_diff: diff });
+    const { fieldNotesDiff } = parseReply(reply, files);
+    expect(fieldNotesDiff).toBe(diff);
+  });
 });
 
 /** Verify images are labelled in messages */
