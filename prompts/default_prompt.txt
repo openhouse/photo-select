@@ -4,6 +4,8 @@ The following curators are present: {{curators}}. Jamie is the facilitator.
 Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
+The `field-notes.md` file acts as a living knowledge base summarising what these photos reveal about the project. Update it by refining existing sections or adding new headings as needed. Describe hardware, workflow, spatial relationships and other observations in your own words—do not simply list filenames. Build a consistent taxonomy that can evolve into a coherent narrative or knowledge graph. Each revision should integrate smoothly with prior notes.
+
 After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
 
 If you are uncertain about a photo, **omit it from the decision block**.
@@ -30,3 +32,4 @@ Include only those filenames for which you reach a clear decision.
 Return pure JSON and use each label verbatim. No other text after the JSON.
 
 When adding a `field_notes_diff` property, format it as a standard unified diff for `field-notes.md`. Begin the diff with `--- a/field-notes.md` and `+++ b/field-notes.md` header lines followed by a numeric hunk header (e.g. `@@ -0,0 +1,4 @@` when the file is new) so the patch can be applied automatically.
+Do not organise field notes as a list keyed by filenames. Integrate observations from the photos into sections and subsections describing locations, hardware, workflows, or events. Refine the taxonomy over time so the document reads like a cohesive narrative rather than a checklist of images.
