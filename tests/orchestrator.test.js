@@ -98,7 +98,7 @@ describe("triageDirectory", () => {
       recurse: false,
       fieldNotes: true,
     });
-    const notesPath = path.join(tmpDir, "field-notes.md");
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/new/);
   });
@@ -115,7 +115,7 @@ describe("triageDirectory", () => {
       recurse: false,
       fieldNotes: true,
     });
-    const notesPath = path.join(tmpDir, "field-notes.md");
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/foo/);
     expect(content).toMatch(/bar/);
@@ -137,7 +137,7 @@ describe("triageDirectory", () => {
       fieldNotes: true,
     });
     expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const notesPath = path.join(tmpDir, "field-notes.md");
+    const notesPath = path.join(tmpDir, "_level-001", "field-notes.md");
     const content = await fs.readFile(notesPath, "utf8");
     expect(content).toMatch(/obs1/);
   });
@@ -168,8 +168,8 @@ describe("triageDirectory", () => {
     });
 
     expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const parentPath = path.join(tmpDir, "field-notes.md");
-    const childPath = path.join(tmpDir, "_keep", "field-notes.md");
+    const parentPath = path.join(tmpDir, "_level-001", "field-notes.md");
+    const childPath = path.join(tmpDir, "_keep", "_level-002", "field-notes.md");
     const parentContent = await fs.readFile(parentPath, "utf8");
     const childContent = await fs.readFile(childPath, "utf8");
     expect(parentContent).toMatch(/parent/);
