@@ -21,6 +21,10 @@ export async function triageDirectory({
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
+  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+
+  const initImages = await listImages(dir);
+
   let prompt = await readPrompt(promptPath);
   if (contextPath) {
     try {
@@ -37,7 +41,8 @@ export async function triageDirectory({
 
   let notesFile;
   if (fieldNotes) {
-    notesFile = notesPath || path.join(dir, 'field-notes.md');
+    await mkdir(levelDir, { recursive: true });
+    notesFile = notesPath || path.join(levelDir, 'field-notes.md');
     try {
       await stat(notesFile);
     } catch {
@@ -57,13 +62,13 @@ export async function triageDirectory({
   console.log(`${indent}📁  Scanning ${dir}`);
 
   // Archive original images at this level
-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  const initImages = await listImages(dir);
   try {
     await stat(levelDir);
   } catch {
-    if (initImages.length) {
+    if (initImages.length || fieldNotes) {
       await mkdir(levelDir, { recursive: true });
+    }
+    if (initImages.length) {
       await Promise.all(
         initImages.map((file) =>
           copyFile(file, path.join(levelDir, path.basename(file)))
@@ -206,16 +211,6 @@ export async function triageDirectory({
     }
 
     if (keepCount && asideCount) {
-      let childNotes;
-      if (notesFile) {
-        childNotes = path.join(keepDir, path.basename(notesFile));
-        try {
-          await stat(childNotes);
-        } catch {
-          // start a fresh field-notes.md at this level
-          try { await writeFile(childNotes, '', { flag: 'a' }); } catch {}
-        }
-      }
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -224,7 +219,6 @@ export async function triageDirectory({
         curators,
         contextPath,
         fieldNotes,
-        notesPath: childNotes,
         depth: depth + 1,
       });
     } else if (keepCount || asideCount) {
