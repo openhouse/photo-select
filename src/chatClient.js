@@ -199,6 +199,9 @@ export async function chatCompletion({
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
+      const code = err?.code || err?.cause?.code;
+      const isNetwork = err?.name === "APIConnectionError" ||
+        ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
         (err instanceof NotFoundError || err.status === 404) &&
         (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
@@ -218,9 +221,9 @@ export async function chatCompletion({
       if (attempt >= maxRetries) throw err;
       attempt += 1;
       const wait = 2 ** attempt * 1000;
-      console.warn(
-        `OpenAI error (${err.status ?? "unknown"}). Retrying in ${wait} ms…`
-      );
+      const label = isNetwork ? "network error" : "OpenAI error";
+      const codeInfo = err.status ?? code ?? "unknown";
+      console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
       await delay(wait);
     }
   }
