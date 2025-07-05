@@ -5,7 +5,6 @@ import "dotenv/config";
 import { Command } from "commander";
 import path from "node:path";
 import { DEFAULT_PROMPT_PATH } from "./config.js";
-import { buildPrompt } from "./prompt.js";
 
 const program = new Command();
 program
@@ -33,13 +32,12 @@ program
     "-x, --context <file>",
     "Text file with exhibition context for the curators"
   )
-  .option("--show-prompt", "Print the final prompt and exit")
+  .option("--show-prompt", "Print the rendered prompt before each API call")
   .option("--no-recurse", "Process a single directory only")
   .option("--field-notes", "Enable field notes workflow")
-  .option("--show-prompt", "Print the rendered prompt before each API call")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, showPrompt } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes, showPrompt } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -55,17 +53,15 @@ if (apiKey) {
     }
     const absDir = path.resolve(dir);
     const { triageDirectory } = await import("./orchestrator.js");
-    const prompt = await buildPrompt(promptPath, { curators, contextPath });
-    if (showPrompt) {
-      console.log(prompt);
-      return;
-    }
     await triageDirectory({
       dir: absDir,
-      prompt,
+      promptPath,
       model,
       recurse,
       curators,
+      contextPath,
+      fieldNotes,
+      showPrompt,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
