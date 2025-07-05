@@ -13,10 +13,12 @@ def test_cli_integration(tmp_path):
     img.write_text("")
     notes = level / "field-notes.md"
 
+    calls = []
+
     def fake_llm(payload: str) -> str:
-        data = json.loads(payload)
-        if "FIELD_NOTES_DIFF" in data:
-            return json.dumps({"field_notes_md": data["FIELD_NOTES_PREVIEW"] + "Look [DSCF0001.jpg]\n"})
+        calls.append(json.loads(payload))
+        if "FIELD_NOTES_DIFF" in calls[-1]:
+            return json.dumps({"field_notes_md": calls[-1]["FIELD_NOTES_PREVIEW"] + "Look [DSCF0001.jpg]\n"})
         else:
             from photo_select.field_notes import patch
             diff = patch.generate("", "Look [DSCF0001.jpg]\n")
@@ -24,5 +26,7 @@ def test_cli_integration(tmp_path):
 
     main(["--field-notes", str(notes)], llm=fake_llm)
     text = notes.read_text()
+    assert len(calls) == 2
+    assert "FIELD_NOTES_DIFF" in calls[1]
     assert "Look" in text
     assert "[DSCF0001.jpg](./DSCF0001.jpg)" in text

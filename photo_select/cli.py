@@ -35,16 +35,25 @@ def process_first_pass_result(
             )
             try:
                 second_result = llm(second_prompt)
-                _ = json.loads(second_result).get("field_notes_md")
+                full = json.loads(second_result).get("field_notes_md")
             except Exception as exc:  # noqa: BLE001
                 logging.warning("Act II failed: %s", exc)
-        return writer.maybe_apply_diff(diff)
+                full = None
+        if full is None:
+            return writer.maybe_apply_diff(diff)
+        new_text = writer.autolink_filenames(full, writer.path.parent)
+        old_text = writer.md
+        md_store.atomic_write(writer.path, new_text)
+        writer.md = new_text
+        lines_added = new_text.count("\n") - old_text.count("\n")
+        return PatchResult(True, lines_added)
 
     if full:
         new_text = writer.autolink_filenames(full, writer.path.parent)
+        old_text = writer.md
         md_store.atomic_write(writer.path, new_text)
         writer.md = new_text
-        lines_added = new_text.count("\n") - writer.md.count("\n")
+        lines_added = new_text.count("\n") - old_text.count("\n")
         return PatchResult(True, lines_added)
 
     logging.warning("No field notes data found in response")
