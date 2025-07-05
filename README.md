@@ -3,6 +3,12 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+## Documentation Quick-Links
+* [Architecture guide](docs/architecture.md)
+* [Agents contract](docs/agents.md)
+* [Glossary](docs/glossary.md)
+
+
 ---
 
 ## Requirements

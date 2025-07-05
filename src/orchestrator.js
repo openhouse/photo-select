@@ -46,6 +46,7 @@ export async function triageDirectory({
     context,
     fieldNotes: fieldNotesText,
   });
+  let basePrompt = prompt;
   if (fieldNotes) {
     const addonPath = new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname;
     try {
@@ -113,7 +114,7 @@ export async function triageDirectory({
           const existing = (await notesWriter.read()) || '';
           const secondPrompt = await renderTemplate(
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
-            { prompt, existing, diff: fieldNotesDiff }
+            { prompt: basePrompt, existing, diff: fieldNotesDiff }
           );
           const second = await chatCompletion({
             prompt: secondPrompt,
