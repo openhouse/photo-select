@@ -3,10 +3,7 @@ import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { z } from "zod";
-<<<<<<< HEAD
-=======
 import { Reply as ReplySchema } from "./replySchema.js";
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
@@ -228,18 +225,10 @@ export async function chatCompletion({
  */
 export function parseReply(text, allFiles, opts = {}) {
   const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
-<<<<<<< HEAD
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
-  if (fenced.startsWith('```')) {
-    const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
-=======
   let content = text.trim();
   if (content.startsWith('```')) {
     const m = content.match(/^```\w*\n([\s\S]*?)\n```$/);
     if (m) content = m[1];
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   }
   const data = ReplySchema.parse(JSON.parse(content));
 
@@ -288,63 +277,8 @@ export function parseReply(text, allFiles, opts = {}) {
   const aside = toList(data.decision.aside);
 
   const notes = new Map();
-<<<<<<< HEAD
-  const minutes = [];
-  let fieldNotesDiff = null;
-  let fieldNotesMd = null;
-
-  // Try JSON first
-  try {
-    const obj = JSON.parse(text);
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (typeof node.field_notes_diff === 'string') fieldNotesDiff = node.field_notes_diff;
-      if (typeof node.field_notes_md === 'string') fieldNotesMd = node.field_notes_md;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
-        }
-      };
-
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
-    }
-  } catch {
-    // fall through to plain text handling
-=======
   for (const [f, reason] of [...keep, ...aside]) {
     if (reason) notes.set(f, String(reason));
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   }
 
   const keepFiles = new Set(keep.map(([f]) => f));
@@ -354,32 +288,14 @@ export function parseReply(text, allFiles, opts = {}) {
   const decided = new Set([...keepFiles, ...asideFiles]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-<<<<<<< HEAD
-  // field_notes_diff/md are required for the two-pass notebook workflow.
-  // Missing keys would leave the notebook in an inconsistent state.
-  if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
-    throw new Error('field_notes_diff missing in reply');
-  }
-  if (expectFieldNotesMd && !fieldNotesMd) {
-=======
   if (expectFieldNotesDiff && !data.field_notes_diff && !data.field_notes_md) {
     throw new Error('field_notes_diff missing in reply');
   }
   if (expectFieldNotesMd && !data.field_notes_md) {
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     throw new Error('field_notes_md missing in reply');
   }
 
   return {
-<<<<<<< HEAD
-    keep: [...keep],
-    aside: [...aside],
-    unclassified,
-    notes,
-    minutes,
-    fieldNotesDiff,
-    fieldNotesMd,
-=======
     keep: [...keepFiles],
     aside: [...asideFiles],
     unclassified,
@@ -387,6 +303,5 @@ export function parseReply(text, allFiles, opts = {}) {
     minutes: data.minutes.map((m) => `${m.speaker}: ${m.text}`),
     fieldNotesDiff: data.field_notes_diff || null,
     fieldNotesMd: data.field_notes_md || null,
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   };
 }

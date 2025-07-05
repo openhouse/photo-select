@@ -99,17 +99,37 @@ describe("triageDirectory", () => {
   it("updates field notes when enabled", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({
+<<<<<<< HEAD
+<<<<<<< HEAD
+        keep: ["1.jpg"],
+        aside: ["2.jpg"],
+=======
         minutes: [{ speaker: 'A', text: 'ok?' }],
         decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
         field_notes_diff: "--- a\n+++ b\n@@\n-Old\n+New",
       })
     );
     chatCompletion.mockResolvedValueOnce(
+<<<<<<< HEAD
+<<<<<<< HEAD
+      JSON.stringify({ field_notes_md: "New" })
+=======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
       JSON.stringify({
         minutes: [{ speaker: 'B', text: 'done?' }],
         decision: { keep: [], aside: [] },
         field_notes_md: "New"
       })
+<<<<<<< HEAD
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
     );
     await triageDirectory({
       dir: tmpDir,
@@ -124,9 +144,36 @@ describe("triageDirectory", () => {
     expect(chatCompletion).toHaveBeenCalledTimes(2);
   });
 
+<<<<<<< HEAD
+<<<<<<< HEAD
+  it("fails when field_notes_diff missing", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await expect(
+      triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+        fieldNotes: true,
+      })
+    ).rejects.toThrow();
+  });
+
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+=======
   it("prints the prompt when showPrompt is true", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
     );
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     await triageDirectory({
@@ -134,7 +181,15 @@ describe("triageDirectory", () => {
       promptPath: promptFile,
       model: "test-model",
       recurse: false,
+<<<<<<< HEAD
+<<<<<<< HEAD
+      showPrompt: 'full',
+=======
       showPrompt: true,
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+      showPrompt: true,
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
     });
     const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
     expect(calls).toBe(true);

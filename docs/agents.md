@@ -1,37 +1,5 @@
 # Agents Contract  · Photo-Select
 
-<<<<<<< HEAD
----
-schema_version: 2
-updated: 2025-07-05
----
-
-This document **must be loaded by any code-assistant before touching the repo.**
-It defines binding constraints for all prompt templates. Any change here **must**
-increment `schema_version` and update tests.
-
-## 1  Synthetic Voices
-| Id | Role in Minutes | Style | Required Closing Question | May Edit Field-Notes? | Psychology Cue | Example Utterance |
-|----|-----------------|-------|---------------------------|-----------------------|----------------|------------------|
-| *Curator-A* | “Ingeborg Gerdes” | aesthetic, formal | optional | yes | reflective | "Notice the diffuse glow here." |
-| *Curator-B* | “Alexandra Munroe” | scholarly, contextual | optional | yes | analytic | "This recalls earlier site works." |
-| … | … | … | optional | yes | varied | "…" |
-| Facilitator | “Jamie (off-stage)” | session framing only | never | no | pragmatic | "Next batch coming up." |
-
-### schema_duty per persona
-*Curator-A*
-schema_duty: ensures field_notes_diff syntax is valid unified diff.
-
-*Curator-B*
-schema_duty: checks contextual accuracy in minutes.
-
-*Facilitator*
-schema_duty: none; outside minutes/decisions.
-
-> **Rule:** Minutes **always** stay within the personas above.
-> **Rule:** Decisions follow minutes, never interwoven.
-> **Rule:** Minutes end with a forward-looking question from one curator.
-=======
 This document **must be loaded by any code-assistant before touching the repo.**
 
 ## 1  Synthetic Voices
@@ -44,7 +12,6 @@ This document **must be loaded by any code-assistant before touching the repo.**
 
 > **Rule:** Minutes **always** stay within the personas above.  
 > **Rule:** Decisions follow minutes, never interwoven.
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 ## 2  Two-Pass Field-Notes Workflow
 | Phase | LLM Output | Parser expectation |

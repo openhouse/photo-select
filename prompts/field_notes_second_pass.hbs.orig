@@ -1,0 +1,24 @@
+<<<<<<< HEAD
+<<<<<<< HEAD
+{
+  "minutes": [],
+  "decision": { "keep": {}, "aside": {} },
+  "field_notes_md": "<markdown text>"
+}
+
+Before replying, ensure every required top-level key is present; if any is missing, regenerate the full response.
+
+=======
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+{{prompt}}
+
+Current field notes:
+{{existing}}
+
+Patch:
+{{diff}}
+
+The diff above has been staged. Please return a JSON object with
+`field_notes_md` containing the entire updated notebook and nothing else.
