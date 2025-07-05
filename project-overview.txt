@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Sat Jul  5 01:42:32 EDT 2025
+Generated on: Sat Jul  5 16:22:31 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -15,22 +15,41 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 ├── .env.example
 ├── .gitignore
 ├── .nvmrc
+├── CHANGELOG.md
 ├── docs
 │   ├── agents.md
+│   ├── agents.md.orig
 │   ├── architecture.md
-│   └── glossary.md
+│   ├── glossary.md
+│   └── glossary.md.orig
 ├── package-lock.json
 ├── package-lock.json.orig
 ├── package.json
+├── photo_select
+│   ├── __init__.py
+│   ├── cli.py
+│   └── field_notes
+│       ├── __init__.py
+│       ├── md_store.py
+│       ├── patch.py
+│       ├── tests
+│       │   ├── test_autolink.py
+│       │   ├── test_cli_field_notes.py
+│       │   ├── test_patch.py
+│       │   └── test_writer.py
+│       └── writer.py
 ├── photo-select-here.sh
 ├── prompts
 │   ├── default_prompt_olympia.hbs
 │   ├── default_prompt.hbs
+│   ├── default_prompt.hbs.orig
 │   ├── field_notes_addon.txt
-│   └── field_notes_second_pass.hbs
+│   ├── field_notes_second_pass.hbs
+│   └── field_notes_second_pass.hbs.orig
 ├── README.md
 ├── README.md.orig
 ├── reply.schema.json
+├── requirements.txt
 ├── scripts
 │   ├── export_sqlite.js
 │   ├── generate_schema.js
@@ -44,8 +63,10 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   ├── hash.js
 │   ├── imageSelector.js
 │   ├── index.js
+│   ├── index.js.orig
 │   ├── orchestrator.js
 │   ├── orchestrator.js.orig
+│   ├── prompt.js
 │   ├── replySchema.js
 │   └── replySchema.ts
 └── tests
@@ -54,9 +75,10 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── fieldNotes.test.js
     ├── imageSelector.test.js
     ├── orchestrator.test.js
+    ├── orchestrator.test.js.orig
     └── schema.test.js
 
-6 directories, 40 files
+9 directories, 59 files
 ```
 
 ---
@@ -114,9 +136,395 @@ else
 fi
 ```
 
+### File: ./photo_select
+```
+(File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./photo_select/__init__.py
+```
+"""photo_select package placeholder."""
+```
+
+### File: ./photo_select/cli.py
+```
+"""Command-line interface placeholder."""
+
+import argparse
+import json
+import logging
+from pathlib import Path
+from typing import Callable
+
+from .field_notes.writer import FieldNotesWriter, PatchResult
+from .field_notes import md_store
+
+
+def process_first_pass_result(
+    writer: FieldNotesWriter,
+    result_json: str,
+    llm: Callable[[str], str] | None = None,
+) -> PatchResult | None:
+    """Handle first-pass LLM result and update notes when possible."""
+    try:
+        data = json.loads(result_json)
+    except json.JSONDecodeError as exc:
+        logging.warning("Bad JSON from first pass: %s", exc)
+        return None
+
+    diff = data.get("field_notes_diff")
+    full = data.get("field_notes_md")
+
+    if diff:
+        if llm is not None:
+            second_prompt = json.dumps(
+                {
+                    "FIELD_NOTES_PREVIEW": writer.md,
+                    "FIELD_NOTES_DIFF": diff,
+                }
+            )
+            try:
+                second_result = llm(second_prompt)
+                _ = json.loads(second_result).get("field_notes_md")
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Act II failed: %s", exc)
+        return writer.maybe_apply_diff(diff)
+
+    if full:
+        new_text = writer.autolink_filenames(full, writer.path.parent)
+        md_store.atomic_write(writer.path, new_text)
+        writer.md = new_text
+        lines_added = new_text.count("\n") - writer.md.count("\n")
+        return PatchResult(True, lines_added)
+
+    logging.warning("No field notes data found in response")
+    return None
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(prog="photo-select")
+    parser.add_argument("--field-notes", action="store_true", help="Enable living field-notes.md generation with curator diff workflow.")
+    parser.add_argument("path", nargs="?", default="field-notes.md")
+    return parser.parse_args(argv)
+
+
+def main(argv=None, llm: Callable[[str], str] | None = None):
+    args = parse_args(argv)
+    if args.field_notes:
+        path = Path(args.path)
+        level = path.parent.name.split("-")[-1]
+        writer = FieldNotesWriter(path, level=level)
+        payload = json.dumps(writer.first_pass_payload())
+        if llm is None:
+            print(payload)
+            return
+        first_res = llm(payload)
+        result = process_first_pass_result(writer, first_res, llm)
+        if isinstance(result, PatchResult) and result.applied:
+            print(
+                f"\U0001F4D2  Updated field-notes (level-{writer.level}) — +{result.lines_added} lines"
+            )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### File: ./photo_select/field_notes
+```
+(File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./photo_select/field_notes/patch.py
+```
+import difflib
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+def generate(old: str, new: str) -> str:
+    """Return a unified diff between old and new."""
+    diff = difflib.unified_diff(
+        old.splitlines(True),
+        new.splitlines(True),
+        fromfile="a/field-notes.md",
+        tofile="b/field-notes.md",
+    )
+    return "".join(diff)
+
+
+def apply(old: str, diff: str) -> str:
+    """Apply a unified diff to ``old`` and return the new text.
+
+    Falls back to the pure Python ``patch-ng`` library when the ``patch``
+    binary is unavailable.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        old_path = Path(td) / "field-notes.md"
+        patch_path = Path(td) / "patch.diff"
+        old_path.write_text(old)
+        patch_path.write_text(diff)
+        try:
+            subprocess.run(
+                ["patch", old_path.name, patch_path.name],
+                cwd=td,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except FileNotFoundError:
+            from patch_ng import fromfile
+            patchset = fromfile(str(patch_path))
+            if not patchset or not patchset.apply(root=td):
+                raise RuntimeError("patch failed")
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(exc.stderr.strip() or "patch failed")
+        return old_path.read_text()
+```
+
+### File: ./photo_select/field_notes/tests
+```
+(File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./photo_select/field_notes/tests/test_autolink.py
+```
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from photo_select.field_notes.writer import FieldNotesWriter
+
+
+def test_autolink_filenames(tmp_path):
+    img = tmp_path / "DSCF1.JPG"
+    img.write_text("")
+    md = "See [DSCF1.JPG]"
+    linked = FieldNotesWriter.autolink_filenames(md, tmp_path)
+    assert "[DSCF1.JPG](./DSCF1.JPG)" in linked
+```
+
+### File: ./photo_select/field_notes/tests/test_writer.py
+```
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from photo_select.field_notes.writer import FieldNotesWriter, PatchResult
+from photo_select.field_notes import patch
+
+
+def test_writer_happy(tmp_path):
+    md = tmp_path / "notes.md"
+    md.write_text("hello\n")
+    writer = FieldNotesWriter(md, level="001")
+    diff = patch.generate("hello\n", "hello world\n")
+    result = writer.maybe_apply_diff(diff)
+    assert isinstance(result, PatchResult) and result.applied
+    text = md.read_text()
+    assert "hello world" in text
+    assert "<!-- updated:" in text
+
+
+def test_noop_diff(tmp_path):
+    md = tmp_path / "notes.md"
+    md.write_text("same\n")
+    writer = FieldNotesWriter(md, level="001")
+    diff = patch.generate("same\n", "same\n")
+    result = writer.maybe_apply_diff(diff)
+    assert result.applied is False
+    assert md.read_text() == "same\n"
+
+
+def test_broken_diff(tmp_path):
+    md = tmp_path / "notes.md"
+    md.write_text("base\n")
+    writer = FieldNotesWriter(md, level="001")
+    diff = patch.generate("other\n", "changed\n")
+    result = writer.maybe_apply_diff(diff)
+    assert result.applied is False
+    assert md.read_text() == "base\n"
+
+
+def test_autolink(tmp_path):
+    md = tmp_path / "notes.md"
+    (tmp_path / "DSCF0001.jpg").write_text("\n")
+    md.write_text("Look at [DSCF0001.jpg]\n")
+    writer = FieldNotesWriter(md, level="001")
+    diff = patch.generate(writer.md, writer.md + "More info\n")
+    writer.maybe_apply_diff(diff)
+    assert "[DSCF0001.jpg](./DSCF0001.jpg)" in md.read_text()
+```
+
+### File: ./photo_select/field_notes/tests/test_cli_field_notes.py
+```
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from photo_select.cli import main
+
+
+def test_cli_integration(tmp_path):
+    level = tmp_path / "_level-001"
+    level.mkdir()
+    img = level / "DSCF0001.jpg"
+    img.write_text("")
+    notes = level / "field-notes.md"
+
+    def fake_llm(payload: str) -> str:
+        data = json.loads(payload)
+        if "FIELD_NOTES_DIFF" in data:
+            return json.dumps({"field_notes_md": data["FIELD_NOTES_PREVIEW"] + "Look [DSCF0001.jpg]\n"})
+        else:
+            from photo_select.field_notes import patch
+            diff = patch.generate("", "Look [DSCF0001.jpg]\n")
+            return json.dumps({"field_notes_diff": diff})
+
+    main(["--field-notes", str(notes)], llm=fake_llm)
+    text = notes.read_text()
+    assert "Look" in text
+    assert "[DSCF0001.jpg](./DSCF0001.jpg)" in text
+```
+
+### File: ./photo_select/field_notes/tests/test_patch.py
+```
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from photo_select.field_notes import patch
+
+
+def test_round_trip():
+    old = "a\n"
+    new = "b\n"
+    diff = patch.generate(old, new)
+    assert patch.apply(old, diff) == new
+```
+
+### File: ./photo_select/field_notes/__init__.py
+```
+"""Field notes helpers."""
+
+from .writer import FieldNotesWriter
+from . import md_store, patch
+
+__all__ = ["FieldNotesWriter", "md_store", "patch"]
+```
+
+### File: ./photo_select/field_notes/md_store.py
+```
+from pathlib import Path
+
+
+def get(path: Path) -> str:
+    """Return file contents or empty string if the file is missing."""
+    try:
+        return path.read_text()
+    except FileNotFoundError:
+        return ""
+
+
+def atomic_write(path: Path, new_text: str) -> None:
+    """Write text to a temp file then atomically replace the target."""
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(new_text)
+    temp.replace(path)
+```
+
+### File: ./photo_select/field_notes/writer.py
+```
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import re
+from pathlib import Path
+
+from . import md_store, patch
+
+_INSTR = "Add observations, open questions; propose git-style diff against the file above."
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+@dataclass
+class PatchResult:
+    applied: bool
+    lines_added: int = 0
+
+
+class FieldNotesWriter:
+    def __init__(self, path: Path, level: str | None = None):
+        self.path = path
+        self.level = level or ""
+        self.md = md_store.get(path)
+        if self.md == "":
+            header = f"## Field Notes — Level {self.level}\n\n<!-- created: {_timestamp()} -->\n"
+            self.md = header
+            md_store.atomic_write(path, self.md)
+
+    @staticmethod
+    def autolink_filenames(md_text: str, image_dir: Path) -> str:
+        """Link bare image filenames if they exist in ``image_dir``."""
+        pattern = re.compile(r"\[(\w+\.(?:jpg|jpeg|png))\]", re.IGNORECASE)
+
+        def repl(match: re.Match) -> str:
+            name = match.group(1)
+            if (image_dir / name).exists():
+                return f"[{name}](./{name})"
+            return match.group(0)
+
+        new_text = pattern.sub(repl, md_text)
+        if new_text.count("![") > 3:
+            new_text += "\n\n> **Warning**: Inline image limit exceeded.\n"
+        return new_text
+
+    def first_pass_payload(self) -> dict:
+        return {
+            "FIELD_NOTES_PREVIEW": self.md,
+            "FIELD_NOTES_INSTRUCTIONS": _INSTR,
+            "FIELD_NOTES_LEVEL": self.level,
+        }
+
+    def maybe_apply_diff(self, diff: str) -> PatchResult:
+        try:
+            new_md = patch.apply(self.md, diff)
+        except Exception as exc:
+            logging.error("Field-notes patch failed: %s", exc)
+            return PatchResult(False, 0)
+        if new_md != self.md:
+            stamp = f"\n<!-- updated: {_timestamp()} -->\n"
+            new_md += stamp
+            new_md = self.autolink_filenames(new_md, self.path.parent)
+            md_store.atomic_write(self.path, new_md)
+            lines_added = new_md.count("\n") - self.md.count("\n")
+            self.md = new_md
+            return PatchResult(True, lines_added)
+        return PatchResult(False, 0)
+```
+
 ### File: ./.DS_Store
 ```
 (File type is application/octet-stream — skipping raw dump.)
+```
+
+### File: ./requirements.txt
+```
+patch-ng>=1.17
+```
+
+### File: ./CHANGELOG.md
+```
+# Changelog
+
+## v0.9
+- Field-notes Act II flow, linked citations.
+
 ```
 
 ### File: ./package-lock.json.orig
@@ -3528,26 +3936,17 @@ describe("triageDirectory", () => {
   it("updates field notes when enabled", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({
-<<<<<<< HEAD
-        keep: ["1.jpg"],
-        aside: ["2.jpg"],
-=======
         minutes: [{ speaker: 'A', text: 'ok?' }],
         decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
         field_notes_diff: "--- a\n+++ b\n@@\n-Old\n+New",
       })
     );
     chatCompletion.mockResolvedValueOnce(
-<<<<<<< HEAD
-      JSON.stringify({ field_notes_md: "New" })
-=======
       JSON.stringify({
         minutes: [{ speaker: 'B', text: 'done?' }],
         decision: { keep: [], aside: [] },
         field_notes_md: "New"
       })
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
     await triageDirectory({
       dir: tmpDir,
@@ -3562,30 +3961,9 @@ describe("triageDirectory", () => {
     expect(chatCompletion).toHaveBeenCalledTimes(2);
   });
 
-<<<<<<< HEAD
-  it("fails when field_notes_diff missing", async () => {
-    chatCompletion.mockResolvedValueOnce(
-      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
-    );
-    await expect(
-      triageDirectory({
-        dir: tmpDir,
-        promptPath: promptFile,
-        model: "test-model",
-        recurse: false,
-        fieldNotes: true,
-      })
-    ).rejects.toThrow();
-  });
-
-  it("prints the prompt when showPrompt is true", async () => {
-    chatCompletion.mockResolvedValueOnce(
-      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
-=======
   it("prints the prompt when showPrompt is true", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     await triageDirectory({
@@ -3593,11 +3971,7 @@ describe("triageDirectory", () => {
       promptPath: promptFile,
       model: "test-model",
       recurse: false,
-<<<<<<< HEAD
-      showPrompt: 'full',
-=======
       showPrompt: true,
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     });
     const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
     expect(calls).toBe(true);
@@ -3887,6 +4261,208 @@ describe("FieldNotesWriter", () => {
 });
 ```
 
+### File: ./tests/orchestrator.test.js.orig
+```
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+
+vi.hoisted(() => {
+  process.env.OPENAI_API_KEY = "test";
+});
+
+vi.mock("../src/chatClient.js", async () => {
+  const actual = await vi.importActual("../src/chatClient.js");
+  return {
+    ...actual,
+    chatCompletion: vi.fn(),
+  };
+});
+
+import { chatCompletion } from "../src/chatClient.js";
+import { triageDirectory } from "../src/orchestrator.js";
+
+let tmpDir;
+let promptFile;
+
+beforeEach(async () => {
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-test-"));
+  await fs.writeFile(path.join(tmpDir, "1.jpg"), "a");
+  await fs.writeFile(path.join(tmpDir, "2.jpg"), "b");
+  promptFile = path.join(tmpDir, "prompt.txt");
+  await fs.writeFile(promptFile, "prompt");
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await fs.rm(tmpDir, { recursive: true, force: true });
+});
+
+describe("triageDirectory", () => {
+  it("moves files into keep and aside", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] }
+      })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+    const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+    const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+    await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+    await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+    const level = path.join(tmpDir, "_level-001", "1.jpg");
+    await expect(fs.stat(level)).resolves.toBeTruthy();
+  });
+
+  it("recurses into keep directory", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'B', text: 'next?' }], decision: { keep: [], aside: ["1.jpg"] } })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const aside2 = path.join(tmpDir, "_keep", "_aside", "1.jpg");
+    await expect(fs.stat(aside2)).resolves.toBeTruthy();
+    const level2 = path.join(tmpDir, "_keep", "_level-002", "1.jpg");
+    await expect(fs.stat(level2)).resolves.toBeTruthy();
+  });
+
+  it("recurses even when all images kept", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg", "2.jpg"], aside: [] } })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'B', text: 'next?' }], decision: { keep: [], aside: ["1.jpg", "2.jpg"] } })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
+    await expect(fs.stat(aside2)).resolves.toBeTruthy();
+  });
+
+  it("updates field notes when enabled", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+<<<<<<< HEAD
+<<<<<<< HEAD
+        keep: ["1.jpg"],
+        aside: ["2.jpg"],
+=======
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+        field_notes_diff: "--- a\n+++ b\n@@\n-Old\n+New",
+      })
+    );
+    chatCompletion.mockResolvedValueOnce(
+<<<<<<< HEAD
+<<<<<<< HEAD
+      JSON.stringify({ field_notes_md: "New" })
+=======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+      JSON.stringify({
+        minutes: [{ speaker: 'B', text: 'done?' }],
+        decision: { keep: [], aside: [] },
+        field_notes_md: "New"
+      })
+<<<<<<< HEAD
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    const noteFile = path.join(tmpDir, "_level-001", "field-notes.md");
+    const content = await fs.readFile(noteFile, "utf8");
+    expect(content).toMatch(/New/);
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+  });
+
+<<<<<<< HEAD
+<<<<<<< HEAD
+  it("fails when field_notes_diff missing", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await expect(
+      triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+        fieldNotes: true,
+      })
+    ).rejects.toThrow();
+  });
+
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+=======
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+    );
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+<<<<<<< HEAD
+<<<<<<< HEAD
+      showPrompt: 'full',
+=======
+      showPrompt: true,
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+      showPrompt: true,
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+    });
+    const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
+    expect(calls).toBe(true);
+    spy.mockRestore();
+  });
+});
+```
+
 ### File: ./tests/archive.test.js
 ```
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -3977,6 +4553,7 @@ moves the files accordingly, and then recurses until a directory is fully triage
   ```
 
 * macOS, Linux, or Windows‑WSL (uses only cross‑platform Node APIs)
+* [`patch`](https://man7.org/linux/man-pages/man1/patch.1.html) binary or the Python `patch-ng` package
 
 ## Installation
 
@@ -4059,17 +4636,15 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
 <<<<<<< HEAD
-| `--show-prompt` | `false` | Output the prompt (`full`, `hash`, or `preview`) before each API call |
-
-Each batch stores the final text sent to the model as `.prompt.txt` in its `_level-NNN/` folder. Use `--show-prompt=hash` to print only a SHA-256 of the prompt, or `--show-prompt=preview` to print the first 100 lines followed by the hash.
-=======
+| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
 | `--show-prompt` | `false` | Print the rendered prompt text before each API call |
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 Prompt files are Handlebars templates. Values such as `curators`, `context`, and
 previous `fieldNotes` are injected when each request is built.
+=======
+| `--field-notes` | `false` | Enable living field-notes.md generation with curator diff workflow |
+>>>>>>> c9b694f43b57626b45333a3d1c23ab86a8bdf6d8
 
 ### People metadata (optional)
 
@@ -4083,6 +4658,35 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
   --curators "Ingeborg Gerdes, Alexandra Munroe, Mandy Steinback, Kendell Harbin, Erin Zona, Madeline Gallucci, Deborah Treisman" \
   --context /path/to/info.md
 ```
+
+### Field-Notes Mode
+
+When `--field-notes` is enabled the tool keeps a living `field-notes.md` next to every `_level-NNN` directory it creates.
+Each notebook starts empty and is updated after every batch of photos using the curator diff workflow.
+
+```
+001/
+  DSCF0001.jpg
+  DSCF0002.jpg
+  field-notes.md
+```
+
+The first pass provides the current file and short instructions so curators can propose a patch.
+If the diff applies, the writer appends a timestamp comment and saves the new text.
+Bare filenames like `[DSCF0001.jpg]` automatically link to files in the same directory.
+If more than three inline images are embedded (`![]()`), a warning is added at the bottom.
+Disable the feature by omitting the flag.
+
+Example citation:
+
+```markdown
+We observed damage on [DSCF0001.jpg]
+```
+becomes
+```markdown
+We observed damage on [DSCF0001.jpg](./DSCF0001.jpg)
+```
+
 
 ## Supported OpenAI models
 
@@ -4282,6 +4886,85 @@ Now everything—random choice, conversation, and file moves—happens automatic
 (File type is inode/directory — skipping raw dump.)
 ```
 
+### File: ./docs/agents.md.orig
+```
+# Agents Contract  · Photo-Select
+
+<<<<<<< HEAD
+<<<<<<< HEAD
+---
+schema_version: 2
+updated: 2025-07-05
+---
+
+This document **must be loaded by any code-assistant before touching the repo.**
+It defines binding constraints for all prompt templates. Any change here **must**
+increment `schema_version` and update tests.
+
+## 1  Synthetic Voices
+| Id | Role in Minutes | Style | Required Closing Question | May Edit Field-Notes? | Psychology Cue | Example Utterance |
+|----|-----------------|-------|---------------------------|-----------------------|----------------|------------------|
+| *Curator-A* | “Ingeborg Gerdes” | aesthetic, formal | optional | yes | reflective | "Notice the diffuse glow here." |
+| *Curator-B* | “Alexandra Munroe” | scholarly, contextual | optional | yes | analytic | "This recalls earlier site works." |
+| … | … | … | optional | yes | varied | "…" |
+| Facilitator | “Jamie (off-stage)” | session framing only | never | no | pragmatic | "Next batch coming up." |
+
+### schema_duty per persona
+*Curator-A*
+schema_duty: ensures field_notes_diff syntax is valid unified diff.
+
+*Curator-B*
+schema_duty: checks contextual accuracy in minutes.
+
+*Facilitator*
+schema_duty: none; outside minutes/decisions.
+
+> **Rule:** Minutes **always** stay within the personas above.
+> **Rule:** Decisions follow minutes, never interwoven.
+> **Rule:** Minutes end with a forward-looking question from one curator.
+=======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+This document **must be loaded by any code-assistant before touching the repo.**
+
+## 1  Synthetic Voices
+| Id | Role in Minutes | Style |
+|----|-----------------|-------|
+| *Curator-A* | “Ingeborg Gerdes” | aesthetic, formal |
+| *Curator-B* | “Alexandra Munroe” | scholarly, contextual |
+| … | … | … |
+| Facilitator | “Jamie (off-stage)” | session framing only |
+
+> **Rule:** Minutes **always** stay within the personas above.  
+> **Rule:** Decisions follow minutes, never interwoven.
+<<<<<<< HEAD
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+
+## 2  Two-Pass Field-Notes Workflow
+| Phase | LLM Output | Parser expectation |
+|-------|------------|--------------------|
+| 1st pass | `field_notes_diff` **OR** `field_notes_md` | `expectFieldNotesDiff = true` |
+| 2nd pass (if diff) | `field_notes_md` | `expectFieldNotesMd = true` |
+
+The *same* curator voices and context must be provided in both passes.
+
+## 3  Prompt Template Placeholders
+| Placeholder | Source |
+|-------------|--------|
+| `{{curators}}` | CLI `--curators` flag |
+| `{{context}}` | CLI `--context` file |
+| `{{fieldNotes}}` | previous notebook text |
+
+## 4  Coding Standards
+* No business logic in `.hbs`; keep them data-driven.  
+* Pure functions live under `src/core/`; they receive **all** inputs explicitly.  
+* Mutations to `cacheKey` MUST bump version (prefix string).
+
+*(Last edited: 2025-07-05)*
+```
+
 ### File: ./docs/architecture.md
 ```
 # Photo-Select – Architecture at a Glance
@@ -4341,49 +5024,45 @@ First pass returns a diff; second pass resolves to the full document.
 **Adapter** – Boundary module that converts between external systems (OpenAI, filesystem) and pure functions.
 
 **Service** – Coordinator function (e.g. `triageDirectory`) that expresses application use-cases in terms of adapters & pure functions.
+```
+
+### File: ./docs/glossary.md.orig
+```
+# Photo-Select – Core Concepts
+
+**Batch** – A set of ≤ 10 images funnelled through a single prompt/response round.
+
+**Curators (Agents)** – Named voices who appear in the “minutes” section.  
+They function as *thinking styles* the LLM can adopt (e.g. technical, poetic).
+
+**Facilitator** – Jamie’s voice; she does *not* appear in JSON minutes but frames the session.
+
+**Minutes** – A diarised conversation (array of `{ speaker, text }`) capturing how consensus was reached.
+
+**Decision Block** – Strict JSON `{ keep, aside }`, optionally enriched with `field_notes_diff`.
+
+**Field Notes** – Markdown notebook (`field-notes.md`) evolving in two passes.  
+First pass returns a diff; second pass resolves to the full document.
+
+**Level Directory** – `_level-NNN/` snapshot preserving original files for provenance.
+
+**Adapter** – Boundary module that converts between external systems (OpenAI, filesystem) and pure functions.
+
+**Service** – Coordinator function (e.g. `triageDirectory`) that expresses application use-cases in terms of adapters & pure functions.
+<<<<<<< HEAD
 <<<<<<< HEAD
 
 **Prompt Snapshot** – A `.prompt.txt` file stored in each level directory containing the exact text sent to the model for reproducibility.
 =======
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
 ```
 
 ### File: ./docs/agents.md
 ```
 # Agents Contract  · Photo-Select
 
-<<<<<<< HEAD
----
-schema_version: 2
-updated: 2025-07-05
----
-
-This document **must be loaded by any code-assistant before touching the repo.**
-It defines binding constraints for all prompt templates. Any change here **must**
-increment `schema_version` and update tests.
-
-## 1  Synthetic Voices
-| Id | Role in Minutes | Style | Required Closing Question | May Edit Field-Notes? | Psychology Cue | Example Utterance |
-|----|-----------------|-------|---------------------------|-----------------------|----------------|------------------|
-| *Curator-A* | “Ingeborg Gerdes” | aesthetic, formal | optional | yes | reflective | "Notice the diffuse glow here." |
-| *Curator-B* | “Alexandra Munroe” | scholarly, contextual | optional | yes | analytic | "This recalls earlier site works." |
-| … | … | … | optional | yes | varied | "…" |
-| Facilitator | “Jamie (off-stage)” | session framing only | never | no | pragmatic | "Next batch coming up." |
-
-### schema_duty per persona
-*Curator-A*
-schema_duty: ensures field_notes_diff syntax is valid unified diff.
-
-*Curator-B*
-schema_duty: checks contextual accuracy in minutes.
-
-*Facilitator*
-schema_duty: none; outside minutes/decisions.
-
-> **Rule:** Minutes **always** stay within the personas above.
-> **Rule:** Decisions follow minutes, never interwoven.
-> **Rule:** Minutes end with a forward-looking question from one curator.
-=======
 This document **must be loaded by any code-assistant before touching the repo.**
 
 ## 1  Synthetic Voices
@@ -4396,7 +5075,6 @@ This document **must be loaded by any code-assistant before touching the repo.**
 
 > **Rule:** Minutes **always** stay within the personas above.  
 > **Rule:** Decisions follow minutes, never interwoven.
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 ## 2  Two-Pass Field-Notes Workflow
 | Phase | LLM Output | Parser expectation |
@@ -4445,6 +5123,7 @@ moves the files accordingly, and then recurses until a directory is fully triage
   ```
 
 * macOS, Linux, or Windows‑WSL (uses only cross‑platform Node APIs)
+* [`patch`](https://man7.org/linux/man-pages/man1/patch.1.html) binary or the Python `patch-ng` package
 
 ## Installation
 
@@ -4526,12 +5205,9 @@ through to the script unchanged.
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
-| `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
 | `--show-prompt` | `false` | Print the rendered prompt text before each API call |
-
-Prompt files are Handlebars templates. Values such as `curators`, `context`, and
-previous `fieldNotes` are injected when each request is built.
+| `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--field-notes` | `false` | Enable living field-notes.md generation with curator diff workflow |
 
 ### People metadata (optional)
 
@@ -4545,6 +5221,35 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
   --curators "Ingeborg Gerdes, Alexandra Munroe, Mandy Steinback, Kendell Harbin, Erin Zona, Madeline Gallucci, Deborah Treisman" \
   --context /path/to/info.md
 ```
+
+### Field-Notes Mode
+
+When `--field-notes` is enabled the tool keeps a living `field-notes.md` next to every `_level-NNN` directory it creates.
+Each notebook starts empty and is updated after every batch of photos using the curator diff workflow.
+
+```
+001/
+  DSCF0001.jpg
+  DSCF0002.jpg
+  field-notes.md
+```
+
+The first pass provides the current file and short instructions so curators can propose a patch.
+If the diff applies, the writer appends a timestamp comment and saves the new text.
+Bare filenames like `[DSCF0001.jpg]` automatically link to files in the same directory.
+If more than three inline images are embedded (`![]()`), a warning is added at the bottom.
+Disable the feature by omitting the flag.
+
+Example citation:
+
+```markdown
+We observed damage on [DSCF0001.jpg]
+```
+becomes
+```markdown
+We observed damage on [DSCF0001.jpg](./DSCF0001.jpg)
+```
+
 
 ## Supported OpenAI models
 
@@ -4745,6 +5450,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
 /node_modules
 /.env
 .DS_Store
+__pycache__/
 ```
 
 ### File: ./package.json
@@ -5469,6 +6175,71 @@ main().catch(err => { console.error(err); process.exit(1); });
 
 ### File: ./prompts/default_prompt.hbs
 ```
+You are moderating a collaborative curatorial session.
+The following curators are present: {{curators}}. Jamie is the facilitator.
+Before discussing the images, list the keys you will return (e.g. "minutes, decision{{#if fieldNotes}}, field_notes_diff"{{/if}}) then proceed.
+{{#if context}}
+
+Curator FYI:
+{{context}}
+{{/if}}
+{{#if fieldNotes}}
+
+Field notes so far:
+{{fieldNotes}}
+{{/if}}
+
+Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
+Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
+
+After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
+
+If you are uncertain about a photo, **omit it from the decision block**.
+Never invent filenames or keys.
+
+{{#if fieldNotes}}
+  While doing this work curators maintain living, itterative, running research notebook called field-notes.md.
+  Extract new facts today's images reveal (measurements, equipment IDs, unanswered questions, etc)—as you see fit for a field notes report of the situation the curators collectively witness through the photos.
+  Write a tiny git-style patch—a list of lines to insert or delete in the main notebook (field-notes.md).
+
+  Field-Notes.md Contributor Guide:
+  1. Only change lines in field-notes.md you can justify by looking at today’s images, allowing the remainder of field-notes.md to pass forward unchanged.
+  2. Use `[filename.jpg]` links to cite photographic evidence for each facutal observation noted; they will autolink.
+  3. If uncertain, insert a "(?)" marker rather than inventing details. Discovering a facutal inconsistency, highlighting an ambiguity, or surfacing a question—can itself be a meaningfully discerning contribution.
+  4. Keep ≤ 3 `![]()` inline embeds per update to stay lightweight.
+{{/if}}
+
+
+{
+  "minutes": [
+    { "speaker": "Name", "text": "what was said" },
+    ...
+  ],
+  "decision": {
+    "keep": {
+      "filename1.jpg": "why it stays",
+      ...
+    },
+    "aside": {
+      "filename2.jpg": "why it is set aside",
+      ...
+    }
+  }{{#if fieldNotes}},
+  "field_notes_diff": "<unified diff here>"
+  {{/if}}
+}
+
+
+
+Include only those filenames for which you reach a clear decision.
+The final line of `minutes` must be a forward-looking question.
+Return pure JSON and use each label verbatim. No other text after the JSON.
+
+```
+
+### File: ./prompts/default_prompt.hbs.orig
+```
+<<<<<<< HEAD
 <<<<<<< HEAD
 You are moderating a collaborative curatorial session. The following curators are present: {{curators}}. Jamie is the facilitator.
 
@@ -5499,6 +6270,11 @@ You are moderating a collaborative curatorial session.
 The following curators are present: {{curators}}. Jamie is the facilitator.
 Before discussing the images, list the keys you will return (e.g. "minutes, decision, field_notes_diff") then proceed.
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+You are moderating a collaborative curatorial session.
+The following curators are present: {{curators}}. Jamie is the facilitator.
+Before discussing the images, list the keys you will return (e.g. "minutes, decision, field_notes_diff") then proceed.
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
 {{#if context}}
 
 Curator FYI:
@@ -5511,11 +6287,14 @@ Field notes so far:
 {{/if}}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 If you are uncertain about a photo, **omit it from the decision block**.
 Never invent filenames or keys.
 
 Return pure JSON only; use each label verbatim.
 =======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
 Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
@@ -5544,22 +6323,14 @@ Never invent filenames or keys.
 Include only those filenames for which you reach a clear decision.
 The final line of `minutes` must be a forward-looking question.
 Return pure JSON and use each label verbatim. No other text after the JSON.
+<<<<<<< HEAD
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
 ```
 
 ### File: ./prompts/field_notes_second_pass.hbs
 ```
-<<<<<<< HEAD
-{
-  "minutes": [],
-  "decision": { "keep": {}, "aside": {} },
-  "field_notes_md": "<markdown text>"
-}
-
-Before replying, ensure every required top-level key is present; if any is missing, regenerate the full response.
-
-=======
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 {{prompt}}
 
 Current field notes:
@@ -5722,6 +6493,34 @@ On Sun, Jun 8, 2025 at 2:27 PM Olympia Kazi <olympiakazi@gmail.com> wrote:
 
 ```
 
+### File: ./prompts/field_notes_second_pass.hbs.orig
+```
+<<<<<<< HEAD
+<<<<<<< HEAD
+{
+  "minutes": [],
+  "decision": { "keep": {}, "aside": {} },
+  "field_notes_md": "<markdown text>"
+}
+
+Before replying, ensure every required top-level key is present; if any is missing, regenerate the full response.
+
+=======
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+{{prompt}}
+
+Current field notes:
+{{existing}}
+
+Patch:
+{{diff}}
+
+The diff above has been staged. Please return a JSON object with
+`field_notes_md` containing the entire updated notebook and nothing else.
+```
+
 ### File: ./.env.example
 ```
 # Copy to `.env` and paste your real key here.
@@ -5739,8 +6538,12 @@ OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ### File: ./src/orchestrator.js.orig
 ```
 import path from "node:path";
+<<<<<<< HEAD
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { renderTemplate } from "./config.js";
+=======
+import { writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+>>>>>>> 535dbf3feb3e1b9f4cfdc23cb7b10a264bde6d9d
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
@@ -5751,12 +6554,14 @@ import { FieldNotesWriter } from "./fieldNotes.js";
  */
 export async function triageDirectory({
   dir,
-  promptPath,
+  prompt,
   model,
   recurse = true,
   curators = [],
+<<<<<<< HEAD
   contextPath,
   fieldNotes = false,
+  showPrompt = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -5771,6 +6576,8 @@ export async function triageDirectory({
 
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
+  const promptsDir = path.join(levelDir, 'prompts');
+  const repliesDir = path.join(levelDir, 'replies');
   let notesWriter;
   let fieldNotesText = "";
   if (fieldNotes) {
@@ -5786,6 +6593,7 @@ export async function triageDirectory({
     context,
     fieldNotes: fieldNotesText,
   });
+  let basePrompt = prompt;
   if (fieldNotes) {
     const addonPath = new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname;
     try {
@@ -5796,34 +6604,32 @@ export async function triageDirectory({
     }
   }
 
+  if (showPrompt) {
+    console.log(`${indent}📑  Prompt:\n${prompt}`);
+  }
+=======
+  depth = 0,
+}) {
+  const indent = "  ".repeat(depth);
+>>>>>>> 535dbf3feb3e1b9f4cfdc23cb7b10a264bde6d9d
+
   console.log(`${indent}📁  Scanning ${dir}`);
 
   // Archive original images at this level
-<<<<<<< HEAD
-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  const initImages = await listImages(dir);
-  let notesWriter;
-  if (fieldNotes) {
-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
-    await notesWriter.init();
-    const existing = await notesWriter.read();
-    if (existing) {
-      prompt += `\n\nField notes so far:\n${existing}`;
-    }
-  }
-=======
->>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
   try {
     await stat(levelDir);
   } catch {
-    if (initImages.length) {
-      await mkdir(levelDir, { recursive: true });
-      await Promise.all(
-        initImages.map((file) =>
-          copyFile(file, path.join(levelDir, path.basename(file)))
-        )
-      );
-    }
+    // ignore
+  }
+  await mkdir(levelDir, { recursive: true });
+  await mkdir(promptsDir, { recursive: true });
+  await mkdir(repliesDir, { recursive: true });
+  if (initImages.length) {
+    await Promise.all(
+      initImages.map((file) =>
+        copyFile(file, path.join(levelDir, path.basename(file)))
+      )
+    );
   }
 
   while (true) {
@@ -5841,22 +6647,34 @@ export async function triageDirectory({
 
     // Step 2 – ask ChatGPT
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
+    const ts = Date.now();
+    await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
     const reply = await chatCompletion({
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       prompt,
       images: batch,
       model,
       curators,
     });
+    await writeFile(path.join(repliesDir, `${ts}.raw.json`), reply, 'utf8');
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
-    // Step 3 – parse decisions
 <<<<<<< HEAD
-    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch);
+    let parsed;
+    try {
+      // Step 3 – parse decisions. Missing field_notes keys break the two-pass workflow.
 =======
-    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch, {
-      expectFieldNotesDiff: fieldNotes,
-    });
->>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
+    // Step 3 – parse decisions
+    let parsed;
+    try {
+      parsed = parseReply(reply, batch, {
+        expectFieldNotesDiff: fieldNotes,
+      });
+    } catch (err) {
+      console.warn(`${indent}Failed to parse reply: ${err.message}`);
+      continue;
+    }
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parsed;
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
@@ -5869,27 +6687,30 @@ export async function triageDirectory({
           await notesWriter.writeFull(fieldNotesMd);
         } else {
           const existing = (await notesWriter.read()) || '';
-<<<<<<< HEAD
-          const secondPrompt = `${prompt}\n\nCurrent field notes:\n${existing}\n\nPatch:\n${fieldNotesDiff}\n\nReturn JSON with field_notes_md.`;
-=======
           const secondPrompt = await renderTemplate(
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
-            { prompt, existing, diff: fieldNotesDiff }
+            { prompt: basePrompt, existing, diff: fieldNotesDiff }
           );
->>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
+          if (showPrompt) {
+            console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
+          }
+          await writeFile(path.join(promptsDir, `${ts}-second.prompt.txt`), secondPrompt, 'utf8');
           const second = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
             model,
             curators,
           });
-<<<<<<< HEAD
-          const parsed = parseReply(second, batch);
-=======
-          const parsed = parseReply(second, batch, {
-            expectFieldNotesMd: true,
-          });
->>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
+          await writeFile(path.join(repliesDir, `${ts}-second.raw.json`), second, 'utf8');
+          let parsed;
+          try {
+            parsed = parseReply(second, batch, {
+              expectFieldNotesMd: true,
+            });
+          } catch (err) {
+            console.warn(`${indent}Failed to parse second-pass reply: ${err.message}`);
+            continue;
+          }
           if (parsed.fieldNotesMd) {
             await notesWriter.writeFull(parsed.fieldNotesMd);
           } else {
@@ -5928,12 +6749,15 @@ export async function triageDirectory({
     if (keepExists) {
       await triageDirectory({
         dir: keepDir,
-        promptPath,
+        prompt,
         model,
         recurse,
         curators,
+<<<<<<< HEAD
         contextPath,
         fieldNotes,
+=======
+>>>>>>> 535dbf3feb3e1b9f4cfdc23cb7b10a264bde6d9d
         depth: depth + 1,
       });
     } else {
@@ -5966,373 +6790,14 @@ import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { z } from "zod";
-import { delay } from "./config.js";
-
-const openai = new OpenAI();
-const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
-  "http://localhost:3000";
-const peopleCache = new Map();
-
-async function getPeople(filename) {
-  if (peopleCache.has(filename)) return peopleCache.get(filename);
-  try {
-    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    const names = Array.isArray(json.data) ? json.data : [];
-    peopleCache.set(filename, names);
-    return names;
-  } catch {
-    peopleCache.set(filename, []);
-    return [];
-  }
-}
-
-/** Max response tokens allowed from OpenAI. Large enough to hold
- * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
-
-function ensureJsonMention(text) {
-  return /\bjson\b/i.test(text)
-    ? text
-    : `${text}\nRespond in json format.`;
-}
-
-const CACHE_DIR = path.resolve('.cache');
-
-async function getCachedReply(key) {
-  try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
-  } catch {
-    return null;
-  }
-}
-
-async function setCachedReply(key, text) {
-  await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
-}
-
-export async function cacheKey({ prompt, images, model, curators = [] }) {
-  const hash = crypto.createHash('sha256');
-  hash.update(model);
-  hash.update(prompt);
-  if (curators.length) hash.update(curators.join(','));
-  for (const file of images) {
-    const info = await stat(file);
-    hash.update(file);
-    hash.update(String(info.mtimeMs));
-    hash.update(String(info.size));
-  }
-  return hash.digest('hex');
-}
-
-/**
- * Builds the array of message objects for the Chat Completion API.
- * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
- */
-export async function buildMessages(prompt, images, curators = []) {
-  const system = { role: "system", content: prompt };
-
-  /**  Turn each image into base64 data‑URL with a preceding filename label.  */
-  const userImageParts = await Promise.all(
-    images.map(async (file) => {
-      const abs = path.resolve(file);
-      const buffer = await readFile(abs);
-      const base64 = buffer.toString("base64");
-      const name = path.basename(file);
-      const ext = path.extname(file).slice(1) || "jpeg";
-      const people = await getPeople(name);
-      const info = people.length ? { filename: name, people } : { filename: name };
-      return [
-        { type: "text", text: JSON.stringify(info) },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:image/${ext};base64,${base64}`,
-            detail: "high",
-          },
-        },
-      ];
-    })
-  ).then((parts) => parts.flat());
-
-  const userText = {
-    role: "user",
-    content: [
-      { type: "text", text: ensureJsonMention("Here are the images:") },
-      ...userImageParts,
-    ],
-  };
-
-  return [system, userText];
-}
-
-/** Build input array for the Responses API */
-export async function buildInput(prompt, images, curators = []) {
-  let instructions = prompt;
-  const imageParts = await Promise.all(
-    images.map(async (file) => {
-      const abs = path.resolve(file);
-      const buffer = await readFile(abs);
-      const base64 = buffer.toString("base64");
-      const name = path.basename(file);
-      const ext = path.extname(file).slice(1) || "jpeg";
-      const people = await getPeople(name);
-      const info = people.length ? { filename: name, people } : { filename: name };
-      return [
-        { type: "input_text", text: JSON.stringify(info) },
-        {
-          type: "input_image",
-          image_url: `data:image/${ext};base64,${base64}`,
-          detail: "high",
-        },
-      ];
-    })
-  ).then((parts) => parts.flat());
-
-  return {
-    instructions,
-    input: [
-      {
-        role: "user",
-        content: [
-          { type: "input_text", text: ensureJsonMention("Here are the images:") },
-          ...imageParts,
-        ],
-      },
-    ],
-  };
-}
-
-/**
- * Call OpenAI, returning raw text content.
- * Retries with exponential back‑off on 429/5xx.
- */
-export async function chatCompletion({
-  prompt,
-  images,
-  model = "gpt-4o",
-  maxRetries = 3,
-  cache = true,
-  curators = [],
-}) {
-  const finalPrompt = ensureJsonMention(prompt);
-
-  const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
-  if (cache) {
-    const hit = await getCachedReply(key);
-    if (hit) return hit;
-  }
-
-  let attempt = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    try {
-      const messages = await buildMessages(finalPrompt, images, curators);
-      const baseParams = {
-        model,
-        messages,
-        // allow ample space for the JSON decision block and minutes
-        response_format: { type: "json_object" },
-      };
-      if (/^o\d/.test(model)) {
-        baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
-      } else {
-        baseParams.max_tokens = MAX_RESPONSE_TOKENS;
-      }
-      const { choices } = await openai.chat.completions.create(baseParams);
-      const text = choices[0].message.content;
-      if (cache) await setCachedReply(key, text);
-      return text;
-    } catch (err) {
-      const msg = String(err?.error?.message || err?.message || "");
-      const code = err?.code || err?.cause?.code;
-      const isNetwork = err?.name === "APIConnectionError" ||
-        ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
-      if (
-        (err instanceof NotFoundError || err.status === 404) &&
-        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
-      ) {
-        const params = await buildInput(finalPrompt, images, curators);
-        const rsp = await openai.responses.create({
-          model,
-          ...params,
-          text: { format: { type: "json_object" } },
-          max_output_tokens: MAX_RESPONSE_TOKENS,
-        });
-        const text = rsp.output_text;
-        if (cache) await setCachedReply(key, text);
-        return text;
-      }
-
-      if (attempt >= maxRetries) throw err;
-      attempt += 1;
-      const wait = 2 ** attempt * 1000;
-      const label = isNetwork ? "network error" : "OpenAI error";
-      const codeInfo = err.status ?? code ?? "unknown";
-      console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
-      await delay(wait);
-    }
-  }
-}
-
-/**
- * Parse the LLM reply → { keep: [file], aside: [file] }
- *
- * Accepts patterns like:
- *  • “DSCF1234 — keep  …reason…”
- *  • “Set aside: DSCF5678”
- */
-export function parseReply(text, allFiles, opts = {}) {
-  const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
-  if (fenced.startsWith('```')) {
-    const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
-  }
-  const map = new Map();
-  for (const f of allFiles) {
-    map.set(path.basename(f).toLowerCase(), f);
-  }
-
-  const lookup = (name) => {
-    const lc = String(name).toLowerCase();
-    let f = map.get(lc);
-    if (!f) {
-      const idx = lc.indexOf("dscf");
-      if (idx !== -1) f = map.get(lc.slice(idx));
-    }
-    return f;
-  };
-
-  const keep = new Set();
-  const aside = new Set();
-  const notes = new Map();
-  const minutes = [];
-  let fieldNotesDiff = null;
-  let fieldNotesMd = null;
-
-  // Try JSON first
-  try {
-    const obj = JSON.parse(text);
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (typeof node.field_notes_diff === 'string') fieldNotesDiff = node.field_notes_diff;
-      if (typeof node.field_notes_md === 'string') fieldNotesMd = node.field_notes_md;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
-        }
-      };
-
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
-    }
-  } catch {
-    // fall through to plain text handling
-  }
-
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
-
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
-
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
-      }
-    }
-  }
-
-  // Leave any files unmentioned in the reply unmoved so they can be triaged
-  // in a later batch. Only files explicitly marked keep or aside are returned.
-
-  // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
-
-  const decided = new Set([...keep, ...aside]);
-  const unclassified = allFiles.filter((f) => !decided.has(f));
-
 <<<<<<< HEAD
-=======
-  if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
-    throw new Error('field_notes_diff missing in reply');
-  }
-  if (expectFieldNotesMd && !fieldNotesMd) {
-    throw new Error('field_notes_md missing in reply');
-  }
-
->>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
-  return {
-    keep: [...keep],
-    aside: [...aside],
-    unclassified,
-    notes,
-    minutes,
-    fieldNotesDiff,
-    fieldNotesMd,
-  };
-}
-```
-
-### File: ./src/chatClient.js
-```
-import { OpenAI, NotFoundError } from "openai";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import crypto from "node:crypto";
-import { z } from "zod";
 <<<<<<< HEAD
 =======
 import { Reply as ReplySchema } from "./replySchema.js";
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+import { Reply as ReplySchema } from "./replySchema.js";
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
@@ -6555,17 +7020,23 @@ export async function chatCompletion({
 export function parseReply(text, allFiles, opts = {}) {
   const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
 <<<<<<< HEAD
+<<<<<<< HEAD
   // Strip Markdown code fences like ```json ... ``` if present
   const fenced = text.trim();
   if (fenced.startsWith('```')) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
     if (match) text = match[1];
 =======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
   let content = text.trim();
   if (content.startsWith('```')) {
     const m = content.match(/^```\w*\n([\s\S]*?)\n```$/);
     if (m) content = m[1];
+<<<<<<< HEAD
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
   }
   const data = ReplySchema.parse(JSON.parse(content));
 
@@ -6614,6 +7085,7 @@ export function parseReply(text, allFiles, opts = {}) {
   const aside = toList(data.decision.aside);
 
   const notes = new Map();
+<<<<<<< HEAD
 <<<<<<< HEAD
   const minutes = [];
   let fieldNotesDiff = null;
@@ -6671,6 +7143,10 @@ export function parseReply(text, allFiles, opts = {}) {
   for (const [f, reason] of [...keep, ...aside]) {
     if (reason) notes.set(f, String(reason));
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+  for (const [f, reason] of [...keep, ...aside]) {
+    if (reason) notes.set(f, String(reason));
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
   }
 
   const keepFiles = new Set(keep.map(([f]) => f));
@@ -6681,6 +7157,7 @@ export function parseReply(text, allFiles, opts = {}) {
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
 <<<<<<< HEAD
+<<<<<<< HEAD
   // field_notes_diff/md are required for the two-pass notebook workflow.
   // Missing keys would leave the notebook in an inconsistent state.
   if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
@@ -6688,15 +7165,21 @@ export function parseReply(text, allFiles, opts = {}) {
   }
   if (expectFieldNotesMd && !fieldNotesMd) {
 =======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
   if (expectFieldNotesDiff && !data.field_notes_diff && !data.field_notes_md) {
     throw new Error('field_notes_diff missing in reply');
   }
   if (expectFieldNotesMd && !data.field_notes_md) {
+<<<<<<< HEAD
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
     throw new Error('field_notes_md missing in reply');
   }
 
   return {
+<<<<<<< HEAD
 <<<<<<< HEAD
     keep: [...keep],
     aside: [...aside],
@@ -6706,6 +7189,8 @@ export function parseReply(text, allFiles, opts = {}) {
     fieldNotesDiff,
     fieldNotesMd,
 =======
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
     keep: [...keepFiles],
     aside: [...asideFiles],
     unclassified,
@@ -6713,7 +7198,321 @@ export function parseReply(text, allFiles, opts = {}) {
     minutes: data.minutes.map((m) => `${m.speaker}: ${m.text}`),
     fieldNotesDiff: data.field_notes_diff || null,
     fieldNotesMd: data.field_notes_md || null,
+<<<<<<< HEAD
 >>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
+=======
+>>>>>>> d094a92de9c6b4b7abda877a9e161037ca186e86
+  };
+}
+```
+
+### File: ./src/chatClient.js
+```
+import { OpenAI, NotFoundError } from "openai";
+import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
+import { z } from "zod";
+import { Reply as ReplySchema } from "./replySchema.js";
+import { delay } from "./config.js";
+
+const openai = new OpenAI();
+const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
+  "http://localhost:3000";
+const peopleCache = new Map();
+
+async function getPeople(filename) {
+  if (peopleCache.has(filename)) return peopleCache.get(filename);
+  try {
+    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const names = Array.isArray(json.data) ? json.data : [];
+    peopleCache.set(filename, names);
+    return names;
+  } catch {
+    peopleCache.set(filename, []);
+    return [];
+  }
+}
+
+/** Max response tokens allowed from OpenAI. Large enough to hold
+ * minutes plus the full JSON decision block without truncation. */
+export const MAX_RESPONSE_TOKENS = 4096;
+
+function ensureJsonMention(text) {
+  return /\bjson\b/i.test(text)
+    ? text
+    : `${text}\nRespond in json format.`;
+}
+
+const CACHE_DIR = path.resolve('.cache');
+
+async function getCachedReply(key) {
+  try {
+    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function setCachedReply(key, text) {
+  await mkdir(CACHE_DIR, { recursive: true });
+  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
+}
+
+export async function cacheKey({ prompt, images, model, curators = [] }) {
+  const hash = crypto.createHash('sha256');
+  hash.update(model);
+  hash.update(prompt);
+  if (curators.length) hash.update(curators.join(','));
+  for (const file of images) {
+    const info = await stat(file);
+    hash.update(file);
+    hash.update(String(info.mtimeMs));
+    hash.update(String(info.size));
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * Builds the array of message objects for the Chat Completion API.
+ * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
+ */
+export async function buildMessages(prompt, images, curators = []) {
+  const system = { role: "system", content: prompt };
+
+  /**  Turn each image into base64 data‑URL with a preceding filename label.  */
+  const userImageParts = await Promise.all(
+    images.map(async (file) => {
+      const abs = path.resolve(file);
+      const buffer = await readFile(abs);
+      const base64 = buffer.toString("base64");
+      const name = path.basename(file);
+      const ext = path.extname(file).slice(1) || "jpeg";
+      const people = await getPeople(name);
+      const info = people.length ? { filename: name, people } : { filename: name };
+      return [
+        { type: "text", text: JSON.stringify(info) },
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:image/${ext};base64,${base64}`,
+            detail: "high",
+          },
+        },
+      ];
+    })
+  ).then((parts) => parts.flat());
+
+  const userText = {
+    role: "user",
+    content: [
+      { type: "text", text: ensureJsonMention("Here are the images:") },
+      ...userImageParts,
+    ],
+  };
+
+  return [system, userText];
+}
+
+/** Build input array for the Responses API */
+export async function buildInput(prompt, images, curators = []) {
+  let instructions = prompt;
+  const imageParts = await Promise.all(
+    images.map(async (file) => {
+      const abs = path.resolve(file);
+      const buffer = await readFile(abs);
+      const base64 = buffer.toString("base64");
+      const name = path.basename(file);
+      const ext = path.extname(file).slice(1) || "jpeg";
+      const people = await getPeople(name);
+      const info = people.length ? { filename: name, people } : { filename: name };
+      return [
+        { type: "input_text", text: JSON.stringify(info) },
+        {
+          type: "input_image",
+          image_url: `data:image/${ext};base64,${base64}`,
+          detail: "high",
+        },
+      ];
+    })
+  ).then((parts) => parts.flat());
+
+  return {
+    instructions,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: ensureJsonMention("Here are the images:") },
+          ...imageParts,
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Call OpenAI, returning raw text content.
+ * Retries with exponential back‑off on 429/5xx.
+ */
+export async function chatCompletion({
+  prompt,
+  images,
+  model = "gpt-4o",
+  maxRetries = 3,
+  cache = true,
+  curators = [],
+}) {
+  const finalPrompt = ensureJsonMention(prompt);
+
+  const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
+  if (cache) {
+    const hit = await getCachedReply(key);
+    if (hit) return hit;
+  }
+
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const messages = await buildMessages(finalPrompt, images, curators);
+      const baseParams = {
+        model,
+        messages,
+        // allow ample space for the JSON decision block and minutes
+        response_format: { type: "json_object" },
+      };
+      if (/^o\d/.test(model)) {
+        baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
+      } else {
+        baseParams.max_tokens = MAX_RESPONSE_TOKENS;
+      }
+      const { choices } = await openai.chat.completions.create(baseParams);
+      const text = choices[0].message.content;
+      if (cache) await setCachedReply(key, text);
+      return text;
+    } catch (err) {
+      const msg = String(err?.error?.message || err?.message || "");
+      const code = err?.code || err?.cause?.code;
+      const isNetwork = err?.name === "APIConnectionError" ||
+        ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
+      if (
+        (err instanceof NotFoundError || err.status === 404) &&
+        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
+      ) {
+        const params = await buildInput(finalPrompt, images, curators);
+        const rsp = await openai.responses.create({
+          model,
+          ...params,
+          text: { format: { type: "json_object" } },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        });
+        const text = rsp.output_text;
+        if (cache) await setCachedReply(key, text);
+        return text;
+      }
+
+      if (attempt >= maxRetries) throw err;
+      attempt += 1;
+      const wait = 2 ** attempt * 1000;
+      const label = isNetwork ? "network error" : "OpenAI error";
+      const codeInfo = err.status ?? code ?? "unknown";
+      console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
+      await delay(wait);
+    }
+  }
+}
+
+/**
+ * Parse the LLM reply → { keep: [file], aside: [file] }
+ *
+ * Accepts patterns like:
+ *  • “DSCF1234 — keep  …reason…”
+ *  • “Set aside: DSCF5678”
+ */
+export function parseReply(text, allFiles, opts = {}) {
+  const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
+  let content = text.trim();
+  if (content.startsWith('```')) {
+    const m = content.match(/^```\w*\n([\s\S]*?)\n```$/);
+    if (m) content = m[1];
+  }
+  const data = ReplySchema.parse(JSON.parse(content));
+
+  if (data.minutes.length) {
+    const last = data.minutes[data.minutes.length - 1].text.trim();
+    if (!last.endsWith('?')) {
+      throw new Error('minutes must end with a question');
+    }
+  }
+
+  const map = new Map(allFiles.map((f) => [path.basename(f).toLowerCase(), f]));
+  const resolve = (name) => {
+    const lc = name.toLowerCase();
+    let f = map.get(lc);
+    if (!f) {
+      const idx = lc.indexOf('dscf');
+      if (idx !== -1) {
+        f = map.get(lc.slice(idx));
+        if (!f) {
+          for (const [key, val] of map) {
+            if (key.endsWith(lc.slice(idx))) { f = val; break; }
+          }
+        }
+      }
+    }
+    return f;
+  };
+
+  const toList = (val) => {
+    const result = [];
+    if (Array.isArray(val)) {
+      for (const n of val) {
+        const f = resolve(n);
+        if (f) result.push([f, undefined]);
+      }
+    } else {
+      for (const [n, reason] of Object.entries(val || {})) {
+        const f = resolve(n);
+        if (f) result.push([f, reason]);
+      }
+    }
+    return result;
+  };
+
+  const keep = toList(data.decision.keep);
+  const aside = toList(data.decision.aside);
+
+  const notes = new Map();
+  for (const [f, reason] of [...keep, ...aside]) {
+    if (reason) notes.set(f, String(reason));
+  }
+
+  const keepFiles = new Set(keep.map(([f]) => f));
+  const asideFiles = new Set(aside.map(([f]) => f));
+  for (const f of keepFiles) asideFiles.delete(f);
+
+  const decided = new Set([...keepFiles, ...asideFiles]);
+  const unclassified = allFiles.filter((f) => !decided.has(f));
+
+  if (expectFieldNotesDiff && !data.field_notes_diff && !data.field_notes_md) {
+    throw new Error('field_notes_diff missing in reply');
+  }
+  if (expectFieldNotesMd && !data.field_notes_md) {
+    throw new Error('field_notes_md missing in reply');
+  }
+
+  return {
+    keep: [...keepFiles],
+    aside: [...asideFiles],
+    unclassified,
+    notes,
+    minutes: data.minutes.map((m) => `${m.speaker}: ${m.text}`),
+    fieldNotesDiff: data.field_notes_diff || null,
+    fieldNotesMd: data.field_notes_md || null,
   };
 }
 ```
@@ -6813,17 +7612,9 @@ program
     "-x, --context <file>",
     "Text file with exhibition context for the curators"
   )
+  .option("--show-prompt", "Print the rendered prompt before each API call")
   .option("--no-recurse", "Process a single directory only")
   .option("--field-notes", "Enable field notes workflow")
-<<<<<<< HEAD
-  .option(
-    "--show-prompt [mode]",
-    "Print the prompt: full, hash, or preview",
-    (val) => val || "full"
-  )
-=======
-  .option("--show-prompt", "Print the rendered prompt before each API call")
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   .parse(process.argv);
 
 const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes, showPrompt } = program.opts();
@@ -6908,6 +7699,114 @@ export const Reply = z.object({
 export type Reply = z.infer<typeof Reply>;
 ```
 
+### File: ./src/index.js.orig
+```
+#!/usr/bin/env node
+/** Load environment variables ASAP (before any OpenAI import). */
+import "dotenv/config";
+
+import { Command } from "commander";
+import path from "node:path";
+import { DEFAULT_PROMPT_PATH } from "./config.js";
+import { buildPrompt } from "./prompt.js";
+
+const program = new Command();
+program
+  .name("photo-select")
+  .description("Randomly triage photos with ChatGPT")
+  .option("-d, --dir <path>", "Source directory of images", process.cwd())
+  .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
+  .option(
+    "-m, --model <id>",
+    "OpenAI model id",
+    process.env.PHOTO_SELECT_MODEL || "gpt-4o"
+  )
+  .option(
+    "-k, --api-key <key>",
+    "OpenAI API key",
+    process.env.OPENAI_API_KEY
+  )
+  .option(
+    "-c, --curators <names>",
+    "Comma-separated list of curator names",
+    (value) => value.split(',').map((n) => n.trim()).filter(Boolean),
+    []
+  )
+  .option(
+    "-x, --context <file>",
+    "Text file with exhibition context for the curators"
+  )
+  .option("--show-prompt", "Print the final prompt and exit")
+  .option("--no-recurse", "Process a single directory only")
+  .option("--field-notes", "Enable field notes workflow")
+  .option("--show-prompt", "Print the rendered prompt before each API call")
+  .parse(process.argv);
+
+<<<<<<< HEAD
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes, showPrompt } = program.opts();
+=======
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, showPrompt } = program.opts();
+>>>>>>> 535dbf3feb3e1b9f4cfdc23cb7b10a264bde6d9d
+
+if (apiKey) {
+  process.env.OPENAI_API_KEY = apiKey;
+}
+
+(async () => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error(
+        "❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env."
+      );
+      process.exit(1);
+    }
+    const absDir = path.resolve(dir);
+    const { triageDirectory } = await import("./orchestrator.js");
+    const prompt = await buildPrompt(promptPath, { curators, contextPath });
+    if (showPrompt) {
+      console.log(prompt);
+      return;
+    }
+    await triageDirectory({
+      dir: absDir,
+      prompt,
+      model,
+      recurse,
+      curators,
+<<<<<<< HEAD
+      contextPath,
+      fieldNotes,
+      showPrompt,
+=======
+>>>>>>> 535dbf3feb3e1b9f4cfdc23cb7b10a264bde6d9d
+    });
+    console.log("🎉  Finished triaging.");
+  } catch (err) {
+    console.error("❌  Error:", err);
+    process.exit(1);
+  }
+})();
+```
+
+### File: ./src/prompt.js
+```
+import { readFile } from 'node:fs/promises';
+import { renderTemplate } from './config.js';
+
+export async function buildPrompt(promptPath, { curators = [], contextPath } = {}) {
+  const names = curators.join(', ');
+  let context = '';
+  if (contextPath) {
+    try {
+      context = await readFile(contextPath, 'utf8');
+    } catch (err) {
+      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
+    }
+  }
+  return renderTemplate(promptPath, { curators: names, context });
+}
+```
+
 ### File: ./src/imageSelector.js
 ```
 import fs from "node:fs/promises";
@@ -6983,10 +7882,6 @@ import { renderTemplate } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
-<<<<<<< HEAD
-import { sha256 } from "./hash.js";
-=======
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 /**
  * Recursively triage images until the current directory is empty
@@ -7000,11 +7895,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   fieldNotes = false,
-<<<<<<< HEAD
-  showPrompt,
-=======
   showPrompt = false,
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -7019,17 +7910,8 @@ export async function triageDirectory({
 
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
-<<<<<<< HEAD
-  let levelExists = false;
-  try {
-    levelExists = (await stat(levelDir)).isDirectory();
-  } catch {
-    /* ignore */
-  }
-=======
   const promptsDir = path.join(levelDir, 'prompts');
   const repliesDir = path.join(levelDir, 'replies');
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   let notesWriter;
   let fieldNotesText = "";
   if (fieldNotes) {
@@ -7056,38 +7938,9 @@ export async function triageDirectory({
     }
   }
 
-<<<<<<< HEAD
-  // Snapshot the prompt to reproduce this batch later.
-  // Storing `.prompt.txt` allows us to rerun the exact call.
-  await mkdir(levelDir, { recursive: true });
-  await writeFile(path.join(levelDir, '.prompt.txt'), prompt, 'utf8');
-
-  if (showPrompt) {
-    if (showPrompt === 'hash') {
-      console.log(`${indent}📑  Prompt hash ${sha256(prompt)}`);
-    } else if (showPrompt === 'preview') {
-      const lines = prompt.split('\n');
-      const preview = lines.slice(0, 100).join('\n');
-      const truncated = lines.length > 100 ? '\n...<truncated>...' : '';
-      console.log(`${indent}📑  Prompt preview:\n${preview}${truncated}`);
-      console.log(`${indent}📑  Prompt hash ${sha256(prompt)}`);
-    } else {
-      console.log(`${indent}📑  Prompt:\n${prompt}`);
-    }
-=======
-  if (showPrompt) {
-    console.log(`${indent}📑  Prompt:\n${prompt}`);
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
-  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
-<<<<<<< HEAD
-  // Archive original images at this level when directory didn't exist
-  if (!levelExists && initImages.length) {
-    await Promise.all(
-      initImages.map((file) => copyFile(file, path.join(levelDir, path.basename(file))))
-=======
   // Archive original images at this level
   try {
     await stat(levelDir);
@@ -7102,7 +7955,6 @@ export async function triageDirectory({
       initImages.map((file) =>
         copyFile(file, path.join(levelDir, path.basename(file)))
       )
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
   }
 
@@ -7121,13 +7973,12 @@ export async function triageDirectory({
 
     // Step 2 – ask ChatGPT
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
-<<<<<<< HEAD
-    let reply = await chatCompletion({
-=======
     const ts = Date.now();
     await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
+    if (showPrompt) {
+      console.log(`${indent}📑  Prompt:\n${prompt}`);
+    }
     const reply = await chatCompletion({
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       prompt,
       images: batch,
       model,
@@ -7136,40 +7987,15 @@ export async function triageDirectory({
     await writeFile(path.join(repliesDir, `${ts}.raw.json`), reply, 'utf8');
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
-<<<<<<< HEAD
-    let parsed;
-    try {
-      // Step 3 – parse decisions. Missing field_notes keys break the two-pass workflow.
-=======
     // Step 3 – parse decisions
     let parsed;
     try {
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       parsed = parseReply(reply, batch, {
         expectFieldNotesDiff: fieldNotes,
       });
     } catch (err) {
-<<<<<<< HEAD
-      if (/field_notes_/.test(err.message)) {
-        // Retry once asking the model to regenerate with all keys.
-        const retryPrompt = `${prompt}\nPrevious response omitted required keys—regenerate.`;
-        reply = await chatCompletion({
-          prompt: retryPrompt,
-          images: batch,
-          model,
-          curators,
-        });
-        console.log(`${indent}🤖  Retry reply:\n${reply}`);
-        parsed = parseReply(reply, batch, {
-          expectFieldNotesDiff: fieldNotes,
-        });
-      } else {
-        throw err;
-      }
-=======
       console.warn(`${indent}Failed to parse reply: ${err.message}`);
       continue;
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     }
     const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parsed;
     if (minutes.length) {
@@ -7188,42 +8014,16 @@ export async function triageDirectory({
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
             { prompt: basePrompt, existing, diff: fieldNotesDiff }
           );
-<<<<<<< HEAD
-
-          // Snapshot second-pass prompt for reproducibility
-          await mkdir(levelDir, { recursive: true });
-          await writeFile(path.join(levelDir, '.prompt.second.txt'), secondPrompt, 'utf8');
-
-          if (showPrompt) {
-            if (showPrompt === 'hash') {
-              console.log(`${indent}📑  Second-pass hash ${sha256(secondPrompt)}`);
-            } else if (showPrompt === 'preview') {
-              const lines2 = secondPrompt.split('\n');
-              const prev = lines2.slice(0, 100).join('\n');
-              const trunc = lines2.length > 100 ? '\n...<truncated>...' : '';
-              console.log(`${indent}📑  Second-pass preview:\n${prev}${trunc}`);
-              console.log(`${indent}📑  Second-pass hash ${sha256(secondPrompt)}`);
-            } else {
-              console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
-            }
-          }
-=======
           if (showPrompt) {
             console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
           }
           await writeFile(path.join(promptsDir, `${ts}-second.prompt.txt`), secondPrompt, 'utf8');
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
           const second = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
             model,
             curators,
           });
-<<<<<<< HEAD
-          const parsed = parseReply(second, batch, {
-            expectFieldNotesMd: true,
-          });
-=======
           await writeFile(path.join(repliesDir, `${ts}-second.raw.json`), second, 'utf8');
           let parsed;
           try {
@@ -7234,7 +8034,6 @@ export async function triageDirectory({
             console.warn(`${indent}Failed to parse second-pass reply: ${err.message}`);
             continue;
           }
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
           if (parsed.fieldNotesMd) {
             await notesWriter.writeFull(parsed.fieldNotesMd);
           } else {
@@ -7279,6 +8078,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         fieldNotes,
+        showPrompt,
         depth: depth + 1,
       });
     } else {
@@ -7325,25 +8125,26 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Sat Jul  5 01:42:34 EDT 2025
- 1:42  up  8:12, 23 users, load averages: 6.64 5.46 5.59
+Sat Jul  5 16:22:35 EDT 2025
+16:22  up 22:52, 23 users, load averages: 7.05 6.31 7.37
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi   283Gi     5%    425k  3.0G    0%   /
-devfs            217Ki   217Ki     0Bi   100%     751     0  100%   /dev
-/dev/disk3s6     7.3Ti    24Ki   283Gi     1%       0  3.0G    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi   283Gi     5%    1.8k  3.0G    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   685Mi   283Gi     1%     328  3.0G    0%   /System/Volumes/Update
+/dev/disk3s1s1   7.3Ti    14Gi   234Gi     6%    425k  2.5G    0%   /
+devfs            217Ki   217Ki     0Bi   100%     750     0  100%   /dev
+/dev/disk3s6     7.3Ti    24Ki   234Gi     1%       0  2.5G    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi   234Gi     6%    1.8k  2.5G    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   685Mi   234Gi     1%     328  2.5G    0%   /System/Volumes/Update
 /dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   7.0Ti   283Gi    97%    6.4M  3.0G    0%   /System/Volumes/Data
+/dev/disk3s5     7.3Ti   7.0Ti   234Gi    97%    6.4M  2.5G    0%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
-/dev/disk3s1     7.3Ti    14Gi   283Gi     5%    426k  3.0G    0%   /System/Volumes/Update/mnt1
 /dev/disk4s1      30Gi    13Gi    17Gi    44%       0     0     -   /Volumes/DR-70D
+/dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
+/dev/disk3s1     7.3Ti    14Gi   234Gi     6%    426k  2.5G    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
