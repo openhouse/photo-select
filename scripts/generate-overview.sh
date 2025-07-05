@@ -54,7 +54,7 @@ echo ""
 if command -v tree >/dev/null 2>&1; then
   echo "Below is the tree of files/folders (excluding .git, node_modules, dist, project-overview*):"
   echo '```'
-  tree -a -I ".git|node_modules|dist|project-overview*" .
+  tree -a -I ".git|.cache|node_modules|dist|project-overview*" .
   echo '```'
 else
   echo "Below is the 'ls -R' style listing of files/folders (excluding .git, node_modules, dist, project-overview*)."
@@ -62,6 +62,7 @@ else
   echo '```'
   find . \
     -path "*/.git" -prune -o \
+    -path "*/.cache" -prune -o \
     -path "*/node_modules" -prune -o \
     -path "*/dist" -prune -o \
     -name "project-overview*" -prune -o \
@@ -163,10 +164,10 @@ echo "PDF files are extracted as text if possible; binary files are noted but no
 echo ""
 
 # Directories to skip anywhere in the repo
-SKIP_DIRS=(.git node_modules dist .vscode)
+SKIP_DIRS=(.git node_modules dist .vscode .cache)
 
 # File patterns to skip
-SKIP_FILES=("*.lock" "yarn.lock" "package-lock.json" "project-overview*")
+SKIP_FILES=("*.lock" "yarn.lock" "package-lock.json" ".env" "project-overview*")
 
 FIND_CMD=(find .)
 

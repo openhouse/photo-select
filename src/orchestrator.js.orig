@@ -59,6 +59,20 @@ export async function triageDirectory({
   console.log(`${indent}📁  Scanning ${dir}`);
 
   // Archive original images at this level
+<<<<<<< HEAD
+  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const initImages = await listImages(dir);
+  let notesWriter;
+  if (fieldNotes) {
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    await notesWriter.init();
+    const existing = await notesWriter.read();
+    if (existing) {
+      prompt += `\n\nField notes so far:\n${existing}`;
+    }
+  }
+=======
+>>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
   try {
     await stat(levelDir);
   } catch {
@@ -96,9 +110,13 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
+<<<<<<< HEAD
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch);
+=======
     const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch, {
       expectFieldNotesDiff: fieldNotes,
     });
+>>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
@@ -111,19 +129,27 @@ export async function triageDirectory({
           await notesWriter.writeFull(fieldNotesMd);
         } else {
           const existing = (await notesWriter.read()) || '';
+<<<<<<< HEAD
+          const secondPrompt = `${prompt}\n\nCurrent field notes:\n${existing}\n\nPatch:\n${fieldNotesDiff}\n\nReturn JSON with field_notes_md.`;
+=======
           const secondPrompt = await renderTemplate(
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
             { prompt, existing, diff: fieldNotesDiff }
           );
+>>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
           const second = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
             model,
             curators,
           });
+<<<<<<< HEAD
+          const parsed = parseReply(second, batch);
+=======
           const parsed = parseReply(second, batch, {
             expectFieldNotesMd: true,
           });
+>>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
           if (parsed.fieldNotesMd) {
             await notesWriter.writeFull(parsed.fieldNotesMd);
           } else {

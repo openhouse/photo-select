@@ -337,6 +337,8 @@ export function parseReply(text, allFiles, opts = {}) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
+<<<<<<< HEAD
+=======
   if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
     throw new Error('field_notes_diff missing in reply');
   }
@@ -344,6 +346,7 @@ export function parseReply(text, allFiles, opts = {}) {
     throw new Error('field_notes_md missing in reply');
   }
 
+>>>>>>> 6261172d17708709d1665efa5b42b7df577809d0
   return {
     keep: [...keep],
     aside: [...aside],
