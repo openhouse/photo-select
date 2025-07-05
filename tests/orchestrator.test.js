@@ -37,7 +37,10 @@ afterEach(async () => {
 describe("triageDirectory", () => {
   it("moves files into keep and aside", async () => {
     chatCompletion.mockResolvedValueOnce(
-      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+      JSON.stringify({
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] }
+      })
     );
     await triageDirectory({
       dir: tmpDir,
@@ -55,8 +58,12 @@ describe("triageDirectory", () => {
 
   it("recurses into keep directory", async () => {
     chatCompletion
-      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }))
-      .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["1.jpg"] }));
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ minutes: [{ speaker: 'B', text: 'next?' }], decision: { keep: [], aside: ["1.jpg"] } })
+      );
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
@@ -73,10 +80,10 @@ describe("triageDirectory", () => {
   it("recurses even when all images kept", async () => {
     chatCompletion
       .mockResolvedValueOnce(
-        JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+        JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg", "2.jpg"], aside: [] } })
       )
       .mockResolvedValueOnce(
-        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+        JSON.stringify({ minutes: [{ speaker: 'B', text: 'next?' }], decision: { keep: [], aside: ["1.jpg", "2.jpg"] } })
       );
     await triageDirectory({
       dir: tmpDir,
@@ -92,13 +99,26 @@ describe("triageDirectory", () => {
   it("updates field notes when enabled", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({
+<<<<<<< HEAD
         keep: ["1.jpg"],
         aside: ["2.jpg"],
+=======
+        minutes: [{ speaker: 'A', text: 'ok?' }],
+        decision: { keep: ["1.jpg"], aside: ["2.jpg"] },
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
         field_notes_diff: "--- a\n+++ b\n@@\n-Old\n+New",
       })
     );
     chatCompletion.mockResolvedValueOnce(
+<<<<<<< HEAD
       JSON.stringify({ field_notes_md: "New" })
+=======
+      JSON.stringify({
+        minutes: [{ speaker: 'B', text: 'done?' }],
+        decision: { keep: [], aside: [] },
+        field_notes_md: "New"
+      })
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
     await triageDirectory({
       dir: tmpDir,
@@ -113,6 +133,7 @@ describe("triageDirectory", () => {
     expect(chatCompletion).toHaveBeenCalledTimes(2);
   });
 
+<<<<<<< HEAD
   it("fails when field_notes_diff missing", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
@@ -131,6 +152,11 @@ describe("triageDirectory", () => {
   it("prints the prompt when showPrompt is true", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+=======
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["1.jpg"], aside: ["2.jpg"] } })
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     await triageDirectory({
@@ -138,7 +164,11 @@ describe("triageDirectory", () => {
       promptPath: promptFile,
       model: "test-model",
       recurse: false,
+<<<<<<< HEAD
       showPrompt: 'full',
+=======
+      showPrompt: true,
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     });
     const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
     expect(calls).toBe(true);

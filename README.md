@@ -103,9 +103,7 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
-| `--show-prompt` | `false` | Output the prompt (`full`, `hash`, or `preview`) before each API call |
-
-Each batch stores the final text sent to the model as `.prompt.txt` in its `_level-NNN/` folder. Use `--show-prompt=hash` to print only a SHA-256 of the prompt, or `--show-prompt=preview` to print the first 100 lines followed by the hash.
+| `--show-prompt` | `false` | Print the rendered prompt text before each API call |
 
 Prompt files are Handlebars templates. Values such as `curators`, `context`, and
 previous `fieldNotes` are injected when each request is built.
@@ -285,6 +283,12 @@ full.
 Responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
 saved reply instead of hitting the API.
+
+### Exporting provenance
+
+Run `node scripts/export_sqlite.js` after a session to build `prompts.sqlite`
+containing prompts and raw replies for each level. Inspect the result with
+`datasette inspect prompts.sqlite`.
 
 ## Testing
 

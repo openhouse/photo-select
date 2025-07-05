@@ -34,11 +34,15 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option("--field-notes", "Enable field notes workflow")
+<<<<<<< HEAD
   .option(
     "--show-prompt [mode]",
     "Print the prompt: full, hash, or preview",
     (val) => val || "full"
   )
+=======
+  .option("--show-prompt", "Print the rendered prompt before each API call")
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   .parse(process.argv);
 
 const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes, showPrompt } = program.opts();

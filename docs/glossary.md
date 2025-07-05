@@ -19,5 +19,8 @@ First pass returns a diff; second pass resolves to the full document.
 **Adapter** – Boundary module that converts between external systems (OpenAI, filesystem) and pure functions.
 
 **Service** – Coordinator function (e.g. `triageDirectory`) that expresses application use-cases in terms of adapters & pure functions.
+<<<<<<< HEAD
 
 **Prompt Snapshot** – A `.prompt.txt` file stored in each level directory containing the exact text sent to the model for reproducibility.
+=======
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d

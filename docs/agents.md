@@ -1,5 +1,6 @@
 # Agents Contract  · Photo-Select
 
+<<<<<<< HEAD
 ---
 schema_version: 2
 updated: 2025-07-05
@@ -30,6 +31,20 @@ schema_duty: none; outside minutes/decisions.
 > **Rule:** Minutes **always** stay within the personas above.
 > **Rule:** Decisions follow minutes, never interwoven.
 > **Rule:** Minutes end with a forward-looking question from one curator.
+=======
+This document **must be loaded by any code-assistant before touching the repo.**
+
+## 1  Synthetic Voices
+| Id | Role in Minutes | Style |
+|----|-----------------|-------|
+| *Curator-A* | “Ingeborg Gerdes” | aesthetic, formal |
+| *Curator-B* | “Alexandra Munroe” | scholarly, contextual |
+| … | … | … |
+| Facilitator | “Jamie (off-stage)” | session framing only |
+
+> **Rule:** Minutes **always** stay within the personas above.  
+> **Rule:** Decisions follow minutes, never interwoven.
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 ## 2  Two-Pass Field-Notes Workflow
 | Phase | LLM Output | Parser expectation |

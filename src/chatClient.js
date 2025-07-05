@@ -3,6 +3,10 @@ import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { z } from "zod";
+<<<<<<< HEAD
+=======
+import { Reply as ReplySchema } from "./replySchema.js";
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
@@ -224,30 +228,67 @@ export async function chatCompletion({
  */
 export function parseReply(text, allFiles, opts = {}) {
   const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
+<<<<<<< HEAD
   // Strip Markdown code fences like ```json ... ``` if present
   const fenced = text.trim();
   if (fenced.startsWith('```')) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
     if (match) text = match[1];
+=======
+  let content = text.trim();
+  if (content.startsWith('```')) {
+    const m = content.match(/^```\w*\n([\s\S]*?)\n```$/);
+    if (m) content = m[1];
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   }
-  const map = new Map();
-  for (const f of allFiles) {
-    map.set(path.basename(f).toLowerCase(), f);
+  const data = ReplySchema.parse(JSON.parse(content));
+
+  if (data.minutes.length) {
+    const last = data.minutes[data.minutes.length - 1].text.trim();
+    if (!last.endsWith('?')) {
+      throw new Error('minutes must end with a question');
+    }
   }
 
-  const lookup = (name) => {
-    const lc = String(name).toLowerCase();
+  const map = new Map(allFiles.map((f) => [path.basename(f).toLowerCase(), f]));
+  const resolve = (name) => {
+    const lc = name.toLowerCase();
     let f = map.get(lc);
     if (!f) {
-      const idx = lc.indexOf("dscf");
-      if (idx !== -1) f = map.get(lc.slice(idx));
+      const idx = lc.indexOf('dscf');
+      if (idx !== -1) {
+        f = map.get(lc.slice(idx));
+        if (!f) {
+          for (const [key, val] of map) {
+            if (key.endsWith(lc.slice(idx))) { f = val; break; }
+          }
+        }
+      }
     }
     return f;
   };
 
-  const keep = new Set();
-  const aside = new Set();
+  const toList = (val) => {
+    const result = [];
+    if (Array.isArray(val)) {
+      for (const n of val) {
+        const f = resolve(n);
+        if (f) result.push([f, undefined]);
+      }
+    } else {
+      for (const [n, reason] of Object.entries(val || {})) {
+        const f = resolve(n);
+        if (f) result.push([f, reason]);
+      }
+    }
+    return result;
+  };
+
+  const keep = toList(data.decision.keep);
+  const aside = toList(data.decision.aside);
+
   const notes = new Map();
+<<<<<<< HEAD
   const minutes = [];
   let fieldNotesDiff = null;
   let fieldNotesMd = null;
@@ -300,53 +341,37 @@ export function parseReply(text, allFiles, opts = {}) {
     }
   } catch {
     // fall through to plain text handling
+=======
+  for (const [f, reason] of [...keep, ...aside]) {
+    if (reason) notes.set(f, String(reason));
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   }
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+  const keepFiles = new Set(keep.map(([f]) => f));
+  const asideFiles = new Set(aside.map(([f]) => f));
+  for (const f of keepFiles) asideFiles.delete(f);
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
-
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
-      }
-    }
-  }
-
-  // Leave any files unmentioned in the reply unmoved so they can be triaged
-  // in a later batch. Only files explicitly marked keep or aside are returned.
-
-  // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
-
-  const decided = new Set([...keep, ...aside]);
+  const decided = new Set([...keepFiles, ...asideFiles]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
+<<<<<<< HEAD
   // field_notes_diff/md are required for the two-pass notebook workflow.
   // Missing keys would leave the notebook in an inconsistent state.
   if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
     throw new Error('field_notes_diff missing in reply');
   }
   if (expectFieldNotesMd && !fieldNotesMd) {
+=======
+  if (expectFieldNotesDiff && !data.field_notes_diff && !data.field_notes_md) {
+    throw new Error('field_notes_diff missing in reply');
+  }
+  if (expectFieldNotesMd && !data.field_notes_md) {
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     throw new Error('field_notes_md missing in reply');
   }
 
   return {
+<<<<<<< HEAD
     keep: [...keep],
     aside: [...aside],
     unclassified,
@@ -354,5 +379,14 @@ export function parseReply(text, allFiles, opts = {}) {
     minutes,
     fieldNotesDiff,
     fieldNotesMd,
+=======
+    keep: [...keepFiles],
+    aside: [...asideFiles],
+    unclassified,
+    notes,
+    minutes: data.minutes.map((m) => `${m.speaker}: ${m.text}`),
+    fieldNotesDiff: data.field_notes_diff || null,
+    fieldNotesMd: data.field_notes_md || null,
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   };
 }

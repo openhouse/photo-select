@@ -370,28 +370,29 @@ fi
 echo '```'
 echo ""
 
-echo "### Python Environment & Packages"
-echo '```'
-if command -v python3 >/dev/null 2>&1; then
-  echo "[python3 -V]"
-  python3 -V
-  echo ""
-  echo "[pip3 freeze]"
-  pip3 freeze
-else
-  echo "(No python3 found. Skipping Python environment details.)"
-fi
+# echo "### Python Environment & Packages"
+# echo '```'
+# if command -v python3 >/dev/null 2>&1; then
+#   echo "[python3 -V]"
+#   python3 -V
+#   echo ""
+#   echo "[pip3 freeze]"
+#   pip3 freeze
+# else
+#   echo "(No python3 found. Skipping Python environment details.)"
+# fi
 
-if command -v conda >/dev/null 2>&1; then
-  echo ""
-  echo "[conda info --envs]"
-  conda info --envs
-  echo ""
-  echo "[conda list --show-channel-urls]"
-  conda list --show-channel-urls
-fi
-echo '```'
-echo ""
+# if command -v conda >/dev/null 2>&1; then
+#   echo ""
+#   echo "[conda info --envs]"
+#   conda info --envs
+#   echo ""
+#   echo "[conda list --show-channel-urls]"
+#   conda list --show-channel-urls
+# fi
+# echo '```'
+# echo ""
+# 
 
 echo "### System Compiler & Libraries"
 echo '```'

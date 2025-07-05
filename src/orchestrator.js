@@ -4,7 +4,10 @@ import { renderTemplate } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
+<<<<<<< HEAD
 import { sha256 } from "./hash.js";
+=======
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
 
 /**
  * Recursively triage images until the current directory is empty
@@ -18,7 +21,11 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   fieldNotes = false,
+<<<<<<< HEAD
   showPrompt,
+=======
+  showPrompt = false,
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -33,12 +40,17 @@ export async function triageDirectory({
 
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
+<<<<<<< HEAD
   let levelExists = false;
   try {
     levelExists = (await stat(levelDir)).isDirectory();
   } catch {
     /* ignore */
   }
+=======
+  const promptsDir = path.join(levelDir, 'prompts');
+  const repliesDir = path.join(levelDir, 'replies');
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   let notesWriter;
   let fieldNotesText = "";
   if (fieldNotes) {
@@ -65,6 +77,7 @@ export async function triageDirectory({
     }
   }
 
+<<<<<<< HEAD
   // Snapshot the prompt to reproduce this batch later.
   // Storing `.prompt.txt` allows us to rerun the exact call.
   await mkdir(levelDir, { recursive: true });
@@ -82,14 +95,35 @@ export async function triageDirectory({
     } else {
       console.log(`${indent}📑  Prompt:\n${prompt}`);
     }
+=======
+  if (showPrompt) {
+    console.log(`${indent}📑  Prompt:\n${prompt}`);
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
+<<<<<<< HEAD
   // Archive original images at this level when directory didn't exist
   if (!levelExists && initImages.length) {
     await Promise.all(
       initImages.map((file) => copyFile(file, path.join(levelDir, path.basename(file))))
+=======
+  // Archive original images at this level
+  try {
+    await stat(levelDir);
+  } catch {
+    // ignore
+  }
+  await mkdir(levelDir, { recursive: true });
+  await mkdir(promptsDir, { recursive: true });
+  await mkdir(repliesDir, { recursive: true });
+  if (initImages.length) {
+    await Promise.all(
+      initImages.map((file) =>
+        copyFile(file, path.join(levelDir, path.basename(file)))
+      )
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     );
   }
 
@@ -108,21 +142,35 @@ export async function triageDirectory({
 
     // Step 2 – ask ChatGPT
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
+<<<<<<< HEAD
     let reply = await chatCompletion({
+=======
+    const ts = Date.now();
+    await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
+    const reply = await chatCompletion({
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       prompt,
       images: batch,
       model,
       curators,
     });
+    await writeFile(path.join(repliesDir, `${ts}.raw.json`), reply, 'utf8');
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
+<<<<<<< HEAD
     let parsed;
     try {
       // Step 3 – parse decisions. Missing field_notes keys break the two-pass workflow.
+=======
+    // Step 3 – parse decisions
+    let parsed;
+    try {
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       parsed = parseReply(reply, batch, {
         expectFieldNotesDiff: fieldNotes,
       });
     } catch (err) {
+<<<<<<< HEAD
       if (/field_notes_/.test(err.message)) {
         // Retry once asking the model to regenerate with all keys.
         const retryPrompt = `${prompt}\nPrevious response omitted required keys—regenerate.`;
@@ -139,6 +187,10 @@ export async function triageDirectory({
       } else {
         throw err;
       }
+=======
+      console.warn(`${indent}Failed to parse reply: ${err.message}`);
+      continue;
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
     }
     const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parsed;
     if (minutes.length) {
@@ -157,6 +209,7 @@ export async function triageDirectory({
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
             { prompt: basePrompt, existing, diff: fieldNotesDiff }
           );
+<<<<<<< HEAD
 
           // Snapshot second-pass prompt for reproducibility
           await mkdir(levelDir, { recursive: true });
@@ -175,15 +228,34 @@ export async function triageDirectory({
               console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
             }
           }
+=======
+          if (showPrompt) {
+            console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
+          }
+          await writeFile(path.join(promptsDir, `${ts}-second.prompt.txt`), secondPrompt, 'utf8');
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
           const second = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
             model,
             curators,
           });
+<<<<<<< HEAD
           const parsed = parseReply(second, batch, {
             expectFieldNotesMd: true,
           });
+=======
+          await writeFile(path.join(repliesDir, `${ts}-second.raw.json`), second, 'utf8');
+          let parsed;
+          try {
+            parsed = parseReply(second, batch, {
+              expectFieldNotesMd: true,
+            });
+          } catch (err) {
+            console.warn(`${indent}Failed to parse second-pass reply: ${err.message}`);
+            continue;
+          }
+>>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
           if (parsed.fieldNotesMd) {
             await notesWriter.writeFull(parsed.fieldNotesMd);
           } else {
