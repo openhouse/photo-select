@@ -88,4 +88,28 @@ describe("triageDirectory", () => {
     const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
     await expect(fs.stat(aside2)).resolves.toBeTruthy();
   });
+
+  it("updates field notes when enabled", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({
+        keep: ["1.jpg"],
+        aside: ["2.jpg"],
+        field_notes_diff: "--- a\n+++ b\n@@\n-Old\n+New",
+      })
+    );
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ field_notes_md: "New" })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      fieldNotes: true,
+    });
+    const noteFile = path.join(tmpDir, "_level-001", "field-notes.md");
+    const content = await fs.readFile(noteFile, "utf8");
+    expect(content).toMatch(/New/);
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+  });
 });
