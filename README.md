@@ -96,6 +96,7 @@ through to the script unchanged.
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
+| `--show-prompt` | `false` | Print the assembled prompt and exit |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--field-notes` | `false` | Enable living field-notes.md generation with curator diff workflow |
 
