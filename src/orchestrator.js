@@ -60,9 +60,6 @@ export async function triageDirectory({
     }
   }
 
-  if (showPrompt) {
-    console.log(`${indent}📑  Prompt:\n${prompt}`);
-  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
@@ -100,6 +97,9 @@ export async function triageDirectory({
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
     const ts = Date.now();
     await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
+    if (showPrompt) {
+      console.log(`${indent}📑  Prompt:\n${prompt}`);
+    }
     const reply = await chatCompletion({
       prompt,
       images: batch,
@@ -200,6 +200,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         fieldNotes,
+        showPrompt,
         depth: depth + 1,
       });
     } else {
