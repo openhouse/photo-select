@@ -45,8 +45,14 @@ const files = [
 /** Basic parsing of keep/aside directives */
 describe("parseReply", () => {
   it("classifies mentioned files and captures notes", () => {
-    const reply = `DSCF1234.jpg -- keep - sharp shot\nSet aside: DSCF5678.jpg - blurry`;
-    const { keep, aside, notes } = parseReply(reply, files);
+    const json = JSON.stringify({
+      minutes: [{ speaker: 'A', text: 'ok?' }],
+      decision: {
+        keep: { 'DSCF1234.jpg': 'sharp' },
+        aside: { 'DSCF5678.jpg': 'blurry' }
+      }
+    });
+    const { keep, aside, notes } = parseReply(json, files);
     expect(keep).toContain(files[0]);
     expect(notes.get(files[0])).toMatch(/sharp/);
     expect(aside).toContain(files[1]);
@@ -54,8 +60,11 @@ describe("parseReply", () => {
   });
 
   it("leaves unmentioned files unclassified", () => {
-    const reply = `keep: DSCF1234.jpg`;
-    const { aside, keep, unclassified } = parseReply(reply, files);
+    const json = JSON.stringify({
+      minutes: [{ speaker: 'A', text: 'ok?' }],
+      decision: { keep: ['DSCF1234.jpg'], aside: [] }
+    });
+    const { aside, keep, unclassified } = parseReply(json, files);
     expect(keep).toContain(files[0]);
     expect(unclassified).toContain(files[1]);
     expect(unclassified).toContain(files[2]);
@@ -66,16 +75,22 @@ describe("parseReply", () => {
       "/tmp/2020-01-01-DSCF1234.jpg",
       "/tmp/2020-01-01-DSCF5678.jpg",
     ];
-    const reply = `DSCF1234.jpg -- keep\nSet aside: DSCF5678.jpg`;
-    const { keep, aside } = parseReply(reply, prefixed);
+    const json = JSON.stringify({
+      minutes: [{ speaker: 'A', text: 'ok?' }],
+      decision: { keep: ['DSCF1234.jpg'], aside: ['DSCF5678.jpg'] }
+    });
+    const { keep, aside } = parseReply(json, prefixed);
     expect(keep).toContain(prefixed[0]);
     expect(aside).toContain(prefixed[1]);
   });
 
   it("parses JSON responses with reasoning", () => {
     const json = JSON.stringify({
-      keep: { "DSCF1234.jpg": "good light" },
-      aside: { "DSCF5678.jpg": "out of focus" },
+      minutes: [{ speaker: 'A', text: 'ok?' }],
+      decision: {
+        keep: { "DSCF1234.jpg": "good light" },
+        aside: { "DSCF5678.jpg": "out of focus" }
+      }
     });
     const { keep, aside, notes } = parseReply(json, files);
     expect(keep).toContain(files[0]);
@@ -88,7 +103,7 @@ describe("parseReply", () => {
   it("handles JSON wrapped in Markdown fences", () => {
     const fenced =
       '```json\n' +
-      JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] }) +
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] } }) +
       '\n```';
     const { keep, aside } = parseReply(fenced, files);
     expect(keep).toContain(files[0]);
@@ -96,7 +111,10 @@ describe("parseReply", () => {
   });
 
   it("deduplicates files listed in both groups", () => {
-    const reply = JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] });
+    const reply = JSON.stringify({
+      minutes: [{ speaker: 'A', text: 'ok?' }],
+      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] }
+    });
     const { keep, aside } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
     expect(aside).not.toContain(files[0]);
@@ -104,7 +122,7 @@ describe("parseReply", () => {
 
   it("parses minutes and nested decision", () => {
     const reply = JSON.stringify({
-      minutes: [{ speaker: "Curator", text: "looks good" }],
+      minutes: [{ speaker: "Curator", text: "looks good?" }],
       decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] },
     });
     const { keep, aside, minutes } = parseReply(reply, files);
