@@ -20,6 +20,7 @@ moves the files accordingly, and then recurses until a directory is fully triage
   ```
 
 * macOS, Linux, or Windows‑WSL (uses only cross‑platform Node APIs)
+* [`patch`](https://man7.org/linux/man-pages/man1/patch.1.html) binary or the Python `patch-ng` package
 
 ## Installation
 
@@ -102,11 +103,7 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
-| `--show-prompt` | `false` | Print the rendered prompt text before each API call |
-
-Prompt files are Handlebars templates. Values such as `curators`, `context`, and
-previous `fieldNotes` are injected when each request is built.
+| `--field-notes` | `false` | Enable living field-notes.md generation with curator diff workflow |
 
 ### People metadata (optional)
 
@@ -120,6 +117,35 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
   --curators "Ingeborg Gerdes, Alexandra Munroe, Mandy Steinback, Kendell Harbin, Erin Zona, Madeline Gallucci, Deborah Treisman" \
   --context /path/to/info.md
 ```
+
+### Field-Notes Mode
+
+When `--field-notes` is enabled the tool keeps a living `field-notes.md` next to every `_level-NNN` directory it creates.
+Each notebook starts empty and is updated after every batch of photos using the curator diff workflow.
+
+```
+001/
+  DSCF0001.jpg
+  DSCF0002.jpg
+  field-notes.md
+```
+
+The first pass provides the current file and short instructions so curators can propose a patch.
+If the diff applies, the writer appends a timestamp comment and saves the new text.
+Bare filenames like `[DSCF0001.jpg]` automatically link to files in the same directory.
+If more than three inline images are embedded (`![]()`), a warning is added at the bottom.
+Disable the feature by omitting the flag.
+
+Example citation:
+
+```markdown
+We observed damage on [DSCF0001.jpg]
+```
+becomes
+```markdown
+We observed damage on [DSCF0001.jpg](./DSCF0001.jpg)
+```
+
 
 ## Supported OpenAI models
 
