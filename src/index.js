@@ -34,9 +34,10 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option("--field-notes", "Enable field notes workflow")
+  .option("--show-prompt", "Print the rendered prompt before each API call")
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, fieldNotes, showPrompt } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -60,6 +61,7 @@ if (apiKey) {
       curators,
       contextPath,
       fieldNotes,
+      showPrompt,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
