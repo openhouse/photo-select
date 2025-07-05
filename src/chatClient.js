@@ -2,6 +2,8 @@ import { OpenAI, NotFoundError } from "openai";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { z } from "zod";
+import { Reply as ReplySchema } from "./replySchema.js";
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
@@ -69,12 +71,7 @@ export async function cacheKey({ prompt, images, model, curators = [] }) {
  * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
  */
 export async function buildMessages(prompt, images, curators = []) {
-  let content = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    content = content.replace(/\{\{curators\}\}/g, names);
-  }
-  const system = { role: "system", content };
+  const system = { role: "system", content: prompt };
 
   /**  Turn each image into base64 data‑URL with a preceding filename label.  */
   const userImageParts = await Promise.all(
@@ -113,10 +110,6 @@ export async function buildMessages(prompt, images, curators = []) {
 /** Build input array for the Responses API */
 export async function buildInput(prompt, images, curators = []) {
   let instructions = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    instructions = instructions.replace(/\{\{curators\}\}/g, names);
-  }
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
@@ -163,13 +156,7 @@ export async function chatCompletion({
   cache = true,
   curators = [],
 }) {
-  let finalPrompt = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
-  }
-
-  finalPrompt = ensureJsonMention(finalPrompt);
+  const finalPrompt = ensureJsonMention(prompt);
 
   const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
   if (cache) {
@@ -236,115 +223,85 @@ export async function chatCompletion({
  *  • “DSCF1234 — keep  …reason…”
  *  • “Set aside: DSCF5678”
  */
-export function parseReply(text, allFiles) {
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
-  if (fenced.startsWith('```')) {
-    const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
+export function parseReply(text, allFiles, opts = {}) {
+  const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
+  let content = text.trim();
+  if (content.startsWith('```')) {
+    const m = content.match(/^```\w*\n([\s\S]*?)\n```$/);
+    if (m) content = m[1];
   }
-  const map = new Map();
-  for (const f of allFiles) {
-    map.set(path.basename(f).toLowerCase(), f);
+  const data = ReplySchema.parse(JSON.parse(content));
+
+  if (data.minutes.length) {
+    const last = data.minutes[data.minutes.length - 1].text.trim();
+    if (!last.endsWith('?')) {
+      throw new Error('minutes must end with a question');
+    }
   }
 
-  const lookup = (name) => {
-    const lc = String(name).toLowerCase();
+  const map = new Map(allFiles.map((f) => [path.basename(f).toLowerCase(), f]));
+  const resolve = (name) => {
+    const lc = name.toLowerCase();
     let f = map.get(lc);
     if (!f) {
-      const idx = lc.indexOf("dscf");
-      if (idx !== -1) f = map.get(lc.slice(idx));
+      const idx = lc.indexOf('dscf');
+      if (idx !== -1) {
+        f = map.get(lc.slice(idx));
+        if (!f) {
+          for (const [key, val] of map) {
+            if (key.endsWith(lc.slice(idx))) { f = val; break; }
+          }
+        }
+      }
     }
     return f;
   };
 
-  const keep = new Set();
-  const aside = new Set();
+  const toList = (val) => {
+    const result = [];
+    if (Array.isArray(val)) {
+      for (const n of val) {
+        const f = resolve(n);
+        if (f) result.push([f, undefined]);
+      }
+    } else {
+      for (const [n, reason] of Object.entries(val || {})) {
+        const f = resolve(n);
+        if (f) result.push([f, reason]);
+      }
+    }
+    return result;
+  };
+
+  const keep = toList(data.decision.keep);
+  const aside = toList(data.decision.aside);
+
   const notes = new Map();
-  const minutes = [];
-
-  // Try JSON first
-  try {
-    const obj = JSON.parse(text);
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
-        }
-      };
-
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
-    }
-  } catch {
-    // fall through to plain text handling
+  for (const [f, reason] of [...keep, ...aside]) {
+    if (reason) notes.set(f, String(reason));
   }
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+  const keepFiles = new Set(keep.map(([f]) => f));
+  const asideFiles = new Set(aside.map(([f]) => f));
+  for (const f of keepFiles) asideFiles.delete(f);
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
-
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
-      }
-    }
-  }
-
-  // Leave any files unmentioned in the reply unmoved so they can be triaged
-  // in a later batch. Only files explicitly marked keep or aside are returned.
-
-  // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
-
-  const decided = new Set([...keep, ...aside]);
+  const decided = new Set([...keepFiles, ...asideFiles]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
+  if (expectFieldNotesDiff && !data.field_notes_diff && !data.field_notes_md) {
+    throw new Error('field_notes_diff missing in reply');
+  }
+  if (expectFieldNotesMd && !data.field_notes_md) {
+    throw new Error('field_notes_md missing in reply');
+  }
+
+  return {
+    keep: [...keepFiles],
+    aside: [...asideFiles],
+    unclassified,
+    notes,
+    minutes: data.minutes.map((m) => `${m.speaker}: ${m.text}`),
+    fieldNotesDiff: data.field_notes_diff || null,
+    fieldNotesMd: data.field_notes_md || null,
+  };
 }
