@@ -103,6 +103,7 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
+| `--show-prompt` | `false` | Print the rendered prompt text before each API call |
 
 Prompt files are Handlebars templates. Values such as `curators`, `context`, and
 previous `fieldNotes` are injected when each request is built.

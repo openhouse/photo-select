@@ -112,4 +112,21 @@ describe("triageDirectory", () => {
     expect(content).toMatch(/New/);
     expect(chatCompletion).toHaveBeenCalledTimes(2);
   });
+
+  it("prints the prompt when showPrompt is true", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      showPrompt: true,
+    });
+    const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
+    expect(calls).toBe(true);
+    spy.mockRestore();
+  });
 });

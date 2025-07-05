@@ -17,6 +17,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   fieldNotes = false,
+  showPrompt = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -55,6 +56,10 @@ export async function triageDirectory({
     } catch (err) {
       console.warn(`Could not read field notes addon: ${err.message}`);
     }
+  }
+
+  if (showPrompt) {
+    console.log(`${indent}📑  Prompt:\n${prompt}`);
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
@@ -116,6 +121,9 @@ export async function triageDirectory({
             new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
             { prompt: basePrompt, existing, diff: fieldNotesDiff }
           );
+          if (showPrompt) {
+            console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
+          }
           const second = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
