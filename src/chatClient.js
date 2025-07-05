@@ -2,6 +2,7 @@ import { OpenAI, NotFoundError } from "openai";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { z } from "zod";
 import { delay } from "./config.js";
 
 const openai = new OpenAI();
@@ -69,12 +70,7 @@ export async function cacheKey({ prompt, images, model, curators = [] }) {
  * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
  */
 export async function buildMessages(prompt, images, curators = []) {
-  let content = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    content = content.replace(/\{\{curators\}\}/g, names);
-  }
-  const system = { role: "system", content };
+  const system = { role: "system", content: prompt };
 
   /**  Turn each image into base64 data‑URL with a preceding filename label.  */
   const userImageParts = await Promise.all(
@@ -113,10 +109,6 @@ export async function buildMessages(prompt, images, curators = []) {
 /** Build input array for the Responses API */
 export async function buildInput(prompt, images, curators = []) {
   let instructions = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    instructions = instructions.replace(/\{\{curators\}\}/g, names);
-  }
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
@@ -163,13 +155,7 @@ export async function chatCompletion({
   cache = true,
   curators = [],
 }) {
-  let finalPrompt = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
-    finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
-  }
-
-  finalPrompt = ensureJsonMention(finalPrompt);
+  const finalPrompt = ensureJsonMention(prompt);
 
   const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
   if (cache) {
@@ -236,7 +222,8 @@ export async function chatCompletion({
  *  • “DSCF1234 — keep  …reason…”
  *  • “Set aside: DSCF5678”
  */
-export function parseReply(text, allFiles) {
+export function parseReply(text, allFiles, opts = {}) {
+  const { expectFieldNotesDiff = false, expectFieldNotesMd = false } = opts;
   // Strip Markdown code fences like ```json ... ``` if present
   const fenced = text.trim();
   if (fenced.startsWith('```')) {
@@ -262,6 +249,8 @@ export function parseReply(text, allFiles) {
   const aside = new Set();
   const notes = new Map();
   const minutes = [];
+  let fieldNotesDiff = null;
+  let fieldNotesMd = null;
 
   // Try JSON first
   try {
@@ -269,6 +258,8 @@ export function parseReply(text, allFiles) {
 
     const extract = (node) => {
       if (!node || typeof node !== 'object') return null;
+      if (typeof node.field_notes_diff === 'string') fieldNotesDiff = node.field_notes_diff;
+      if (typeof node.field_notes_md === 'string') fieldNotesMd = node.field_notes_md;
       if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
 
       if (node.keep && node.aside) return node;
@@ -346,5 +337,20 @@ export function parseReply(text, allFiles) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
+  if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
+    throw new Error('field_notes_diff missing in reply');
+  }
+  if (expectFieldNotesMd && !fieldNotesMd) {
+    throw new Error('field_notes_md missing in reply');
+  }
+
+  return {
+    keep: [...keep],
+    aside: [...aside],
+    unclassified,
+    notes,
+    minutes,
+    fieldNotesDiff,
+    fieldNotesMd,
+  };
 }

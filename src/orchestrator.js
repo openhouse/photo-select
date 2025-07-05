@@ -1,8 +1,9 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
-import { readPrompt } from "./config.js";
+import { renderTemplate } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
+import { FieldNotesWriter } from "./fieldNotes.js";
 
 /**
  * Recursively triage images until the current directory is empty
@@ -15,28 +16,50 @@ export async function triageDirectory({
   recurse = true,
   curators = [],
   contextPath,
+  fieldNotes = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
-  let prompt = await readPrompt(promptPath);
+  let context = "";
   if (contextPath) {
     try {
-      const context = await readFile(contextPath, 'utf8');
-      prompt += `\n\nCurator FYI:\n${context}`;
+      context = await readFile(contextPath, 'utf8');
     } catch (err) {
       console.warn(`Could not read context file ${contextPath}: ${err.message}`);
     }
   }
-  if (curators.length) {
-    const names = curators.join(', ');
-    prompt = prompt.replace(/\{\{curators\}\}/g, names);
+
+  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const initImages = await listImages(dir);
+  let notesWriter;
+  let fieldNotesText = "";
+  if (fieldNotes) {
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    await notesWriter.init();
+    const existing = await notesWriter.read();
+    if (existing) fieldNotesText = existing;
+  }
+
+  const names = curators.join(', ');
+  let prompt = await renderTemplate(promptPath, {
+    curators: names,
+    context,
+    fieldNotes: fieldNotesText,
+  });
+  let basePrompt = prompt;
+  if (fieldNotes) {
+    const addonPath = new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname;
+    try {
+      const addon = await readFile(addonPath, 'utf8');
+      prompt += `\n${addon}`;
+    } catch (err) {
+      console.warn(`Could not read field notes addon: ${err.message}`);
+    }
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
   // Archive original images at this level
-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  const initImages = await listImages(dir);
   try {
     await stat(levelDir);
   } catch {
@@ -74,11 +97,43 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch, {
+      expectFieldNotesDiff: fieldNotes,
+    });
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+    }
+
+    if (notesWriter && (fieldNotesDiff || fieldNotesMd)) {
+      try {
+        if (fieldNotesMd) {
+          await notesWriter.writeFull(fieldNotesMd);
+        } else {
+          const existing = (await notesWriter.read()) || '';
+          const secondPrompt = await renderTemplate(
+            new URL('../prompts/field_notes_second_pass.hbs', import.meta.url).pathname,
+            { prompt: basePrompt, existing, diff: fieldNotesDiff }
+          );
+          const second = await chatCompletion({
+            prompt: secondPrompt,
+            images: batch,
+            model,
+            curators,
+          });
+          const parsed = parseReply(second, batch, {
+            expectFieldNotesMd: true,
+          });
+          if (parsed.fieldNotesMd) {
+            await notesWriter.writeFull(parsed.fieldNotesMd);
+          } else {
+            console.warn(`${indent}No field_notes_md returned; diff ignored`);
+          }
+        }
+      } catch (err) {
+        console.warn(`${indent}Failed to update field notes: ${err.message}`);
+      }
     }
 
     // Step 4 – move files
@@ -113,6 +168,7 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
+        fieldNotes,
         depth: depth + 1,
       });
     } else {

@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import Handlebars from "handlebars";
 
 /** Centralised config & helpers (Ember‑style “config owner”). */
 export const SUPPORTED_EXTENSIONS = [
@@ -14,11 +15,12 @@ export const SUPPORTED_EXTENSIONS = [
 ];
 
 export const DEFAULT_PROMPT_PATH = path.resolve(
-  new URL("../prompts/default_prompt.txt", import.meta.url).pathname
+  new URL("../prompts/default_prompt.hbs", import.meta.url).pathname
 );
-
-export async function readPrompt(filePath = DEFAULT_PROMPT_PATH) {
-  return fs.readFile(filePath, "utf8");
+export async function renderTemplate(filePath = DEFAULT_PROMPT_PATH, data = {}) {
+  const source = await fs.readFile(filePath, "utf8");
+  const template = Handlebars.compile(source, { noEscape: true });
+  return template(data);
 }
 
 /** Sleep helper for rate‑limit back‑off. */

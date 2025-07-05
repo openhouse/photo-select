@@ -3,6 +3,12 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+## Documentation Quick-Links
+* [Architecture guide](docs/architecture.md)
+* [Agents contract](docs/agents.md)
+* [Glossary](docs/glossary.md)
+
+
 ---
 
 ## Requirements
@@ -90,12 +96,16 @@ through to the script unchanged.
 | flag       | default                      | description                                     |
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
-| `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
+| `--prompt` | `prompts/default_prompt.hbs` | Path to a custom prompt file                    |
 | `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
+
+Prompt files are Handlebars templates. Values such as `curators`, `context`, and
+previous `fieldNotes` are injected when each request is built.
 
 ### People metadata (optional)
 
@@ -255,7 +265,8 @@ through that API, so no extra flags are needed.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
-8. Stop when a directory has zero unclassified images.
+8. If `--field-notes` is enabled, the same directory holds a `field-notes.md` notebook updated by the curators in two passes.
+9. Stop when a directory has zero unclassified images.
 
 ### JSON mode
 
