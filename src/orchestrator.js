@@ -1,6 +1,5 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
-import { renderTemplate } from "./config.js";
+import { writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
@@ -11,25 +10,17 @@ import { FieldNotesWriter } from "./fieldNotes.js";
  */
 export async function triageDirectory({
   dir,
-  promptPath,
+  prompt,
   model,
   recurse = true,
   curators = [],
-  contextPath,
-  fieldNotes = false,
-  showPrompt = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
-  let context = "";
-  if (contextPath) {
-    try {
-      context = await readFile(contextPath, 'utf8');
-    } catch (err) {
-      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
-    }
-  }
 
+  console.log(`${indent}📁  Scanning ${dir}`);
+
+  // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
   const promptsDir = path.join(levelDir, 'prompts');
@@ -200,12 +191,10 @@ export async function triageDirectory({
     if (keepExists) {
       await triageDirectory({
         dir: keepDir,
-        promptPath,
+        prompt,
         model,
         recurse,
         curators,
-        contextPath,
-        fieldNotes,
         depth: depth + 1,
       });
     } else {
