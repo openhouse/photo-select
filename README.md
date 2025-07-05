@@ -96,6 +96,7 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
 
 ### People metadata (optional)
 
@@ -255,7 +256,8 @@ through that API, so no extra flags are needed.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
-8. Stop when a directory has zero unclassified images.
+8. If `--field-notes` is enabled, the same directory holds a `field-notes.md` notebook updated by the curators in two passes.
+9. Stop when a directory has zero unclassified images.
 
 ### JSON mode
 
