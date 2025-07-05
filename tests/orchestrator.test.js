@@ -113,6 +113,21 @@ describe("triageDirectory", () => {
     expect(chatCompletion).toHaveBeenCalledTimes(2);
   });
 
+  it("fails when field_notes_diff missing", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await expect(
+      triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+        fieldNotes: true,
+      })
+    ).rejects.toThrow();
+  });
+
   it("prints the prompt when showPrompt is true", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
@@ -123,7 +138,7 @@ describe("triageDirectory", () => {
       promptPath: promptFile,
       model: "test-model",
       recurse: false,
-      showPrompt: true,
+      showPrompt: 'full',
     });
     const calls = spy.mock.calls.some((c) => String(c[0]).includes("Prompt"));
     expect(calls).toBe(true);

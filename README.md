@@ -103,7 +103,9 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--field-notes` | `false` | Maintain a `field-notes.md` notebook in each `_level-NNN/` folder |
-| `--show-prompt` | `false` | Print the rendered prompt text before each API call |
+| `--show-prompt` | `false` | Output the prompt (`full`, `hash`, or `preview`) before each API call |
+
+Each batch stores the final text sent to the model as `.prompt.txt` in its `_level-NNN/` folder. Use `--show-prompt=hash` to print only a SHA-256 of the prompt, or `--show-prompt=preview` to print the first 100 lines followed by the hash.
 
 Prompt files are Handlebars templates. Values such as `curators`, `context`, and
 previous `fieldNotes` are injected when each request is built.

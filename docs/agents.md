@@ -10,8 +10,9 @@ This document **must be loaded by any code-assistant before touching the repo.**
 | … | … | … |
 | Facilitator | “Jamie (off-stage)” | session framing only |
 
-> **Rule:** Minutes **always** stay within the personas above.  
+> **Rule:** Minutes **always** stay within the personas above.
 > **Rule:** Decisions follow minutes, never interwoven.
+> **Rule:** Minutes end with a forward-looking question from one curator.
 
 ## 2  Two-Pass Field-Notes Workflow
 | Phase | LLM Output | Parser expectation |

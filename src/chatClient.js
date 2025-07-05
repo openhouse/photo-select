@@ -337,6 +337,8 @@ export function parseReply(text, allFiles, opts = {}) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
+  // field_notes_diff/md are required for the two-pass notebook workflow.
+  // Missing keys would leave the notebook in an inconsistent state.
   if (expectFieldNotesDiff && !fieldNotesDiff && !fieldNotesMd) {
     throw new Error('field_notes_diff missing in reply');
   }
