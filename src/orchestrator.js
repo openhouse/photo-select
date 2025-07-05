@@ -1,5 +1,6 @@
 import path from "node:path";
-import { writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { renderTemplate } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
@@ -10,17 +11,25 @@ import { FieldNotesWriter } from "./fieldNotes.js";
  */
 export async function triageDirectory({
   dir,
-  prompt,
+  promptPath,
   model,
   recurse = true,
   curators = [],
+  contextPath,
+  fieldNotes = false,
+  showPrompt = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
+  let context = "";
+  if (contextPath) {
+    try {
+      context = await readFile(contextPath, 'utf8');
+    } catch (err) {
+      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
+    }
+  }
 
-  console.log(`${indent}📁  Scanning ${dir}`);
-
-  // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
   const promptsDir = path.join(levelDir, 'prompts');
@@ -92,7 +101,6 @@ export async function triageDirectory({
     const ts = Date.now();
     await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
     const reply = await chatCompletion({
->>>>>>> 0890d84fef0310c2fe9bb5c155815202b945b78d
       prompt,
       images: batch,
       model,
@@ -101,11 +109,6 @@ export async function triageDirectory({
     await writeFile(path.join(repliesDir, `${ts}.raw.json`), reply, 'utf8');
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
-<<<<<<< HEAD
-    let parsed;
-    try {
-      // Step 3 – parse decisions. Missing field_notes keys break the two-pass workflow.
-=======
     // Step 3 – parse decisions
     let parsed;
     try {
@@ -191,10 +194,12 @@ export async function triageDirectory({
     if (keepExists) {
       await triageDirectory({
         dir: keepDir,
-        prompt,
+        promptPath,
         model,
         recurse,
         curators,
+        contextPath,
+        fieldNotes,
         depth: depth + 1,
       });
     } else {

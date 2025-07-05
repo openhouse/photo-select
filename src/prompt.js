@@ -1,19 +1,15 @@
 import { readFile } from 'node:fs/promises';
-import { readPrompt } from './config.js';
+import { renderTemplate } from './config.js';
 
 export async function buildPrompt(promptPath, { curators = [], contextPath } = {}) {
-  let prompt = await readPrompt(promptPath);
+  const names = curators.join(', ');
+  let context = '';
   if (contextPath) {
     try {
-      const context = await readFile(contextPath, 'utf8');
-      prompt += `\n\nCurator FYI:\n${context}`;
+      context = await readFile(contextPath, 'utf8');
     } catch (err) {
       console.warn(`Could not read context file ${contextPath}: ${err.message}`);
     }
   }
-  if (curators.length) {
-    const names = curators.join(', ');
-    prompt = prompt.replace(/\{\{curators\}\}/g, names);
-  }
-  return prompt;
+  return renderTemplate(promptPath, { curators: names, context });
 }
