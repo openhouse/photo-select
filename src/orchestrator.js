@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
+import { FieldNotesWriter } from "./fieldNotes.js";
 
 /**
  * Recursively triage images until the current directory is empty
@@ -15,6 +16,7 @@ export async function triageDirectory({
   recurse = true,
   curators = [],
   contextPath,
+  fieldNotes = false,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -37,6 +39,15 @@ export async function triageDirectory({
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
+  let notesWriter;
+  if (fieldNotes) {
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    await notesWriter.init();
+    const existing = await notesWriter.read();
+    if (existing) {
+      prompt += `\n\nField notes so far:\n${existing}`;
+    }
+  }
   try {
     await stat(levelDir);
   } catch {
@@ -74,11 +85,36 @@ export async function triageDirectory({
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
     // Step 3 – parse decisions
-    const { keep, aside, notes, minutes } = parseReply(reply, batch);
+    const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } = parseReply(reply, batch);
     if (minutes.length) {
       const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
       await writeFile(minutesFile, minutes.join('\n'), 'utf8');
       console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+    }
+
+    if (notesWriter && (fieldNotesDiff || fieldNotesMd)) {
+      try {
+        if (fieldNotesMd) {
+          await notesWriter.writeFull(fieldNotesMd);
+        } else {
+          const existing = (await notesWriter.read()) || '';
+          const secondPrompt = `${prompt}\n\nCurrent field notes:\n${existing}\n\nPatch:\n${fieldNotesDiff}\n\nReturn JSON with field_notes_md.`;
+          const second = await chatCompletion({
+            prompt: secondPrompt,
+            images: batch,
+            model,
+            curators,
+          });
+          const parsed = parseReply(second, batch);
+          if (parsed.fieldNotesMd) {
+            await notesWriter.writeFull(parsed.fieldNotesMd);
+          } else {
+            console.warn(`${indent}No field_notes_md returned; diff ignored`);
+          }
+        }
+      } catch (err) {
+        console.warn(`${indent}Failed to update field notes: ${err.message}`);
+      }
     }
 
     // Step 4 – move files
@@ -113,6 +149,7 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
+        fieldNotes,
         depth: depth + 1,
       });
     } else {
