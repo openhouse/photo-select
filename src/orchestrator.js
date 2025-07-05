@@ -1,6 +1,5 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
-import { readPrompt } from "./config.js";
+import { writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 
@@ -10,27 +9,13 @@ import { chatCompletion, parseReply } from "./chatClient.js";
  */
 export async function triageDirectory({
   dir,
-  promptPath,
+  prompt,
   model,
   recurse = true,
   curators = [],
-  contextPath,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
-  let prompt = await readPrompt(promptPath);
-  if (contextPath) {
-    try {
-      const context = await readFile(contextPath, 'utf8');
-      prompt += `\n\nCurator FYI:\n${context}`;
-    } catch (err) {
-      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
-    }
-  }
-  if (curators.length) {
-    const names = curators.join(', ');
-    prompt = prompt.replace(/\{\{curators\}\}/g, names);
-  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
@@ -108,11 +93,10 @@ export async function triageDirectory({
     if (keepExists) {
       await triageDirectory({
         dir: keepDir,
-        promptPath,
+        prompt,
         model,
         recurse,
         curators,
-        contextPath,
         depth: depth + 1,
       });
     } else {
