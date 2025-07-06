@@ -327,6 +327,13 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 
 ---
 
+## Telemetry
+
+If `.ps-stats.json` exists in the working directory, each triage batch appends
+metrics about decision latency and notebook updates. Delete the file to opt out.
+
+---
+
 ## Development tips
 
 - Use `nvm use` in every new shell (or add a shell hook).

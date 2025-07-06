@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
-export function sha256(text) {
-  return crypto.createHash('sha256').update(text).digest('hex');
+export async function sha256(filePath) {
+  const buf = await readFile(filePath);
+  return crypto.createHash('sha256').update(buf).digest('hex');
 }

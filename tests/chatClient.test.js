@@ -62,7 +62,7 @@ describe("parseReply", () => {
   it("leaves unmentioned files unclassified", () => {
     const json = JSON.stringify({
       minutes: [{ speaker: 'A', text: 'ok?' }],
-      decision: { keep: ['DSCF1234.jpg'], aside: [] }
+      decision: { keep: { 'DSCF1234.jpg': '' }, aside: {} }
     });
     const { aside, keep, unclassified } = parseReply(json, files);
     expect(keep).toContain(files[0]);
@@ -77,7 +77,7 @@ describe("parseReply", () => {
     ];
     const json = JSON.stringify({
       minutes: [{ speaker: 'A', text: 'ok?' }],
-      decision: { keep: ['DSCF1234.jpg'], aside: ['DSCF5678.jpg'] }
+      decision: { keep: { 'DSCF1234.jpg': '' }, aside: { 'DSCF5678.jpg': '' } }
     });
     const { keep, aside } = parseReply(json, prefixed);
     expect(keep).toContain(prefixed[0]);
@@ -103,7 +103,7 @@ describe("parseReply", () => {
   it("handles JSON wrapped in Markdown fences", () => {
     const fenced =
       '```json\n' +
-      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] } }) +
+      JSON.stringify({ minutes: [{ speaker: 'A', text: 'ok?' }], decision: { keep: { "DSCF1234.jpg": "" }, aside: { "DSCF5678.jpg": "" } } }) +
       '\n```';
     const { keep, aside } = parseReply(fenced, files);
     expect(keep).toContain(files[0]);
@@ -113,7 +113,7 @@ describe("parseReply", () => {
   it("deduplicates files listed in both groups", () => {
     const reply = JSON.stringify({
       minutes: [{ speaker: 'A', text: 'ok?' }],
-      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] }
+      decision: { keep: { "DSCF1234.jpg": "" }, aside: { "DSCF1234.jpg": "" } }
     });
     const { keep, aside } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
@@ -123,7 +123,7 @@ describe("parseReply", () => {
   it("parses minutes and nested decision", () => {
     const reply = JSON.stringify({
       minutes: [{ speaker: "Curator", text: "looks good?" }],
-      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] },
+      decision: { keep: { "DSCF1234.jpg": "" }, aside: { "DSCF5678.jpg": "" } },
     });
     const { keep, aside, minutes } = parseReply(reply, files);
     expect(minutes[0]).toMatch(/Curator/);
@@ -200,7 +200,7 @@ describe("chatCompletion", () => {
     const errMsg =
       "This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?";
     chatSpy.mockRejectedValueOnce(new MockNotFoundError(errMsg));
-    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    responsesSpy.mockResolvedValueOnce({ output_text: JSON.stringify({ foo: 1 }) });
     const result = await chatCompletion({
       prompt: "p",
       images: [],
@@ -210,6 +210,17 @@ describe("chatCompletion", () => {
     expect(responsesSpy).toHaveBeenCalled();
     const args = responsesSpy.mock.calls[0][0];
     expect(args.max_output_tokens).toBeTruthy();
-    expect(result).toBe("ok");
+    expect(result.foo).toBe(1);
+  });
+
+  it("retries once when JSON parse fails", async () => {
+    chatSpy.mockClear();
+    chatSpy
+      .mockResolvedValueOnce({ choices: [{ message: { content: "oops" } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ minutes: [], decision: {} }) } }] });
+
+    const result = await chatCompletion({ prompt: "p", images: [], cache: false });
+    expect(chatSpy).toHaveBeenCalledTimes(2);
+    expect(result.decision).toBeDefined();
   });
 });

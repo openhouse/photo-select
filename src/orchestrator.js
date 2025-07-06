@@ -1,6 +1,9 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { renderTemplate } from "./config.js";
+import { buildPrompt } from "./prompt.js";
+import { writeStats } from "./stats.js";
+import { execSync } from "node:child_process";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { FieldNotesWriter } from "./fieldNotes.js";
@@ -44,17 +47,17 @@ export async function triageDirectory({
   }
 
   const names = curators.join(', ');
-  let prompt = await renderTemplate(promptPath, {
+  let basePrompt = await renderTemplate(promptPath, {
     curators: names,
     context,
     fieldNotes: fieldNotesText,
+    images: [],
   });
-  let basePrompt = prompt;
+  let addon = '';
   if (fieldNotes) {
     const addonPath = new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname;
     try {
-      const addon = await readFile(addonPath, 'utf8');
-      prompt += `\n${addon}`;
+      addon = await readFile(addonPath, 'utf8');
     } catch (err) {
       console.warn(`Could not read field notes addon: ${err.message}`);
     }
@@ -95,17 +98,31 @@ export async function triageDirectory({
 
     // Step 2 – ask ChatGPT
     console.log(`${indent}⏳  Sending batch to ChatGPT…`);
+    let prompt = await buildPrompt(promptPath, {
+      curators,
+      contextPath,
+      fieldNotes: fieldNotesText,
+      images: batch,
+    });
+    if (addon) prompt += `\n${addon}`;
+    let beforeLines = 0;
+    if (notesWriter) {
+      const prev = await notesWriter.read();
+      beforeLines = prev ? prev.split('\n').length : 0;
+    }
+    const start = Date.now();
     const ts = Date.now();
     await writeFile(path.join(promptsDir, `${ts}.prompt.txt`), prompt, 'utf8');
     if (showPrompt) {
       console.log(`${indent}📑  Prompt:\n${prompt}`);
     }
-    const reply = await chatCompletion({
+    const replyObj = await chatCompletion({
       prompt,
       images: batch,
       model,
       curators,
     });
+    const reply = JSON.stringify(replyObj, null, 2);
     await writeFile(path.join(repliesDir, `${ts}.raw.json`), reply, 'utf8');
     console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
@@ -140,12 +157,13 @@ export async function triageDirectory({
             console.log(`${indent}📑  Second-pass prompt:\n${secondPrompt}`);
           }
           await writeFile(path.join(promptsDir, `${ts}-second.prompt.txt`), secondPrompt, 'utf8');
-          const second = await chatCompletion({
+          const secondObj = await chatCompletion({
             prompt: secondPrompt,
             images: batch,
             model,
             curators,
           });
+          const second = JSON.stringify(secondObj, null, 2);
           await writeFile(path.join(repliesDir, `${ts}-second.raw.json`), second, 'utf8');
           let parsed;
           try {
@@ -178,6 +196,28 @@ export async function triageDirectory({
     console.log(
       `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
     );
+
+    let afterLines = beforeLines;
+    if (notesWriter) {
+      const txt = await notesWriter.read();
+      afterLines = txt ? txt.split('\n').length : 0;
+    }
+    const latency = Date.now() - start;
+    await writeStats({
+      decision_latency_ms: latency,
+      images_reviewed: batch.length,
+      field_notes_lines_added: afterLines - beforeLines,
+    });
+
+    const filesToCommit = [path.join(repliesDir, `${ts}.raw.json`)];
+    if (notesWriter) filesToCommit.push(notesWriter.file);
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        execSync(`git add ${filesToCommit.map(f => `"${f}"`).join(' ')} && git commit -m "photo-select batch"`);
+      } catch (err) {
+        console.warn(`${indent}Git commit failed: ${err.message}`);
+      }
+    }
   }
 
   // Step 5 – recurse into keepDir if both keep and aside exist
