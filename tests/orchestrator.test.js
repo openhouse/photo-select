@@ -106,4 +106,21 @@ describe("triageDirectory", () => {
     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
+
+  it("retries after chat errors", async () => {
+    chatCompletion
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }));
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+    const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+    await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+    await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+  });
 });
