@@ -23,6 +23,11 @@ fi
 
 cd "$SCRIPT_DIR"
 
+# Optional memory tweak for large batches
+if [ -n "${PHOTO_SELECT_MAX_OLD_SPACE_MB:-}" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=${PHOTO_SELECT_MAX_OLD_SPACE_MB}"
+fi
+
 dir_specified=false
 for arg in "$@"; do
   case "$arg" in
