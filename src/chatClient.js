@@ -9,6 +9,20 @@ const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
   "http://localhost:3000";
 const peopleCache = new Map();
 
+async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
+  try {
+    return await readFile(file);
+  } catch (err) {
+    if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+      const wait = (attempt + 1) * 1000;
+      console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
+      await delay(wait);
+      return readFileSafe(file, attempt + 1, maxAttempts);
+    }
+    throw err;
+  }
+}
+
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
@@ -80,7 +94,7 @@ export async function buildMessages(prompt, images, curators = []) {
   const userImageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
@@ -120,7 +134,7 @@ export async function buildInput(prompt, images, curators = []) {
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
