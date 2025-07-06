@@ -33,9 +33,10 @@ program
     "Text file with exhibition context for the curators"
   )
   .option("--no-recurse", "Process a single directory only")
+  .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath } = program.opts();
+const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, parallel } = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -58,6 +59,7 @@ if (apiKey) {
       recurse,
       curators,
       contextPath,
+      parallel,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

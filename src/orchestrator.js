@@ -15,6 +15,7 @@ export async function triageDirectory({
   recurse = true,
   curators = [],
   contextPath,
+  parallel = 1,
   depth = 0,
 }) {
   const indent = "  ".repeat(depth);
@@ -59,38 +60,46 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select ≤10
-    const batch = pickRandom(images, 10);
-    console.log(`${indent}🔍  Selected ${batch.length} image(s)`);
+    // Step 1 – select up to parallel × 10 images
+    const total = Math.min(images.length, parallel * 10);
+    const selection = pickRandom(images, total);
+    console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
 
-    // Step 2 – ask ChatGPT
-    console.log(`${indent}⏳  Sending batch to ChatGPT…`);
-    const reply = await chatCompletion({
-      prompt,
-      images: batch,
-      model,
-      curators,
-    });
-    console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-
-    // Step 3 – parse decisions
-    const { keep, aside, notes, minutes } = parseReply(reply, batch);
-    if (minutes.length) {
-      const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
-      await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-      console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+    const batches = [];
+    for (let i = 0; i < selection.length; i += 10) {
+      batches.push(selection.slice(i, i + 10));
     }
 
-    // Step 4 – move files
-    const keepDir = path.join(dir, "_keep");
-    const asideDir = path.join(dir, "_aside");
-    await Promise.all([
-      moveFiles(keep, keepDir, notes),
-      moveFiles(aside, asideDir, notes),
-    ]);
+    console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
 
-    console.log(
-      `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+    await Promise.all(
+      batches.map(async (batch) => {
+        const reply = await chatCompletion({
+          prompt,
+          images: batch,
+          model,
+          curators,
+        });
+        console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+
+        const { keep, aside, notes, minutes } = parseReply(reply, batch);
+        if (minutes.length) {
+          const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
+          await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+          console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+        }
+
+        const keepDir = path.join(dir, "_keep");
+        const asideDir = path.join(dir, "_aside");
+        await Promise.all([
+          moveFiles(keep, keepDir, notes),
+          moveFiles(aside, asideDir, notes),
+        ]);
+
+        console.log(
+          `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+        );
+      })
     );
   }
 
@@ -113,6 +122,7 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
+        parallel,
         depth: depth + 1,
       });
     } else {

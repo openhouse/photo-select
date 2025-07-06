@@ -96,6 +96,7 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--parallel` | `1` | Number of batches to process simultaneously |
 
 ### People metadata (optional)
 
