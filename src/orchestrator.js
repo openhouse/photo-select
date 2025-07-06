@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
+import { MultiBar, Presets } from "cli-progress";
 
 /**
  * Recursively triage images until the current directory is empty
@@ -83,14 +84,33 @@ export async function triageDirectory({
 
     console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
 
+    const multibar = new MultiBar(
+      {
+        clearOnComplete: false,
+        hideCursor: true,
+        format: `${indent}{prefix} |{bar}| {stage}`,
+      },
+      Presets.shades_classic
+    );
+    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
+    const bars = batches.map((_, i) =>
+      multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
+    );
+
     await Promise.all(
-      batches.map(async (batch) => {
+      batches.map(async (batch, idx) => {
+        const bar = bars[idx];
         const reply = await chatCompletion({
           prompt,
           images: batch,
           model,
           curators,
+          onProgress: (stage) => {
+            bar.update(stageMap[stage] || 0, { stage });
+          },
         });
+        bar.update(4, { stage: "done" });
+        bar.stop();
         console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
 
         const { keep, aside, notes, minutes } = parseReply(reply, batch);
@@ -113,6 +133,7 @@ export async function triageDirectory({
         );
       })
     );
+    multibar.stop();
   }
 
   // Step 5 – recurse into keepDir if both keep and aside exist
