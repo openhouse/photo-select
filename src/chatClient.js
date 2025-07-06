@@ -176,6 +176,7 @@ export async function chatCompletion({
   maxRetries = 3,
   cache = true,
   curators = [],
+  onProgress = () => {},
 }) {
   let finalPrompt = prompt;
   if (curators.length) {
@@ -195,7 +196,9 @@ export async function chatCompletion({
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      onProgress('encoding');
       const messages = await buildMessages(finalPrompt, images, curators);
+      onProgress('request');
       const baseParams = {
         model,
         messages,
@@ -207,9 +210,11 @@ export async function chatCompletion({
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
+      onProgress('waiting');
       const { choices } = await openai.chat.completions.create(baseParams);
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
+      onProgress('done');
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
