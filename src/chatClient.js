@@ -224,6 +224,7 @@ export async function chatCompletion({
       const label = isNetwork ? "network error" : "OpenAI error";
       const codeInfo = err.status ?? code ?? "unknown";
       console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
+      console.warn("Full error response:", err);
       await delay(wait);
     }
   }
