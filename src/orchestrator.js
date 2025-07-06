@@ -6,6 +6,16 @@ import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { MultiBar, Presets } from "cli-progress";
 
+function formatDuration(ms) {
+  const sec = Math.round(ms / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h ${m}m ${s}s`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 /**
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
@@ -50,6 +60,8 @@ export async function triageDirectory({
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
+  const levelStart = Date.now();
+  const totalImages = initImages.length;
   try {
     await stat(levelDir);
   } catch {
@@ -143,6 +155,13 @@ export async function triageDirectory({
       })
     );
     multibar.stop();
+    const remaining = (await listImages(dir)).length;
+    const processed = totalImages - remaining;
+    if (processed) {
+      const elapsed = Date.now() - levelStart;
+      const etaMs = (elapsed / processed) * remaining;
+      console.log(`${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`);
+    }
   }
 
   // Step 5 – recurse into keepDir if both keep and aside exist
