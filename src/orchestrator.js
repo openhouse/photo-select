@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import crypto from "node:crypto";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
@@ -7,7 +8,17 @@ import { chatCompletion, parseReply } from "./chatClient.js";
 /**
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
- */
+ *
+ * @param {Object} options
+ * @param {string} options.dir    Directory of images to triage
+ * @param {string} options.promptPath   Path to the base prompt
+ * @param {string} options.model        OpenAI model id
+ * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+ * @param {string[]} [options.curators=[]]   Names inserted into the prompt
+ * @param {string} [options.contextPath]     Optional additional context file
+ * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
+ * @param {number} [options.depth=0]         Internal recursion depth (for logging)
+*/
 export async function triageDirectory({
   dir,
   promptPath,
@@ -84,7 +95,8 @@ export async function triageDirectory({
 
         const { keep, aside, notes, minutes } = parseReply(reply, batch);
         if (minutes.length) {
-          const minutesFile = path.join(dir, `minutes-${Date.now()}.txt`);
+          const uuid = crypto.randomUUID();
+          const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
           await writeFile(minutesFile, minutes.join('\n'), 'utf8');
           console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
         }
