@@ -98,6 +98,19 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
 
+### Increasing memory
+
+The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
+may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
+
+```bash
+PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
+  /path/to/photo-select/photo-select-here.sh --parallel 10 --api-key sk-...
+```
+
+The value is passed directly to `--max-old-space-size`, so adjust it to match your
+available RAM.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
