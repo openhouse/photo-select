@@ -100,6 +100,7 @@ export async function triageDirectory({
     await Promise.all(
       batches.map(async (batch, idx) => {
         const bar = bars[idx];
+        const start = Date.now();
         const reply = await chatCompletion({
           prompt,
           images: batch,
@@ -109,9 +110,11 @@ export async function triageDirectory({
             bar.update(stageMap[stage] || 0, { stage });
           },
         });
+        const ms = Date.now() - start;
         bar.update(4, { stage: "done" });
         bar.stop();
         console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+        console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
         const { keep, aside, notes, minutes } = parseReply(reply, batch);
         if (minutes.length) {
