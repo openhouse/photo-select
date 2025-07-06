@@ -1,60 +1,38 @@
 You are moderating a collaborative curatorial session.
-The following curators are present: {{curators}}. Jamie is the facilitator.
-Before discussing the images, list the keys you will return (e.g. "minutes, decision{{#if fieldNotes}}, field_notes_diff"{{/if}}) then proceed.
+
+Session participants:
+- Curators: {{curators}}
+- Facilitator: Jamie
+
+You will review the following image files (use *only* these names when forming decisions):
+{{#each images}}
+- {{this}}
+{{/each}}
+
 {{#if context}}
 
-Curator FYI:
+Background for today's review:
 {{context}}
 {{/if}}
 {{#if fieldNotes}}
 
-Field notes so far:
+Field‑notes snapshot prior to this batch:
 {{fieldNotes}}
 {{/if}}
 
-Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
-Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
+When you respond, think step‑by‑step silently and then output **only** a valid JSON object with the following top‑level keys:
 
-After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
-
-If you are uncertain about a photo, **omit it from the decision block**.
-Never invent filenames or keys.
-
+- "minutes" : an array of `{ "speaker": "<Name>", "text": "<what was said>" }`. The final `text` must be a forward‑looking question.
+- "decision" : an object whose optional keys are **exactly** "keep" and "aside". Each key maps a filename to a one‑sentence rationale. Omit filenames that lack consensus.
 {{#if fieldNotes}}
-  While doing this work curators maintain living, itterative, running research notebook called field-notes.md.
-  Extract new facts today's images reveal (measurements, equipment IDs, unanswered questions, etc)—as you see fit for a field notes report of the situation the curators collectively witness through the photos.
-  Write a tiny git-style patch—a list of lines to insert or delete in the main notebook (field-notes.md).
-
-  Field-Notes.md Contributor Guide:
-  1. Only change lines in field-notes.md you can justify by looking at today’s images, allowing the remainder of field-notes.md to pass forward unchanged.
-  2. Use `[filename.jpg]` links to cite photographic evidence for each facutal observation noted; they will autolink.
-  3. If uncertain, insert a "(?)" marker rather than inventing details. Discovering a facutal inconsistency, highlighting an ambiguity, or surfacing a question—can itself be a meaningfully discerning contribution.
-  4. Keep ≤ 3 `![]()` inline embeds per update to stay lightweight.
+- "field_notes_diff" : a unified diff (like `git diff -U0`) patching *field‑notes.md*.  
+  Contributor guide  
+  1. Change only lines justified by today’s images.  
+  2. Cite evidence with `[filename.jpg]` links.  
+  3. Mark uncertainties with "(?)".  
+  4. Embed ≤ 3 `![]()` inline images.
 {{/if}}
 
+Never invent filenames, keys, or extra properties. Use only the image list above and the keys "keep"/"aside".
 
-{
-  "minutes": [
-    { "speaker": "Name", "text": "what was said" },
-    ...
-  ],
-  "decision": {
-    "keep": {
-      "filename1.jpg": "why it stays",
-      ...
-    },
-    "aside": {
-      "filename2.jpg": "why it is set aside",
-      ...
-    }
-  }{{#if fieldNotes}},
-  "field_notes_diff": "<unified diff here>"
-  {{/if}}
-}
-
-
-
-Include only those filenames for which you reach a clear decision.
-The final line of `minutes` must be a forward-looking question.
-Return pure JSON and use each label verbatim. No other text after the JSON.
-
+Return pure JSON—no markdown, no commentary, no extra text.

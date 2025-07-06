@@ -181,9 +181,24 @@ export async function chatCompletion({
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
       const { choices } = await openai.chat.completions.create(baseParams);
-      const text = choices[0].message.content;
-      if (cache) await setCachedReply(key, text);
-      return text;
+      let text = choices[0].message.content;
+      try {
+        const obj = JSON.parse(text);
+        if (cache) await setCachedReply(key, text);
+        return obj;
+      } catch {
+        const retry = await openai.chat.completions.create({
+          ...baseParams,
+          messages: [
+            ...messages,
+            { role: "system", content: "Please re-emit valid JSON only." },
+          ],
+        });
+        text = retry.choices[0].message.content;
+        const obj = JSON.parse(text);
+        if (cache) await setCachedReply(key, text);
+        return obj;
+      }
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
       const code = err?.code || err?.cause?.code;
@@ -201,8 +216,9 @@ export async function chatCompletion({
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
+        const obj = JSON.parse(text);
         if (cache) await setCachedReply(key, text);
-        return text;
+        return obj;
       }
 
       if (attempt >= maxRetries) throw err;

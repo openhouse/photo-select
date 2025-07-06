@@ -11,10 +11,10 @@ vi.mock('../src/chatClient.js', async () => {
   const actual = await vi.importActual('../src/chatClient.js');
   return {
     ...actual,
-    chatCompletion: vi.fn().mockResolvedValue(JSON.stringify({
+    chatCompletion: vi.fn().mockResolvedValue({
       minutes: [{ speaker: 'A', text: 'done?' }],
-      decision: { keep: [], aside: ['a.jpg'] }
-    }))
+      decision: { keep: {}, aside: { 'a.jpg': '' } }
+    })
   };
 });
 
