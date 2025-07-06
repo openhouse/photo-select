@@ -96,6 +96,20 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--parallel` | `1` | Number of batches to process simultaneously |
+
+### Increasing memory
+
+The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
+may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
+
+```bash
+PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
+  /path/to/photo-select/photo-select-here.sh --parallel 10 --api-key sk-...
+```
+
+The value is passed directly to `--max-old-space-size`, so adjust it to match your
+available RAM.
 
 ### People metadata (optional)
 

@@ -9,6 +9,20 @@ const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
   "http://localhost:3000";
 const peopleCache = new Map();
 
+async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
+  try {
+    return await readFile(file);
+  } catch (err) {
+    if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+      const wait = (attempt + 1) * 1000;
+      console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
+      await delay(wait);
+      return readFileSafe(file, attempt + 1, maxAttempts);
+    }
+    throw err;
+  }
+}
+
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
@@ -80,7 +94,7 @@ export async function buildMessages(prompt, images, curators = []) {
   const userImageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
@@ -120,7 +134,7 @@ export async function buildInput(prompt, images, curators = []) {
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
@@ -162,6 +176,7 @@ export async function chatCompletion({
   maxRetries = 3,
   cache = true,
   curators = [],
+  onProgress = () => {},
 }) {
   let finalPrompt = prompt;
   if (curators.length) {
@@ -181,7 +196,9 @@ export async function chatCompletion({
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      onProgress('encoding');
       const messages = await buildMessages(finalPrompt, images, curators);
+      onProgress('request');
       const baseParams = {
         model,
         messages,
@@ -193,9 +210,11 @@ export async function chatCompletion({
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
+      onProgress('waiting');
       const { choices } = await openai.chat.completions.create(baseParams);
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
+      onProgress('done');
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
@@ -224,6 +243,7 @@ export async function chatCompletion({
       const label = isNetwork ? "network error" : "OpenAI error";
       const codeInfo = err.status ?? code ?? "unknown";
       console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
+      console.warn("Full error response:", err);
       await delay(wait);
     }
   }
