@@ -1,10 +1,23 @@
 import { OpenAI, NotFoundError } from "openai";
+import KeepAliveAgent from "agentkeepalive";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
 
-const openai = new OpenAI();
+const httpsAgent = new KeepAliveAgent.HttpsAgent({
+  keepAlive: true,
+  timeout: 5 * 60 * 1000,
+});
+httpsAgent.on("error", (err) => {
+  if (["EPIPE", "ECONNRESET"].includes(err.code)) {
+    console.warn("agent error:", err.message);
+  } else {
+    throw err;
+  }
+});
+
+const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
   "http://localhost:3000";
 const peopleCache = new Map();
