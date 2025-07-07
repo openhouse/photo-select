@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /** Load environment variables ASAP (before any OpenAI import). */
 import "dotenv/config";
+import "./errorHandler.js";
 
 import { Command } from "commander";
 import path from "node:path";
 import { DEFAULT_PROMPT_PATH } from "./config.js";
+
 
 const program = new Command();
 program
