@@ -52,6 +52,21 @@ async function getPeople(filename) {
   }
 }
 
+/** Return any people who appear in more than one file */
+export async function curatorsFromTags(files) {
+  const counts = new Map();
+  for (const file of files) {
+    const name = path.basename(file);
+    const people = await getPeople(name);
+    for (const person of people) {
+      counts.set(person, (counts.get(person) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .filter(([, c]) => c > 1)
+    .map(([n]) => n);
+}
+
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
 export const MAX_RESPONSE_TOKENS = 4096;
@@ -191,15 +206,22 @@ export async function chatCompletion({
   curators = [],
   onProgress = () => {},
 }) {
+  const extras = await curatorsFromTags(images);
+  const finalCurators = Array.from(new Set([...curators, ...extras]));
   let finalPrompt = prompt;
-  if (curators.length) {
-    const names = curators.join(', ');
+  if (finalCurators.length) {
+    const names = finalCurators.join(', ');
     finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
 
-  const key = await cacheKey({ prompt: finalPrompt, images, model, curators });
+  const key = await cacheKey({
+    prompt: finalPrompt,
+    images,
+    model,
+    curators: finalCurators,
+  });
   if (cache) {
     const hit = await getCachedReply(key);
     if (hit) return hit;
@@ -210,7 +232,7 @@ export async function chatCompletion({
   while (true) {
     try {
       onProgress('encoding');
-      const messages = await buildMessages(finalPrompt, images, curators);
+      const messages = await buildMessages(finalPrompt, images, finalCurators);
       onProgress('request');
       const baseParams = {
         model,
@@ -238,7 +260,7 @@ export async function chatCompletion({
         (err instanceof NotFoundError || err.status === 404) &&
         (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
       ) {
-        const params = await buildInput(finalPrompt, images, curators);
+        const params = await buildInput(finalPrompt, images, finalCurators);
         const rsp = await openai.responses.create({
           model,
           ...params,
