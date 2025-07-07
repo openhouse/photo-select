@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { readPrompt, delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
@@ -157,46 +158,48 @@ export async function triageDirectory({
         if (idx >= batches.length) break;
         const batch = batches[idx];
         const bar = bars[idx];
-        try {
-          const start = Date.now();
-          const reply = await chatCompletion({
-            prompt,
-            images: batch,
-            model,
-            curators,
-            onProgress: (stage) => {
-              bar.update(stageMap[stage] || 0, { stage });
-            },
-          });
-          const ms = Date.now() - start;
-          bar.update(4, { stage: "done" });
-          bar.stop();
-          console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-          console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
+        await batchStore.run({ batch: idx + 1 }, async () => {
+          try {
+            const start = Date.now();
+            const reply = await chatCompletion({
+              prompt,
+              images: batch,
+              model,
+              curators,
+              onProgress: (stage) => {
+                bar.update(stageMap[stage] || 0, { stage });
+              },
+            });
+            const ms = Date.now() - start;
+            bar.update(4, { stage: "done" });
+            bar.stop();
+            console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+            console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
-          const { keep, aside, notes, minutes } = parseReply(reply, batch);
-          if (minutes.length) {
-            const uuid = crypto.randomUUID();
-            const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-            await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-            console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+            const { keep, aside, notes, minutes } = parseReply(reply, batch);
+            if (minutes.length) {
+              const uuid = crypto.randomUUID();
+              const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+              await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+              console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+            }
+
+            const keepDir = path.join(dir, "_keep");
+            const asideDir = path.join(dir, "_aside");
+            await Promise.all([
+              moveFiles(keep, keepDir, notes),
+              moveFiles(aside, asideDir, notes),
+            ]);
+
+            console.log(
+              `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+            );
+          } catch (err) {
+            bar.update(4, { stage: "error" });
+            bar.stop();
+            console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
           }
-
-          const keepDir = path.join(dir, "_keep");
-          const asideDir = path.join(dir, "_aside");
-          await Promise.all([
-            moveFiles(keep, keepDir, notes),
-            moveFiles(aside, asideDir, notes),
-          ]);
-
-          console.log(
-            `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-          );
-        } catch (err) {
-          bar.update(4, { stage: "error" });
-          bar.stop();
-          console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
-        }
+        });
       }
     }
 
