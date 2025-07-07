@@ -109,8 +109,12 @@ export async function triageDirectory({
       multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
     );
 
-    await Promise.all(
-      batches.map(async (batch, idx) => {
+    let nextIndex = 0;
+    async function worker() {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= batches.length) break;
+        const batch = batches[idx];
         const bar = bars[idx];
         try {
           const start = Date.now();
@@ -152,8 +156,14 @@ export async function triageDirectory({
           bar.stop();
           console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
         }
-      })
+      }
+    }
+
+    const workers = Array.from(
+      { length: Math.min(parallel, batches.length) },
+      () => worker()
     );
+    await Promise.all(workers);
     multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
