@@ -25,11 +25,11 @@ vi.mock("openai", () => {
   };
 });
 
-let parseReply, buildMessages, buildInput, chatCompletion;
+let parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
-  ({ parseReply, buildMessages, buildInput, chatCompletion } = await import('../src/chatClient.js'));
+  ({ parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags } = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -168,6 +168,18 @@ describe("buildInput", () => {
     expect(meta.filename).toBe("a.jpg");
     expect(meta.people).toEqual(["Alice", "Bob"]);
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("curatorsFromTags", () => {
+  it("returns names appearing in multiple files", async () => {
+    const imgs = ["/tmp/x1.jpg", "/tmp/x2.jpg", "/tmp/x3.jpg"];
+    global.fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Bob"] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) });
+    const names = await curatorsFromTags(imgs);
+    expect(names).toContain("Alice");
   });
 });
 
