@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Sun Jul  6 12:34:24 EDT 2025
+Generated on: Sun Jul  6 22:53:28 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -15,7 +15,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 ├── .env.example
 ├── .gitignore
 ├── .nvmrc
-├── agents.md
+├── AGENTS.md
 ├── docs
 │   └── feelings.json
 ├── package-lock.json
@@ -78,6 +78,11 @@ if command -v nvm >/dev/null 2>&1; then
 fi
 
 cd "$SCRIPT_DIR"
+
+# Optional memory tweak for large batches
+if [ -n "${PHOTO_SELECT_MAX_OLD_SPACE_MB:-}" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=${PHOTO_SELECT_MAX_OLD_SPACE_MB}"
+fi
 
 dir_specified=false
 for arg in "$@"; do
@@ -209,6 +214,23 @@ describe("triageDirectory", () => {
       model: "test-model",
       recurse: false,
       parallel: 2,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+    const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+    await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+    await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+  });
+
+  it("retries after chat errors", async () => {
+    chatCompletion
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }));
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
     });
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
@@ -575,6 +597,19 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
 
+### Increasing memory
+
+The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
+may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
+
+```bash
+PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
+  /path/to/photo-select/photo-select-here.sh --parallel 10 --api-key sk-...
+```
+
+The value is passed directly to `--max-old-space-size`, so adjust it to match your
+available RAM.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
@@ -802,6 +837,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
   "author": "Jamie Burkart",
   "license": "MIT",
   "dependencies": {
+    "cli-progress": "^3.12.0",
     "commander": "^12.0.0",
     "dotenv": "^16.5.0",
     "openai": "^4.0.0",
@@ -1471,7 +1507,7 @@ OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 # PHOTO_FILTER_API_BASE=http://localhost:3000
 ```
 
-### File: ./agents.md
+### File: ./AGENTS.md
 ```
 # Agents Contract · Photo‑Select
 
@@ -1622,6 +1658,20 @@ const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
   "http://localhost:3000";
 const peopleCache = new Map();
 
+async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
+  try {
+    return await readFile(file);
+  } catch (err) {
+    if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+      const wait = (attempt + 1) * 1000;
+      console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
+      await delay(wait);
+      return readFileSafe(file, attempt + 1, maxAttempts);
+    }
+    throw err;
+  }
+}
+
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
@@ -1693,7 +1743,7 @@ export async function buildMessages(prompt, images, curators = []) {
   const userImageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
@@ -1733,7 +1783,7 @@ export async function buildInput(prompt, images, curators = []) {
   const imageParts = await Promise.all(
     images.map(async (file) => {
       const abs = path.resolve(file);
-      const buffer = await readFile(abs);
+      const buffer = await readFileSafe(abs);
       const base64 = buffer.toString("base64");
       const name = path.basename(file);
       const ext = path.extname(file).slice(1) || "jpeg";
@@ -1775,6 +1825,7 @@ export async function chatCompletion({
   maxRetries = 3,
   cache = true,
   curators = [],
+  onProgress = () => {},
 }) {
   let finalPrompt = prompt;
   if (curators.length) {
@@ -1794,7 +1845,9 @@ export async function chatCompletion({
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      onProgress('encoding');
       const messages = await buildMessages(finalPrompt, images, curators);
+      onProgress('request');
       const baseParams = {
         model,
         messages,
@@ -1806,9 +1859,11 @@ export async function chatCompletion({
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
+      onProgress('waiting');
       const { choices } = await openai.chat.completions.create(baseParams);
       const text = choices[0].message.content;
       if (cache) await setCachedReply(key, text);
+      onProgress('done');
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
@@ -1837,6 +1892,7 @@ export async function chatCompletion({
       const label = isNetwork ? "network error" : "OpenAI error";
       const codeInfo = err.status ?? code ?? "unknown";
       console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
+      console.warn("Full error response:", err);
       await delay(wait);
     }
   }
@@ -2116,6 +2172,17 @@ import crypto from "node:crypto";
 import { readPrompt } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
+import { MultiBar, Presets } from "cli-progress";
+
+function formatDuration(ms) {
+  const sec = Math.round(ms / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h ${m}m ${s}s`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
 
 /**
  * Recursively triage images until the current directory is empty
@@ -2161,6 +2228,8 @@ export async function triageDirectory({
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   const initImages = await listImages(dir);
+  const levelStart = Date.now();
+  const totalImages = initImages.length;
   try {
     await stat(levelDir);
   } catch {
@@ -2195,36 +2264,82 @@ export async function triageDirectory({
 
     console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
 
-    await Promise.all(
-      batches.map(async (batch) => {
-        const reply = await chatCompletion({
-          prompt,
-          images: batch,
-          model,
-          curators,
-        });
-        console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-
-        const { keep, aside, notes, minutes } = parseReply(reply, batch);
-        if (minutes.length) {
-          const uuid = crypto.randomUUID();
-          const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-          await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-          console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
-        }
-
-        const keepDir = path.join(dir, "_keep");
-        const asideDir = path.join(dir, "_aside");
-        await Promise.all([
-          moveFiles(keep, keepDir, notes),
-          moveFiles(aside, asideDir, notes),
-        ]);
-
-        console.log(
-          `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-        );
-      })
+    const multibar = new MultiBar(
+      {
+        clearOnComplete: false,
+        hideCursor: true,
+        format: `${indent}{prefix} |{bar}| {stage}`,
+      },
+      Presets.shades_classic
     );
+    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
+    const bars = batches.map((_, i) =>
+      multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
+    );
+
+    let nextIndex = 0;
+    async function worker() {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= batches.length) break;
+        const batch = batches[idx];
+        const bar = bars[idx];
+        try {
+          const start = Date.now();
+          const reply = await chatCompletion({
+            prompt,
+            images: batch,
+            model,
+            curators,
+            onProgress: (stage) => {
+              bar.update(stageMap[stage] || 0, { stage });
+            },
+          });
+          const ms = Date.now() - start;
+          bar.update(4, { stage: "done" });
+          bar.stop();
+          console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+          console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
+
+          const { keep, aside, notes, minutes } = parseReply(reply, batch);
+          if (minutes.length) {
+            const uuid = crypto.randomUUID();
+            const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+            await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+            console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+          }
+
+          const keepDir = path.join(dir, "_keep");
+          const asideDir = path.join(dir, "_aside");
+          await Promise.all([
+            moveFiles(keep, keepDir, notes),
+            moveFiles(aside, asideDir, notes),
+          ]);
+
+          console.log(
+            `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+          );
+        } catch (err) {
+          bar.update(4, { stage: "error" });
+          bar.stop();
+          console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
+        }
+      }
+    }
+
+    const workers = Array.from(
+      { length: Math.min(parallel, batches.length) },
+      () => worker()
+    );
+    await Promise.all(workers);
+    multibar.stop();
+    const remaining = (await listImages(dir)).length;
+    const processed = totalImages - remaining;
+    if (processed) {
+      const elapsed = Date.now() - levelStart;
+      const etaMs = (elapsed / processed) * remaining;
+      console.log(`${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`);
+    }
   }
 
   // Step 5 – recurse into keepDir if both keep and aside exist
@@ -2293,25 +2408,25 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Sun Jul  6 12:34:26 EDT 2025
-12:34  up 1 day, 19:04, 24 users, load averages: 4.02 4.14 4.03
+Sun Jul  6 22:53:29 EDT 2025
+22:53  up 2 days,  5:23, 24 users, load averages: 1.83 2.65 3.03
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi   187Gi     7%    425k  2.0G    0%   /
-devfs            213Ki   213Ki     0Bi   100%     736     0  100%   /dev
-/dev/disk3s6     7.3Ti    24Ki   187Gi     1%       0  2.0G    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi   187Gi     7%    1.8k  2.0G    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   684Mi   187Gi     1%     328  2.0G    0%   /System/Volumes/Update
+/dev/disk3s1s1   7.3Ti    14Gi   124Gi    11%    425k  1.3G    0%   /
+devfs            212Ki   212Ki     0Bi   100%     734     0  100%   /dev
+/dev/disk3s6     7.3Ti    24Ki   124Gi     1%       0  1.3G    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi   124Gi    10%    1.8k  1.3G    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   684Mi   124Gi     1%     328  1.3G    0%   /System/Volumes/Update
 /dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   7.1Ti   187Gi    98%    6.4M  2.0G    0%   /System/Volumes/Data
+/dev/disk3s5     7.3Ti   7.1Ti   124Gi    99%    6.4M  1.3G    0%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
-/dev/disk3s1     7.3Ti    14Gi   187Gi     7%    426k  2.0G    0%   /System/Volumes/Update/mnt1
+/dev/disk3s1     7.3Ti    14Gi   124Gi    11%    426k  1.3G    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
