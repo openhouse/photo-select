@@ -122,7 +122,8 @@ describe("buildMessages", () => {
     const img2 = path.join(dir, "2.jpg");
     await fs.writeFile(img1, "a");
     await fs.writeFile(img2, "b");
-    const [, user] = await buildMessages("prompt", [img1, img2]);
+    const { messages } = await buildMessages("prompt", [img1, img2]);
+    const [, user] = messages;
     expect(JSON.parse(user.content[1].text)).toEqual({ filename: "1.jpg" });
     expect(JSON.parse(user.content[3].text)).toEqual({ filename: "2.jpg" });
     await fs.rm(dir, { recursive: true, force: true });
@@ -136,7 +137,8 @@ describe("buildMessages", () => {
       ok: true,
       json: async () => ({ data: ["Alice", "Bob"] }),
     });
-    const [, user] = await buildMessages("prompt", [img1]);
+    const { messages } = await buildMessages("prompt", [img1]);
+    const [, user] = messages;
     const meta = JSON.parse(user.content[1].text);
     expect(meta.filename).toBe("a.jpg");
     expect(meta.people).toEqual(["Alice", "Bob"]);
