@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import crypto from "node:crypto";
-import { readPrompt } from "./config.js";
+import { readPrompt, delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { chatCompletion, parseReply } from "./chatClient.js";
 import { MultiBar, Presets } from "cli-progress";
@@ -67,11 +67,52 @@ export async function triageDirectory({
   } catch {
     if (initImages.length) {
       await mkdir(levelDir, { recursive: true });
+      const failedArchives = [];
+      const copyFileSafe = async (
+        src,
+        dest,
+        attempt = 0,
+        maxAttempts = 3
+      ) => {
+        try {
+          await copyFile(src, dest);
+        } catch (err) {
+          if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+            const wait = (attempt + 1) * 1000;
+            console.warn(
+              `${indent}⏳  Waiting for network file ${src} (${wait}ms)…`
+            );
+            try {
+              await stat(src);
+            } catch {
+              // ignore
+            }
+            await delay(wait);
+            return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+          }
+          throw err;
+        }
+      };
       await Promise.all(
-        initImages.map((file) =>
-          copyFile(file, path.join(levelDir, path.basename(file)))
-        )
+        initImages.map(async (file) => {
+          const dest = path.join(levelDir, path.basename(file));
+          try {
+            await copyFileSafe(file, dest);
+          } catch (err) {
+            failedArchives.push(file);
+            console.warn(
+              `${indent}⚠️  Failed to archive ${file}: ${err.message}`
+            );
+          }
+        })
       );
+      if (failedArchives.length) {
+        const listPath = path.join(levelDir, "failed-archives.txt");
+        await writeFile(listPath, failedArchives.join("\n"), "utf8");
+        console.warn(
+          `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+        );
+      }
     }
   }
 
