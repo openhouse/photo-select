@@ -111,6 +111,13 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
+### Choosing `--parallel`
+
+Running multiple batches at once hides API latency but can exhaust system resources. See
+[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
+tuning this flag. In short, start around twice your physical core count and adjust
+until network waits dominate without hitting OpenAI rate limits.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
