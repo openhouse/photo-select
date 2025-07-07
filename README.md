@@ -275,7 +275,7 @@ through that API, so no extra flags are needed.
 5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
-7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present.
+7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
 8. Stop when a directory has zero unclassified images.
 
 ### JSON mode
