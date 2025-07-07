@@ -26,11 +26,15 @@ async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
   try {
     return await readFile(file);
   } catch (err) {
-    if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-      const wait = (attempt + 1) * 1000;
-      console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
-      await delay(wait);
-      return readFileSafe(file, attempt + 1, maxAttempts);
+    if (err?.code === "ECANCELED") {
+      if (attempt < maxAttempts) {
+        const wait = (attempt + 1) * 1000;
+        console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
+        await delay(wait);
+        return readFileSafe(file, attempt + 1, maxAttempts);
+      }
+      console.warn(`⚠️  Skipping unreadable file ${file}`);
+      return null;
     }
     throw err;
   }
@@ -118,28 +122,30 @@ export async function buildMessages(prompt, images, curators = []) {
   }
   const system = { role: "system", content };
 
-  /**  Turn each image into base64 data‑URL with a preceding filename label.  */
-  const userImageParts = await Promise.all(
-    images.map(async (file) => {
-      const abs = path.resolve(file);
-      const buffer = await readFileSafe(abs);
-      const base64 = buffer.toString("base64");
-      const name = path.basename(file);
-      const ext = path.extname(file).slice(1) || "jpeg";
-      const people = await getPeople(name);
-      const info = people.length ? { filename: name, people } : { filename: name };
-      return [
-        { type: "text", text: JSON.stringify(info) },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:image/${ext};base64,${base64}`,
-            detail: "high",
-          },
+  const used = [];
+  const userImageParts = [];
+  for (const file of images) {
+    const abs = path.resolve(file);
+    const buffer = await readFileSafe(abs);
+    if (!buffer) continue;
+    used.push(file);
+    const base64 = buffer.toString("base64");
+    const name = path.basename(file);
+    const ext = path.extname(file).slice(1) || "jpeg";
+    const people = await getPeople(name);
+    const info = people.length ? { filename: name, people } : { filename: name };
+    userImageParts.push(
+      { type: "text", text: JSON.stringify(info) },
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:image/${ext};base64,${base64}`,
+          detail: "high",
         },
-      ];
-    })
-  ).then((parts) => parts.flat());
+      }
+    );
+  }
+
 
   const userText = {
     role: "user",
@@ -149,7 +155,7 @@ export async function buildMessages(prompt, images, curators = []) {
     ],
   };
 
-  return [system, userText];
+  return { messages: [system, userText], used };
 }
 
 /** Build input array for the Responses API */
@@ -159,25 +165,28 @@ export async function buildInput(prompt, images, curators = []) {
     const names = curators.join(', ');
     instructions = instructions.replace(/\{\{curators\}\}/g, names);
   }
-  const imageParts = await Promise.all(
-    images.map(async (file) => {
-      const abs = path.resolve(file);
-      const buffer = await readFileSafe(abs);
-      const base64 = buffer.toString("base64");
-      const name = path.basename(file);
-      const ext = path.extname(file).slice(1) || "jpeg";
-      const people = await getPeople(name);
-      const info = people.length ? { filename: name, people } : { filename: name };
-      return [
-        { type: "input_text", text: JSON.stringify(info) },
-        {
-          type: "input_image",
-          image_url: `data:image/${ext};base64,${base64}`,
-          detail: "high",
-        },
-      ];
-    })
-  ).then((parts) => parts.flat());
+  const used = [];
+  const imageParts = [];
+  for (const file of images) {
+    const abs = path.resolve(file);
+    const buffer = await readFileSafe(abs);
+    if (!buffer) continue;
+    used.push(file);
+    const base64 = buffer.toString("base64");
+    const name = path.basename(file);
+    const ext = path.extname(file).slice(1) || "jpeg";
+    const people = await getPeople(name);
+    const info = people.length ? { filename: name, people } : { filename: name };
+    imageParts.push(
+      { type: "input_text", text: JSON.stringify(info) },
+      {
+        type: "input_image",
+        image_url: `data:image/${ext};base64,${base64}`,
+        detail: "high",
+      }
+    );
+  }
+
 
   return {
     instructions,
@@ -190,6 +199,7 @@ export async function buildInput(prompt, images, curators = []) {
         ],
       },
     ],
+    used,
   };
 }
 
@@ -216,23 +226,28 @@ export async function chatCompletion({
 
   finalPrompt = ensureJsonMention(finalPrompt);
 
-  const key = await cacheKey({
-    prompt: finalPrompt,
-    images,
-    model,
-    curators: finalCurators,
-  });
-  if (cache) {
-    const hit = await getCachedReply(key);
-    if (hit) return hit;
-  }
-
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       onProgress('encoding');
-      const messages = await buildMessages(finalPrompt, images, finalCurators);
+      const { messages, used } = await buildMessages(
+        finalPrompt,
+        images,
+        finalCurators
+      );
+
+      const key = await cacheKey({
+        prompt: finalPrompt,
+        images: used,
+        model,
+        curators: finalCurators,
+      });
+      if (cache) {
+        const hit = await getCachedReply(key);
+        if (hit) return hit;
+      }
+
       onProgress('request');
       const baseParams = {
         model,
@@ -260,10 +275,21 @@ export async function chatCompletion({
         (err instanceof NotFoundError || err.status === 404) &&
         (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
       ) {
-        const params = await buildInput(finalPrompt, images, finalCurators);
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+        });
         const rsp = await openai.responses.create({
           model,
-          ...params,
+          instructions,
+          input,
           text: { format: { type: "json_object" } },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
