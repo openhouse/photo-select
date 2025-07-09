@@ -5,9 +5,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
 
+const DEFAULT_TIMEOUT = 20 * 60 * 1000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  timeout: 5 * 60 * 1000,
+  timeout: Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
 });
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
