@@ -214,6 +214,7 @@ export async function chatCompletion({
   maxRetries = 3,
   cache = true,
   curators = [],
+  stream = false,
   onProgress = () => {},
 }) {
   const extras = await curatorsFromTags(images);
@@ -261,8 +262,24 @@ export async function chatCompletion({
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
       onProgress('waiting');
-      const { choices } = await openai.chat.completions.create(baseParams);
-      const text = choices[0].message.content;
+      let text;
+      if (stream) {
+        const streamResp = await openai.chat.completions.create({
+          ...baseParams,
+          stream: true,
+        });
+        text = "";
+        for await (const chunk of streamResp) {
+          const delta = chunk.choices?.[0]?.delta?.content;
+          if (delta) {
+            text += delta;
+            onProgress('stream');
+          }
+        }
+      } else {
+        const { choices } = await openai.chat.completions.create(baseParams);
+        text = choices[0].message.content;
+      }
       if (cache) await setCachedReply(key, text);
       onProgress('done');
       return text;

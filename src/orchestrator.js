@@ -166,6 +166,7 @@ export async function triageDirectory({
               images: batch,
               model,
               curators,
+              stream: true,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
               },
