@@ -125,6 +125,12 @@ from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
 
+### Custom timeout
+
+Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
+The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
+to override this value if your environment needs a different window.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
