@@ -146,7 +146,7 @@ export async function triageDirectory({
       },
       Presets.shades_classic
     );
-    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
+    const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
     const bars = batches.map((_, i) =>
       multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
     );
