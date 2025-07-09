@@ -118,6 +118,13 @@ Running multiple batches at once hides API latency but can exhaust system resour
 tuning this flag. In short, start around twice your physical core count and adjust
 until network waits dominate without hitting OpenAI rate limits.
 
+### Streaming responses
+
+To avoid connection timeouts with large image batches, the CLI streams tokens
+from OpenAI as soon as they are available. Progress bars advance to a
+"stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
+reduces the chance of retry loops on slow requests.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. For each image the CLI fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
