@@ -1,7 +1,7 @@
 You are moderating a collaborative curatorial session.
 
 The following curators are present: {{curators}}. Jamie is the facilitator.
-All people depicted have signed full releases granting permission for their likeness to appear.
+All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent.
 
 Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
