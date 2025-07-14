@@ -19,8 +19,8 @@ httpsAgent.on("error", (err) => {
 });
 
 const openai = new OpenAI({ httpAgent: httpsAgent });
-const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
-  "http://localhost:3000";
+const PEOPLE_API_BASE =
+  process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
@@ -51,7 +51,9 @@ async function getPeople(filename) {
     const names = Array.isArray(json.data) ? json.data : [];
     peopleCache.set(filename, names);
     return names;
-  } catch {
+  } catch (err) {
+    const msg = err?.message || err?.code || 'unknown error';
+    console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
     return [];
   }
