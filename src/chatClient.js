@@ -3,6 +3,7 @@ import KeepAliveAgent from "agentkeepalive";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
 
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
@@ -221,7 +222,13 @@ export async function chatCompletion({
   onProgress = () => {},
 }) {
   const extras = await curatorsFromTags(images);
+  const added = extras.filter((n) => !curators.includes(n));
   const finalCurators = Array.from(new Set([...curators, ...extras]));
+  if (added.length) {
+    const info = batchStore.getStore();
+    const prefix = info?.batch ? `Batch ${info.batch} ` : "";
+    console.log(`👥  ${prefix}additional curators from tags: ${added.join(', ')}`);
+  }
   let finalPrompt = prompt;
   if (finalCurators.length) {
     const names = finalCurators.join(', ');

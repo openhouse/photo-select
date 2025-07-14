@@ -208,4 +208,31 @@ describe("chatCompletion", () => {
     expect(args.max_output_tokens).toBeTruthy();
     expect(result).toBe("ok");
   });
+
+  it("logs additional curators from tags", async () => {
+    vi.resetModules();
+    const { chatCompletion } = await import("../src/chatClient.js");
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cur-"));
+    const img1 = path.join(dir, "1.jpg");
+    const img2 = path.join(dir, "2.jpg");
+    await fs.writeFile(img1, "a");
+    await fs.writeFile(img2, "b");
+    global.fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) });
+    chatSpy.mockResolvedValueOnce({ choices: [{ message: { content: "{}" } }] });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await chatCompletion({
+      prompt: "p {{curators}}",
+      images: [img1, img2],
+      model: "gpt-4o",
+      cache: false,
+      curators: ["Bob"],
+    });
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Alice")
+    );
+    logSpy.mockRestore();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });
