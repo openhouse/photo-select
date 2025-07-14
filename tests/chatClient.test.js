@@ -183,6 +183,16 @@ describe("curatorsFromTags", () => {
     const names = await curatorsFromTags(imgs);
     expect(names).toContain("Alice");
   });
+
+  it("filters placeholder names", async () => {
+    const imgs = ["/tmp/y1.jpg", "/tmp/y2.jpg"];
+    global.fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) });
+    const names = await curatorsFromTags(imgs);
+    expect(names).toHaveLength(0);
+    global.fetch.mockReset();
+  });
 });
 
 describe("chatCompletion", () => {

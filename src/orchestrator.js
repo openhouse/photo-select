@@ -51,10 +51,6 @@ export async function triageDirectory({
       console.warn(`Could not read context file ${contextPath}: ${err.message}`);
     }
   }
-  if (curators.length) {
-    const names = curators.join(', ');
-    prompt = prompt.replace(/\{\{curators\}\}/g, names);
-  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 

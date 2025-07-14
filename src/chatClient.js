@@ -70,8 +70,9 @@ export async function curatorsFromTags(files) {
       counts.set(person, (counts.get(person) || 0) + 1);
     }
   }
+  const banned = new Set(["_UNKNOWN_"]);
   return [...counts.entries()]
-    .filter(([, c]) => c > 1)
+    .filter(([n, c]) => c > 1 && !banned.has(n))
     .map(([n]) => n);
 }
 
