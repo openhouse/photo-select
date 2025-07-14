@@ -3,6 +3,7 @@ import KeepAliveAgent from "agentkeepalive";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
 
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
@@ -19,8 +20,8 @@ httpsAgent.on("error", (err) => {
 });
 
 const openai = new OpenAI({ httpAgent: httpsAgent });
-const PEOPLE_API_BASE = process.env.PHOTO_FILTER_API_BASE ||
-  "http://localhost:3000";
+const PEOPLE_API_BASE =
+  process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
@@ -51,7 +52,9 @@ async function getPeople(filename) {
     const names = Array.isArray(json.data) ? json.data : [];
     peopleCache.set(filename, names);
     return names;
-  } catch {
+  } catch (err) {
+    const msg = err?.message || err?.code || 'unknown error';
+    console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
     return [];
   }
@@ -67,8 +70,9 @@ export async function curatorsFromTags(files) {
       counts.set(person, (counts.get(person) || 0) + 1);
     }
   }
+  const banned = new Set(["_UNKNOWN_"]);
   return [...counts.entries()]
-    .filter(([, c]) => c > 1)
+    .filter(([n, c]) => c > 1 && !banned.has(n))
     .map(([n]) => n);
 }
 
@@ -219,7 +223,13 @@ export async function chatCompletion({
   onProgress = () => {},
 }) {
   const extras = await curatorsFromTags(images);
+  const added = extras.filter((n) => !curators.includes(n));
   const finalCurators = Array.from(new Set([...curators, ...extras]));
+  if (added.length) {
+    const info = batchStore.getStore();
+    const prefix = info?.batch ? `Batch ${info.batch} ` : "";
+    console.log(`👥  ${prefix}additional curators from tags: ${added.join(', ')}`);
+  }
   let finalPrompt = prompt;
   if (finalCurators.length) {
     const names = finalCurators.join(', ');
