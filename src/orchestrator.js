@@ -4,7 +4,7 @@ import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { readPrompt, delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
-import { chatCompletion, parseReply } from "./chatClient.js";
+import { parseReply } from "./chatClient.js";
 import { MultiBar, Presets } from "cli-progress";
 
 function formatDuration(ms) {
@@ -24,7 +24,8 @@ function formatDuration(ms) {
  * @param {Object} options
  * @param {string} options.dir    Directory of images to triage
  * @param {string} options.promptPath   Path to the base prompt
- * @param {string} options.model        OpenAI model id
+ * @param {Object} options.provider     Chat provider instance
+ * @param {string} options.model        Model id for the provider
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
@@ -34,6 +35,7 @@ function formatDuration(ms) {
 export async function triageDirectory({
   dir,
   promptPath,
+  provider,
   model,
   recurse = true,
   curators = [],
@@ -41,6 +43,10 @@ export async function triageDirectory({
   parallel = 1,
   depth = 0,
 }) {
+  if (!provider) {
+    const m = await import('./providers/openai.js');
+    provider = new m.default();
+  }
   const indent = "  ".repeat(depth);
   let prompt = await readPrompt(promptPath);
   if (contextPath) {
@@ -157,15 +163,15 @@ export async function triageDirectory({
         await batchStore.run({ batch: idx + 1 }, async () => {
           try {
             const start = Date.now();
-            const reply = await chatCompletion({
+            const reply = await provider.chat({
               prompt,
               images: batch,
               model,
               curators,
-              stream: true,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
               },
+              stream: true,
             });
             const ms = Date.now() - start;
             bar.update(4, { stage: "done" });
@@ -230,6 +236,7 @@ export async function triageDirectory({
       await triageDirectory({
         dir: keepDir,
         promptPath,
+        provider,
         model,
         recurse,
         curators,

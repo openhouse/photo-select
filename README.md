@@ -49,7 +49,12 @@ chmod +x src/index.js    # fix permission error when running with npx
 Invoke the CLI from the project directory using `npx`:
 
 ```bash
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
+npx photo-select \
+  [--dir /path/to/images] \
+  [--provider ollama] \
+  [--model qwen2.5vl:32b] \
+  [--api-key sk-...] \
+  [--context /path/to/context.txt]
 ```
 
 You can also install globally with `npm install -g` to run `photo-select` anywhere.
@@ -58,9 +63,9 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 
 ```bash
 # run from the project directory
-npx photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
+npx photo-select --provider openai --model gpt-4o [other flags]
 # or, if installed globally:
-photo-select [--dir /path/to/images] [--prompt /path/to/prompt.txt] [--model gpt-4o] [--api-key sk-...] [--context /path/to/context.txt]
+photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
 
 Run `photo-select --help` to see all options.
@@ -91,8 +96,10 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--model`  | `gpt-4o`                | Any chat‑completion model id you have access to. Can also be set via `$PHOTO_SELECT_MODEL`. |
+| `--provider` | `openai` | `openai` or `ollama` |
+| `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
+| `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
@@ -210,6 +217,21 @@ Models in the `o` series use the new `max_completion_tokens` parameter instead o
 the deprecated `max_tokens`. When the CLI falls back to the Responses API, that
 option is called `max_output_tokens`. Both are handled automatically based on
 the model you specify.
+
+## Supported Ollama models (local)
+
+Running with `--provider ollama` lets you triage images entirely offline.
+The following vision models are known to work:
+
+- `llama3.2-vision:11b`
+- `llama3.2-vision:90b`
+- `qwen2.5vl:32b`
+- `qwen2.5vl:72b`
+- `mistral-small3.1-vision`
+- `llava:34b` *(research only)*
+- `moondream:1.8b`
+
+Specify one with `--provider ollama --model <tag>`.
 
 ### Estimated costs
 

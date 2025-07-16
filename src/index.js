@@ -15,14 +15,24 @@ program
   .option("-d, --dir <path>", "Source directory of images", process.cwd())
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
   .option(
+    "--provider <name>",
+    "openai or ollama",
+    process.env.PHOTO_SELECT_PROVIDER || "openai"
+  )
+  .option(
     "-m, --model <id>",
-    "OpenAI model id",
-    process.env.PHOTO_SELECT_MODEL || "gpt-4o"
+    "Model id (OpenAI or Ollama)",
+    process.env.PHOTO_SELECT_MODEL
   )
   .option(
     "-k, --api-key <key>",
     "OpenAI API key",
     process.env.OPENAI_API_KEY
+  )
+  .option(
+    "--ollama-base-url <url>",
+    "Base URL for Ollama",
+    process.env.OLLAMA_BASE_URL || "http://localhost:11434"
   )
   .option(
     "-c, --curators <names>",
@@ -38,26 +48,49 @@ program
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
   .parse(process.argv);
 
-const { dir, prompt: promptPath, model, recurse, apiKey, curators, context: contextPath, parallel } = program.opts();
+const {
+  dir,
+  prompt: promptPath,
+  provider: providerName,
+  model,
+  recurse,
+  apiKey,
+  curators,
+  context: contextPath,
+  parallel,
+  ollamaBaseUrl,
+} = program.opts();
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
 }
+if (ollamaBaseUrl) {
+  process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
+}
+
+const provider = providerName || 'openai';
+let finalModel = model;
+if (!finalModel) {
+  finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+}
 
 (async () => {
   try {
-    if (!process.env.OPENAI_API_KEY) {
+    if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
       console.error(
-        "❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env."
+        '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
       );
       process.exit(1);
     }
     const absDir = path.resolve(dir);
-    const { triageDirectory } = await import("./orchestrator.js");
+    const { triageDirectory } = await import('./orchestrator.js');
+    const { getProvider } = await import('./providers/index.js');
+    const driver = await getProvider(provider);
     await triageDirectory({
       dir: absDir,
       promptPath,
-      model,
+      provider: driver,
+      model: finalModel,
       recurse,
       curators,
       contextPath,
