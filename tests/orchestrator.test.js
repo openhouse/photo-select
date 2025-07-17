@@ -70,23 +70,34 @@ describe("triageDirectory", () => {
     await expect(fs.stat(level2)).resolves.toBeTruthy();
   });
 
-  it("recurses even when all images kept", async () => {
-    chatCompletion
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
-      );
+  it("stops when all images kept", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+    );
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
       model: "test-model",
       recurse: true,
     });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
-    await expect(fs.stat(aside2)).resolves.toBeTruthy();
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    const keep2 = path.join(tmpDir, "_keep", "1.jpg");
+    await expect(fs.stat(keep2)).resolves.toBeTruthy();
+  });
+
+  it("stops when all images set aside", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    const aside1 = path.join(tmpDir, "_aside", "1.jpg");
+    await expect(fs.stat(aside1)).resolves.toBeTruthy();
   });
 
   it("processes batches in parallel", async () => {
