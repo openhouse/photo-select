@@ -221,47 +221,49 @@ export async function triageDirectory({
     }
   }
 
-  // Step 5 – recurse into keepDir if both keep and aside exist
+  // Step 5 – optionally recurse into keepDir
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
     const asideDir = path.join(dir, "_aside");
-    let keepExists = false;
+
+    let keepCount = 0;
+    let asideCount = 0;
     try {
-      keepExists = (await stat(keepDir)).isDirectory();
+      keepCount = (await listImages(keepDir)).length;
+    } catch {
+      // ignore
+    }
+    try {
+      asideCount = (await listImages(asideDir)).length;
     } catch {
       // ignore
     }
 
-    if (keepExists) {
-      await triageDirectory({
-        dir: keepDir,
-        promptPath,
-        provider,
-        model,
-        recurse,
-        curators,
-        contextPath,
-        parallel,
-        depth: depth + 1,
-      });
-    } else {
-      let keepCount = 0;
-      let asideCount = 0;
+    if (keepCount && asideCount) {
+      let keepExists = false;
       try {
-        keepCount = (await listImages(keepDir)).length;
+        keepExists = (await stat(keepDir)).isDirectory();
       } catch {
         // ignore
       }
-      try {
-        asideCount = (await listImages(asideDir)).length;
-      } catch {
-        // ignore
+      if (keepExists) {
+        await triageDirectory({
+          dir: keepDir,
+          promptPath,
+          provider,
+          model,
+          recurse,
+          curators,
+          contextPath,
+          parallel,
+          depth: depth + 1,
+        });
       }
-
-      if (keepCount || asideCount) {
-        const status = keepCount ? "kept" : "set aside";
-        console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
-      }
+    } else if (keepCount || asideCount) {
+      const status = keepCount ? "kept" : "set aside";
+      console.log(
+        `${indent}🎯  All images ${status} at this level; stopping recursion.`
+      );
     }
   }
 }
