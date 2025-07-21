@@ -5,7 +5,7 @@ import "./errorHandler.js";
 
 import { Command } from "commander";
 import path from "node:path";
-import { DEFAULT_PROMPT_PATH } from "./config.js";
+import { DEFAULT_PROMPT_PATH } from "./templates.js";
 
 
 const program = new Command();
@@ -46,6 +46,7 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
+  .option("--field-notes", "Enable field notes workflow")
   .parse(process.argv);
 
 const {
@@ -58,6 +59,7 @@ const {
   curators,
   context: contextPath,
   parallel,
+  fieldNotes,
   ollamaBaseUrl,
 } = program.opts();
 
@@ -95,6 +97,7 @@ if (!finalModel) {
       curators,
       contextPath,
       parallel,
+      fieldNotes,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

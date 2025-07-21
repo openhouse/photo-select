@@ -1,0 +1,32 @@
+You are moderating a collaborative curatorial session.
+
+Curators: {{curators}}
+{{#if context}}
+Context:
+{{context}}
+{{/if}}
+
+The following images are under review:
+{{#each images}}
+- {{this}}
+{{/each}}
+
+{{#if fieldNotes}}
+Field-notes snapshot prior to this batch:
+{{fieldNotes}}
+{{/if}}
+
+Return a JSON object with:
+- "minutes": array of { speaker, text } lines capturing the conversation.
+- "decision" : { "keep": { filename: reason }, "aside": { filename: reason } }
+{{#if fieldNotes}}
+- "field_notes_diff" : a unified diff describing notebook changes.
+  Contributor guide
+  1. Change only lines justified by today’s images.
+  2. Cite evidence with `[filename.jpg]` links.
+  3. Mark uncertainties with "(?)".
+  4. Embed ≤ 3 `![]()` inline images.
+{{/if}}
+Never invent filenames, keys, or extra properties.
+Return pure JSON—no markdown, no commentary, no extra text.
+
