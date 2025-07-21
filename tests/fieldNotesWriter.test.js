@@ -1,0 +1,48 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import FieldNotesWriter from "../src/fieldNotesWriter.js";
+
+const exec = promisify(execFile);
+
+async function generateDiff(oldStr, newStr) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "diff-"));
+  const a = path.join(dir, "a.md");
+  const b = path.join(dir, "b.md");
+  await fs.writeFile(a, oldStr);
+  await fs.writeFile(b, newStr);
+  const { stdout } = await exec("diff", ["-u", "--label", "a/field-notes.md", a, "--label", "b/field-notes.md", b]).catch((e) => ({ stdout: e.stdout }));
+  await fs.rm(dir, { recursive: true, force: true });
+  return stdout;
+}
+
+describe("FieldNotesWriter", () => {
+  let dir;
+  let file;
+  let writer;
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "fnw-"));
+    file = path.join(dir, "field-notes.md");
+    writer = new FieldNotesWriter(file);
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("autolinks bare filenames", () => {
+    const text = writer.autolink("See DSCF1.jpg and DSCF2.png");
+    expect(text).toContain("[DSCF1.jpg](./DSCF1.jpg)");
+    expect(text).toContain("[DSCF2.png](./DSCF2.png)");
+  });
+
+  it("applies diffs", async () => {
+    await writer.writeFull("hello");
+    const diff = await generateDiff("hello\n", "hello\nworld\n");
+    await writer.applyDiff(diff);
+    const result = await writer.read();
+    expect(result.trim()).toBe("hello\nworld");
+  });
+});
