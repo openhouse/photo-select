@@ -71,11 +71,14 @@ export async function triageDirectory({
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
+  let levelExists = true;
   try {
     await stat(levelDir);
   } catch {
-    if (initImages.length) {
-      await mkdir(levelDir, { recursive: true });
+    levelExists = false;
+  }
+  if (!levelExists && initImages.length) {
+    await mkdir(levelDir, { recursive: true });
       const failedArchives = [];
       const copyFileSafe = async (
         src,
@@ -123,6 +126,10 @@ export async function triageDirectory({
         );
       }
     }
+
+  if (fieldNotes && !notesWriter) {
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    await notesWriter.init();
   }
 
   while (true) {
