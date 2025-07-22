@@ -14,7 +14,14 @@ export async function renderTemplate(filePath = DEFAULT_PROMPT_PATH, data = {}) 
 
 export async function buildPrompt(
   filePath,
-  { curators = [], images = [], contextPath, fieldNotes, hasFieldNotes = false }
+  {
+    curators = [],
+    images = [],
+    contextPath,
+    fieldNotes,
+    hasFieldNotes = false,
+    isSecondPass = false,
+  }
 ) {
   const context = contextPath
     ? await fs.readFile(contextPath, 'utf8').catch(() => '')
@@ -25,6 +32,7 @@ export async function buildPrompt(
     context,
     fieldNotes,
     hasFieldNotes,
+    isSecondPass,
   });
 }
 
