@@ -9,5 +9,6 @@ The `--field-notes` flag enables a lightweight notebook that evolves alongside e
 3. If the model returns a unified diff, it is applied to the notebook and the update timestamp is refreshed. A second pass may be triggered if the patch does not apply cleanly.
 4. Bare filenames such as `DSCF0001.jpg` automatically link to images in the same directory.
 5. When more than three inline images (`![]()`) appear in a single entry a warning is appended so the notes remain compact.
+6. The diff must be accompanied by `field_notes_message`, a short commit-style summary of the edits.
 
 Disable the feature by omitting the flag. Each level keeps its own notebook so progress can be reviewed later.

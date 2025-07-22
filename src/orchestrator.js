@@ -212,8 +212,15 @@ export async function triageDirectory({
             let parsed = parseReply(reply, batch, {
               expectFieldNotesDiff: !!notesWriter,
             });
-            const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } =
-              parsed;
+            const {
+              keep,
+              aside,
+              notes,
+              minutes,
+              fieldNotesDiff,
+              fieldNotesMd,
+              fieldNotesMessage,
+            } = parsed;
             if (notesWriter && (fieldNotesMd || fieldNotesDiff)) {
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
@@ -241,6 +248,9 @@ export async function triageDirectory({
                 if (parsed.fieldNotesMd) {
                   await notesWriter.writeFull(parsed.fieldNotesMd);
                 }
+              }
+              if (fieldNotesMessage) {
+                console.log(`${indent}📓  ${fieldNotesMessage}`);
               }
             }
             if (minutes.length) {

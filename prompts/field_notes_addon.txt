@@ -2,7 +2,8 @@ When field-notes mode is ON, extend the response schema:
 
 {
   …(minutes, decision)…,
-  "field_notes_diff": "<unified diff here>"
+  "field_notes_diff": "<unified diff here>",
+  "field_notes_message": "<commit summary>"
 }
 
 Rules:

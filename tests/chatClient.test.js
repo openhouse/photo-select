@@ -131,6 +131,12 @@ describe("parseReply", () => {
     });
     expect(fieldNotesMd).toBe("notes");
   });
+
+  it("extracts field notes message", () => {
+    const obj = { field_notes_message: "update caption" };
+    const { fieldNotesMessage } = parseReply(JSON.stringify(obj), files);
+    expect(fieldNotesMessage).toBe("update caption");
+  });
 });
 
 /** Verify images are labelled in messages */

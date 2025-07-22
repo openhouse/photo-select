@@ -14,6 +14,10 @@ The following images are under review:
 {{#if fieldNotes}}
 Field-notes snapshot prior to this batch:
 {{fieldNotes}}
+
+Please examine the images closely and suggest edits that would make this
+document more accurate. Your update will be applied to the living
+`field-notes.md` file kept with these photos.
 {{/if}}
 
 Return a JSON object with:
@@ -21,6 +25,7 @@ Return a JSON object with:
 - "decision" : { "keep": { filename: reason }, "aside": { filename: reason } }
 {{#if fieldNotes}}
 - "field_notes_diff" : a unified diff describing notebook changes.
+- "field_notes_message": a short commit message summarizing the edits.
   Contributor guide
   1. Change only lines justified by today’s images.
   2. Cite evidence with `[filename.jpg]` links.
