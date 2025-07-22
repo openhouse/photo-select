@@ -26,7 +26,11 @@ describe("FieldNotesWriter", () => {
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "fnw-"));
     file = path.join(dir, "field-notes.md");
-    writer = new FieldNotesWriter(file);
+    await fs.writeFile(path.join(dir, "DSCF1.jpg"), "");
+    await fs.writeFile(path.join(dir, "DSCF2.png"), "");
+    await fs.writeFile(path.join(dir, "DSCF3.jpg"), "");
+    await fs.writeFile(path.join(dir, "DSCF4.jpg"), "");
+    writer = new FieldNotesWriter(file, "001");
   });
   afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
@@ -36,6 +40,13 @@ describe("FieldNotesWriter", () => {
     const text = writer.autolink("See DSCF1.jpg and DSCF2.png");
     expect(text).toContain("[DSCF1.jpg](./DSCF1.jpg)");
     expect(text).toContain("[DSCF2.png](./DSCF2.png)");
+  });
+
+  it("adds warning when too many inline images", async () => {
+    const md = "![](./DSCF1.jpg)\n![](./DSCF2.png)\n![](./DSCF3.jpg)\n![](./DSCF4.jpg)";
+    await writer.writeFull(md);
+    const text = await fs.readFile(file, "utf8");
+    expect(text).toMatch(/Warning/);
   });
 
   it("applies diffs", async () => {

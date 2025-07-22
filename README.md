@@ -106,6 +106,9 @@ through to the script unchanged.
 | `--parallel` | `1` | Number of batches to process simultaneously |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 
+See [docs/field-notes.md](docs/field-notes.md) for a description of how the
+notebook system works.
+
 ### Increasing memory
 
 The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
