@@ -42,16 +42,17 @@ When you respond, think step‑by‑step silently and then output **only** a val
 {{#if hasFieldNotes}}
 - "field_notes_md" : the **full, updated contents** of *field‑notes.md* after applying the agreed changes. Provide the entire file for direct replacement—no diffs.
 
-Editorial guidelines for curators in this second pass  
-1. Treat *field‑notes.md* as the canonical, evolving record—every new or altered line must be justified by at least one image from today’s batch; cite it with `[filename.jpg]`.  
-2. You may embed up to **3** thumbnail images using `![](filename.jpg)` when it materially clarifies a point.  
-3. Preserve the existing notebook structure; append where necessary and avoid rearranging previously validated content.  
-4. If a detail is ambiguous, mark it with "(?)" rather than guessing.  
-5. Keep prose concise, factual, and free of speculation—bullet points preferred.  
-6. Before adding new facts, scan earlier sections to prevent duplication; update in place instead of repeating information.  
-7. Verify spelling of part numbers, brands, and measurements against the photo prior to inclusion.  
-8. Ensure every `[filename.jpg]` reference actually exists in today’s batch.  
-9. Return pure JSON—no Markdown fences, no extra keys, no explanatory commentary.  
+Editorial guidelines for curators in this second pass
+1. Treat *field‑notes.md* as the canonical, evolving record—every new or altered line must be justified by at least one image from today’s batch; cite it with `[filename.jpg]`.
+2. You may embed up to **3** thumbnail images using `![](filename.jpg)` when it materially clarifies a point.
+3. Provide a short description whenever linking or embedding an image, e.g. `[cube overview](DSCF0001.jpg)` or `![cube overview](DSCF0001.jpg)`.
+4. Preserve the existing notebook structure; append where necessary and avoid rearranging previously validated content.
+5. If a detail is ambiguous, mark it with "(?)" rather than guessing.
+6. Keep prose concise, factual, and free of speculation—bullet points preferred.
+7. Before adding new facts, scan earlier sections to prevent duplication; update in place instead of repeating information.
+8. Verify spelling of part numbers, brands, and measurements against the photo prior to inclusion.
+9. Ensure every `[filename.jpg]` reference actually exists in today’s batch.
+10. Return pure JSON—no Markdown fences, no extra keys, no explanatory commentary.
 {{/if}}
 
 {{/unless}}
