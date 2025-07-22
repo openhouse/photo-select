@@ -47,6 +47,7 @@ program
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
   .option("--field-notes", "Enable field notes workflow")
+  .option("-v, --verbose", "Store prompts and responses for debugging")
   .parse(process.argv);
 
 const {
@@ -60,6 +61,7 @@ const {
   context: contextPath,
   parallel,
   fieldNotes,
+  verbose,
   ollamaBaseUrl,
 } = program.opts();
 
@@ -98,6 +100,7 @@ if (!finalModel) {
       contextPath,
       parallel,
       fieldNotes,
+      verbose,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
