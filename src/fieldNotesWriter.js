@@ -5,6 +5,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { applyPatch } from 'diff';
 
 const exec = promisify(execFile);
 
@@ -25,9 +26,10 @@ function readHeader(text) {
 }
 
 export default class FieldNotesWriter {
-  constructor(file, level = '') {
+  constructor(file, level = '', execFn = exec) {
     this.file = file;
     this.level = level;
+    this._exec = execFn;
   }
 
   async read() {
@@ -86,8 +88,17 @@ export default class FieldNotesWriter {
     const patchPath = path.join(dir, 'patch.diff');
     await fs.writeFile(oldPath, old);
     await fs.writeFile(patchPath, diffText);
-    await exec('patch', [oldPath, patchPath], { cwd: dir });
-    const updated = await fs.readFile(oldPath, 'utf8');
+    let updated;
+    try {
+      await this._exec('patch', [oldPath, patchPath], { cwd: dir });
+      updated = await fs.readFile(oldPath, 'utf8');
+    } catch (err) {
+      updated = applyPatch(old, diffText);
+      if (updated === false) {
+        await fs.rm(dir, { recursive: true, force: true });
+        throw err;
+      }
+    }
     await fs.rm(dir, { recursive: true, force: true });
     await this.writeFull(updated);
   }
