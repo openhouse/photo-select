@@ -45,6 +45,7 @@ export async function triageDirectory({
   contextPath,
   parallel = 1,
   fieldNotes = false,
+  verbose = false,
   depth = 0,
 }) {
   if (!provider) {
@@ -64,79 +65,60 @@ export async function triageDirectory({
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  if (fieldNotes && !notesWriter) {
-    const lvl = String(depth + 1).padStart(3, '0');
-    notesWriter = new FieldNotesWriter(
-      path.join(levelDir, 'field-notes.md'),
-      lvl
-    );
-    await notesWriter.init();
-  }
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
-  let levelExists = true;
-  try {
-    await stat(levelDir);
-  } catch {
-    levelExists = false;
+  await mkdir(levelDir, { recursive: true });
+  if (verbose) {
+    await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
+    await mkdir(path.join(levelDir, '_responses'), { recursive: true });
   }
-  if (!levelExists && initImages.length) {
-    await mkdir(levelDir, { recursive: true });
-      const failedArchives = [];
-      const copyFileSafe = async (
-        src,
-        dest,
-        attempt = 0,
-        maxAttempts = 3
-      ) => {
+  const failedArchives = [];
+  const copyFileSafe = async (
+    src,
+    dest,
+    attempt = 0,
+    maxAttempts = 3
+  ) => {
+    try {
+      await copyFile(src, dest);
+    } catch (err) {
+      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+        const wait = (attempt + 1) * 1000;
+        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
         try {
-          await copyFile(src, dest);
-        } catch (err) {
-          if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-            const wait = (attempt + 1) * 1000;
-            console.warn(
-              `${indent}⏳  Waiting for network file ${src} (${wait}ms)…`
-            );
-            try {
-              await stat(src);
-            } catch {
-              // ignore
-            }
-            await delay(wait);
-            return copyFileSafe(src, dest, attempt + 1, maxAttempts);
-          }
-          throw err;
+          await stat(src);
+        } catch {
+          // ignore
         }
-      };
-      await Promise.all(
-        initImages.map(async (file) => {
-          const dest = path.join(levelDir, path.basename(file));
-          try {
-            await copyFileSafe(file, dest);
-          } catch (err) {
-            failedArchives.push(file);
-            console.warn(
-              `${indent}⚠️  Failed to archive ${file}: ${err.message}`
-            );
-          }
-        })
-      );
-      if (failedArchives.length) {
-        const listPath = path.join(levelDir, "failed-archives.txt");
-        await writeFile(listPath, failedArchives.join("\n"), "utf8");
-        console.warn(
-          `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
-        );
+        await delay(wait);
+        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
       }
+      throw err;
     }
-
-  if (fieldNotes && !notesWriter) {
-    const lvl = String(depth + 1).padStart(3, '0');
-    notesWriter = new FieldNotesWriter(
-      path.join(levelDir, 'field-notes.md'),
-      lvl
+  };
+  await Promise.all(
+    initImages.map(async (file) => {
+      const dest = path.join(levelDir, path.basename(file));
+      try {
+        await copyFileSafe(file, dest);
+      } catch (err) {
+        failedArchives.push(file);
+        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+      }
+    })
+  );
+  if (failedArchives.length) {
+    const listPath = path.join(levelDir, "failed-archives.txt");
+    await writeFile(listPath, failedArchives.join("\n"), "utf8");
+    console.warn(
+      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
     );
+  }
+
+  if (fieldNotes) {
+    const lvl = String(depth + 1).padStart(3, '0');
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
     await notesWriter.init();
   }
 
@@ -193,6 +175,11 @@ export async function triageDirectory({
             let prompt = basePrompt;
             if (addon) prompt += `\n${addon}`;
             const start = Date.now();
+            const promptId = crypto.randomUUID();
+            if (verbose) {
+              const pFile = path.join(levelDir, '_prompts', `batch-${idx + 1}-${promptId}.txt`);
+              await writeFile(pFile, prompt, 'utf8');
+            }
             const reply = await provider.chat({
               prompt,
               images: batch,
@@ -203,6 +190,10 @@ export async function triageDirectory({
               },
               stream: true,
             });
+            if (verbose) {
+              const rFile = path.join(levelDir, '_responses', `batch-${idx + 1}-${promptId}.txt`);
+              await writeFile(rFile, reply, 'utf8');
+            }
             const ms = Date.now() - start;
             bar.update(4, { stage: "done" });
             bar.stop();
@@ -227,6 +218,11 @@ export async function triageDirectory({
                     diff: fieldNotesDiff,
                   }
                 );
+                const secondId = crypto.randomUUID();
+                if (verbose) {
+                  const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
+                  await writeFile(sp, secondPrompt, 'utf8');
+                }
                 const second = await provider.chat({
                   prompt: secondPrompt,
                   images: batch,
@@ -237,6 +233,10 @@ export async function triageDirectory({
                     bar.update(stageMap[stage] || 0, { stage });
                   },
                 });
+                if (verbose) {
+                  const sr = path.join(levelDir, '_responses', `batch-${idx + 1}-${secondId}-second.txt`);
+                  await writeFile(sr, second, 'utf8');
+                }
                 parsed = parseReply(second, batch, { expectFieldNotesMd: true });
                 if (parsed.fieldNotesMd) {
                   await notesWriter.writeFull(parsed.fieldNotesMd);

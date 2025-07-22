@@ -1,32 +1,35 @@
 You are moderating a collaborative curatorial session.
 
-Curators: {{curators}}
-{{#if context}}
-Context:
-{{context}}
-{{/if}}
+Session participants:
+- Curators: {{curators}}
+- Facilitator: Jamie
 
-The following images are under review:
+You will review the following image files (use *only* these names when forming decisions):
 {{#each images}}
 - {{this}}
 {{/each}}
 
+{{#if context}}
+Background for today's review:
+{{context}}
+{{/if}}
 {{#if fieldNotes}}
 Field-notes snapshot prior to this batch:
 {{fieldNotes}}
 {{/if}}
 
-Return a JSON object with:
-- "minutes": array of { speaker, text } lines capturing the conversation.
-- "decision" : { "keep": { filename: reason }, "aside": { filename: reason } }
+When you respond, think step-by-step silently and then output **only** a valid JSON object with the following top-level keys:
+- "minutes" : an array of { "speaker": "<Name>", "text": "<what was said>" }. The final "text" must be a forward-looking question.
+- "decision" : an object whose optional keys are exactly "keep" and "aside". Each key maps a filename to a one-sentence rationale. Omit filenames that lack consensus.
 {{#if fieldNotes}}
-- "field_notes_diff" : a unified diff describing notebook changes.
+- "field_notes_diff" : a unified diff (like `git diff -U0`) patching *field-notes.md*.
   Contributor guide
   1. Change only lines justified by today’s images.
   2. Cite evidence with `[filename.jpg]` links.
   3. Mark uncertainties with "(?)".
   4. Embed ≤ 3 `![]()` inline images.
 {{/if}}
-Never invent filenames, keys, or extra properties.
-Return pure JSON—no markdown, no commentary, no extra text.
 
+Never invent filenames, keys, or extra properties. Use only the image list above and the keys "keep"/"aside".
+
+Return pure JSON—no markdown, no commentary, no extra text.
