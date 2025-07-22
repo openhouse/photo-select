@@ -65,7 +65,11 @@ export async function triageDirectory({
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
   if (fieldNotes && !notesWriter) {
-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    const lvl = String(depth + 1).padStart(3, '0');
+    notesWriter = new FieldNotesWriter(
+      path.join(levelDir, 'field-notes.md'),
+      lvl
+    );
     await notesWriter.init();
   }
   const initImages = await listImages(dir);
@@ -128,7 +132,11 @@ export async function triageDirectory({
     }
 
   if (fieldNotes && !notesWriter) {
-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    const lvl = String(depth + 1).padStart(3, '0');
+    notesWriter = new FieldNotesWriter(
+      path.join(levelDir, 'field-notes.md'),
+      lvl
+    );
     await notesWriter.init();
   }
 

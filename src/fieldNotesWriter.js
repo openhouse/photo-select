@@ -1,13 +1,22 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 
+async function atomicWrite(file, text) {
+  const dir = path.dirname(file);
+  const tmp = path.join(dir, `.tmp-${crypto.randomUUID()}`);
+  await fs.writeFile(tmp, text, 'utf8');
+  await fs.rename(tmp, file);
+}
+
 function stripHeader(text) {
-  return text.replace(/^(?:created:.*\n)?(?:updated:.*\n)?\n?/, '');
+  return text.replace(/^##.*\n(?:created:.*\n)?(?:updated:.*\n)?\n?/, '');
 }
 
 function readHeader(text) {
@@ -16,8 +25,9 @@ function readHeader(text) {
 }
 
 export default class FieldNotesWriter {
-  constructor(file) {
+  constructor(file, level = '') {
     this.file = file;
+    this.level = level;
   }
 
   async read() {
@@ -35,14 +45,21 @@ export default class FieldNotesWriter {
       await fs.stat(this.file);
     } catch {
       const ts = new Date().toISOString();
-      await fs.writeFile(this.file, `created: ${ts}\n\n`);
+      const header =
+        (this.level ? `## Field Notes — Level ${this.level}\n` : '') +
+        `created: ${ts}\n\n`;
+      await atomicWrite(this.file, header);
     }
   }
 
   autolink(text) {
     const exts = '(?:jpg|jpeg|png|gif|tif|tiff|heic|heif)';
     const re = new RegExp(`(?<![\\[(])([\\w.-]+\\.${exts})`, 'gi');
-    return text.replace(re, '[$1](./$1)');
+    return text.replace(re, (m, name) => {
+      const p = path.join(path.dirname(this.file), name);
+      if (fsSync.existsSync(p)) return `[${name}](./${name})`;
+      return m;
+    });
   }
 
   async writeFull(markdown) {
@@ -50,9 +67,15 @@ export default class FieldNotesWriter {
     const existing = await fs.readFile(this.file, 'utf8').catch(() => '');
     const created = readHeader(existing);
     const ts = new Date().toISOString();
-    const body = this.autolink(markdown.trim()) + '\n';
-    const header = `created: ${created}\nupdated: ${ts}\n\n`;
-    await fs.writeFile(this.file, header + body, 'utf8');
+    let body = this.autolink(markdown.trim());
+    if ((body.match(/!\[/g) || []).length > 3) {
+      body += '\n\n> **Warning**: Inline image limit exceeded.';
+    }
+    body += '\n';
+    const header =
+      (this.level ? `## Field Notes — Level ${this.level}\n` : '') +
+      `created: ${created}\nupdated: ${ts}\n\n`;
+    await atomicWrite(this.file, header + body);
   }
 
   async applyDiff(diffText) {
