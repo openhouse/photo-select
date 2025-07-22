@@ -345,7 +345,7 @@ export async function chatCompletion({
  *  • “DSCF1234 — keep  …reason…”
  *  • “Set aside: DSCF5678”
  */
-export function parseReply(text, allFiles) {
+export function parseReply(text, allFiles, opts = {}) {
   // Strip Markdown code fences like ```json ... ``` if present
   const fenced = text.trim();
   if (fenced.startsWith('```')) {
@@ -372,9 +372,17 @@ export function parseReply(text, allFiles) {
   const notes = new Map();
   const minutes = [];
 
+  let fieldNotesDiff;
+  let fieldNotesMd;
   // Try JSON first
   try {
     const obj = JSON.parse(text);
+    if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === 'string') {
+      fieldNotesDiff = obj.field_notes_diff;
+    }
+    if (opts.expectFieldNotesMd && typeof obj.field_notes_md === 'string') {
+      fieldNotesMd = obj.field_notes_md;
+    }
 
     const extract = (node) => {
       if (!node || typeof node !== 'object') return null;
@@ -455,5 +463,13 @@ export function parseReply(text, allFiles) {
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
+  return {
+    keep: [...keep],
+    aside: [...aside],
+    unclassified,
+    notes,
+    minutes,
+    fieldNotesDiff,
+    fieldNotesMd,
+  };
 }

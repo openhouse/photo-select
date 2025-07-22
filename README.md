@@ -104,6 +104,7 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
+| `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 
 ### Increasing memory
 

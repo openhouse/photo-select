@@ -112,6 +112,25 @@ describe("parseReply", () => {
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
   });
+
+  it("extracts field notes diff", () => {
+    const obj = {
+      decision: { keep: [], aside: [] },
+      field_notes_diff: "diff",
+    };
+    const { fieldNotesDiff } = parseReply(JSON.stringify(obj), files, {
+      expectFieldNotesDiff: true,
+    });
+    expect(fieldNotesDiff).toBe("diff");
+  });
+
+  it("extracts field notes markdown", () => {
+    const obj = { field_notes_md: "notes" };
+    const { fieldNotesMd } = parseReply(JSON.stringify(obj), files, {
+      expectFieldNotesMd: true,
+    });
+    expect(fieldNotesMd).toBe("notes");
+  });
 });
 
 /** Verify images are labelled in messages */
