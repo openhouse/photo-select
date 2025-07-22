@@ -171,6 +171,7 @@ export async function triageDirectory({
               contextPath,
               images: batch,
               fieldNotes: notesText,
+              hasFieldNotes: !!notesWriter,
             });
             let prompt = basePrompt;
             if (addon) prompt += `\n${addon}`;

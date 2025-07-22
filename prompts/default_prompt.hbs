@@ -13,7 +13,7 @@ You will review the following image files (use *only* these names when forming d
 Background for today's review:
 {{context}}
 {{/if}}
-{{#if fieldNotes}}
+{{#if hasFieldNotes}}
 Field-notes snapshot prior to this batch:
 {{fieldNotes}}
 {{/if}}
@@ -21,7 +21,7 @@ Field-notes snapshot prior to this batch:
 When you respond, think step-by-step silently and then output **only** a valid JSON object with the following top-level keys:
 - "minutes" : an array of { "speaker": "<Name>", "text": "<what was said>" }. The final "text" must be a forward-looking question.
 - "decision" : an object whose optional keys are exactly "keep" and "aside". Each key maps a filename to a one-sentence rationale. Omit filenames that lack consensus.
-{{#if fieldNotes}}
+{{#if hasFieldNotes}}
 - "field_notes_diff" : a unified diff (like `git diff -U0`) patching *field-notes.md*.
   Contributor guide
   1. Change only lines justified by today’s images.
