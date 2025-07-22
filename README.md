@@ -107,7 +107,8 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 
 See [docs/field-notes.md](docs/field-notes.md) for a description of how the
-notebook system works.
+notebook system works. If you have notebooks from the old Python prototype,
+run `node scripts/migrate-notes.js <file>` to update them to the current format.
 
 ### Increasing memory
 
