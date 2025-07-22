@@ -2,9 +2,11 @@ import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
-import { readPrompt, delay } from "./config.js";
+import { delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply } from "./chatClient.js";
+import { buildPrompt, renderTemplate } from "./templates.js";
+import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 
 function formatDuration(ms) {
@@ -30,6 +32,7 @@ function formatDuration(ms) {
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
  * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
+ * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
  * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
 export async function triageDirectory({
@@ -41,6 +44,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  fieldNotes = false,
   depth = 0,
 }) {
   if (!provider) {
@@ -48,15 +52,13 @@ export async function triageDirectory({
     provider = new m.default();
   }
   const indent = "  ".repeat(depth);
-  let prompt = await readPrompt(promptPath);
-  if (contextPath) {
-    try {
-      const context = await readFile(contextPath, 'utf8');
-      prompt += `\n\nCurator FYI:\n${context}`;
-    } catch (err) {
-      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
-    }
-  }
+  const addon = fieldNotes
+    ? await readFile(
+        new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname,
+        'utf8'
+      )
+    : '';
+  let notesWriter;
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
@@ -65,11 +67,14 @@ export async function triageDirectory({
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
+  let levelExists = true;
   try {
     await stat(levelDir);
   } catch {
-    if (initImages.length) {
-      await mkdir(levelDir, { recursive: true });
+    levelExists = false;
+  }
+  if (!levelExists && initImages.length) {
+    await mkdir(levelDir, { recursive: true });
       const failedArchives = [];
       const copyFileSafe = async (
         src,
@@ -117,6 +122,10 @@ export async function triageDirectory({
         );
       }
     }
+
+  if (fieldNotes && !notesWriter) {
+    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'));
+    await notesWriter.init();
   }
 
   while (true) {
@@ -162,6 +171,15 @@ export async function triageDirectory({
         const bar = bars[idx];
         await batchStore.run({ batch: idx + 1 }, async () => {
           try {
+            const notesText = notesWriter ? await notesWriter.read() : undefined;
+            const basePrompt = await buildPrompt(promptPath, {
+              curators,
+              contextPath,
+              images: batch,
+              fieldNotes: notesText,
+            });
+            let prompt = basePrompt;
+            if (addon) prompt += `\n${addon}`;
             const start = Date.now();
             const reply = await provider.chat({
               prompt,
@@ -179,7 +197,40 @@ export async function triageDirectory({
             console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
             console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
-            const { keep, aside, notes, minutes } = parseReply(reply, batch);
+            let parsed = parseReply(reply, batch, {
+              expectFieldNotesDiff: !!notesWriter,
+            });
+            const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } =
+              parsed;
+            if (notesWriter && (fieldNotesMd || fieldNotesDiff)) {
+              if (fieldNotesMd) {
+                await notesWriter.writeFull(fieldNotesMd);
+              } else if (fieldNotesDiff) {
+                const secondPrompt = await renderTemplate(
+                  new URL('../prompts/field_notes_second_pass.hbs', import.meta.url)
+                    .pathname,
+                  {
+                    prompt: basePrompt,
+                    existing: notesText,
+                    diff: fieldNotesDiff,
+                  }
+                );
+                const second = await provider.chat({
+                  prompt: secondPrompt,
+                  images: batch,
+                  model,
+                  curators,
+                  stream: true,
+                  onProgress: (stage) => {
+                    bar.update(stageMap[stage] || 0, { stage });
+                  },
+                });
+                parsed = parseReply(second, batch, { expectFieldNotesMd: true });
+                if (parsed.fieldNotesMd) {
+                  await notesWriter.writeFull(parsed.fieldNotesMd);
+                }
+              }
+            }
             if (minutes.length) {
               const uuid = crypto.randomUUID();
               const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
@@ -242,6 +293,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         parallel,
+        fieldNotes,
         depth: depth + 1,
       });
     } else {
