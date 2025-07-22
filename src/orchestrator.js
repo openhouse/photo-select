@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply } from "./chatClient.js";
-import { buildPrompt, renderTemplate } from "./templates.js";
+import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 
@@ -53,12 +53,6 @@ export async function triageDirectory({
     provider = new m.default();
   }
   const indent = "  ".repeat(depth);
-  const addon = fieldNotes
-    ? await readFile(
-        new URL('../prompts/field_notes_addon.txt', import.meta.url).pathname,
-        'utf8'
-      )
-    : '';
   let notesWriter;
 
   console.log(`${indent}📁  Scanning ${dir}`);
@@ -172,9 +166,9 @@ export async function triageDirectory({
               images: batch,
               fieldNotes: notesText,
               hasFieldNotes: !!notesWriter,
+              isSecondPass: false,
             });
             let prompt = basePrompt;
-            if (addon) prompt += `\n${addon}`;
             const start = Date.now();
             const promptId = crypto.randomUUID();
             if (verbose) {
@@ -216,15 +210,15 @@ export async function triageDirectory({
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
               } else if (fieldNotesInstructions) {
-                const secondPrompt = await renderTemplate(
-                  new URL('../prompts/field_notes_second_pass.hbs', import.meta.url)
-                    .pathname,
-                  {
-                    prompt: basePrompt,
-                    existing: notesText,
-                    instructions: fieldNotesInstructions,
-                  }
-                );
+                let secondPrompt = await buildPrompt(promptPath, {
+                  curators,
+                  contextPath,
+                  images: batch,
+                  fieldNotes: notesText,
+                  hasFieldNotes: !!notesWriter,
+                  isSecondPass: true,
+                });
+                secondPrompt += `\nUpdate instructions:\n${fieldNotesInstructions}\n`;
                 const secondId = crypto.randomUUID();
                 if (verbose) {
                   const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
