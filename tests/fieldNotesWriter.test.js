@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -55,5 +55,23 @@ describe("FieldNotesWriter", () => {
     await writer.applyDiff(diff);
     const result = await writer.read();
     expect(result.trim()).toBe("hello\nworld");
+  });
+
+  it("falls back when patch command fails", async () => {
+    const failExec = vi.fn().mockRejectedValue(new Error("patch missing"));
+    const w = new FieldNotesWriter(file, "001", failExec);
+    await w.writeFull("hi");
+    const diff = await generateDiff("hi\n", "hi there\n");
+    await w.applyDiff(diff);
+    const result = await w.read();
+    expect(result.trim()).toBe("hi there");
+  });
+
+  it("throws when diff cannot apply", async () => {
+    const failExec = vi.fn().mockRejectedValue(new Error("patch failed"));
+    const w = new FieldNotesWriter(file, "001", failExec);
+    await w.writeFull("hello\n");
+    const badDiff = "--- a/field-notes.md\n+++ b/field-notes.md\n@@\n-foo\n+bar\n";
+    await expect(w.applyDiff(badDiff)).rejects.toThrow();
   });
 });

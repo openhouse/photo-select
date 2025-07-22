@@ -11,3 +11,11 @@ The `--field-notes` flag enables a lightweight notebook that evolves alongside e
 5. When more than three inline images (`![]()`) appear in a single entry a warning is appended so the notes remain compact.
 
 Disable the feature by omitting the flag. Each level keeps its own notebook so progress can be reviewed later.
+
+## Historical background
+
+An early Python prototype introduced the two‑pass workflow still used today. The first LLM call returns a `field_notes_diff` alongside minutes and keep/aside decisions. If the diff cannot be applied cleanly a second prompt is issued asking for the full notebook via `field_notes_md`. The current Node implementation mirrors that logic but lives in `FieldNotesWriter` and `orchestrator.js`.
+
+## Migrating legacy notes
+
+Notebooks created by the Python prototype lack headers and automatic links. Run `node scripts/migrate-notes.js <file>` to convert them to the current format. The script rewrites each file using `FieldNotesWriter`, preserving original text while adding timestamps and autolinks.
