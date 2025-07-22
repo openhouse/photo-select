@@ -30,6 +30,7 @@ export default class FieldNotesWriter {
   }
 
   async init() {
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
     try {
       await fs.stat(this.file);
     } catch {
