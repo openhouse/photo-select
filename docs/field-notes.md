@@ -14,7 +14,7 @@ Disable the feature by omitting the flag. Each level keeps its own notebook so p
 
 ## Historical background
 
-An early Python prototype introduced the two‑pass workflow still used today. The first LLM call returns a `field_notes_diff` alongside minutes and keep/aside decisions. If the diff cannot be applied cleanly a second prompt is issued asking for the full notebook via `field_notes_md`. The current Node implementation mirrors that logic but lives in `FieldNotesWriter` and `orchestrator.js`.
+An early Python prototype used diffs to update the notebook. The revised workflow sends **instructions** for how to edit the notes. A second LLM call then applies those steps and returns the complete file through `field_notes_md`. This logic lives in `FieldNotesWriter` and `orchestrator.js`.
 
 ## Migrating legacy notes
 

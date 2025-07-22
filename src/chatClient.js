@@ -374,6 +374,7 @@ export function parseReply(text, allFiles, opts = {}) {
 
   let fieldNotesDiff;
   let fieldNotesMd;
+  let fieldNotesInstructions;
   // Try JSON first
   try {
     const obj = JSON.parse(text);
@@ -382,6 +383,12 @@ export function parseReply(text, allFiles, opts = {}) {
     }
     if (opts.expectFieldNotesMd && typeof obj.field_notes_md === 'string') {
       fieldNotesMd = obj.field_notes_md;
+    }
+    if (
+      opts.expectFieldNotesInstructions &&
+      typeof obj.field_notes_instructions === 'string'
+    ) {
+      fieldNotesInstructions = obj.field_notes_instructions;
     }
 
     const extract = (node) => {
@@ -471,5 +478,6 @@ export function parseReply(text, allFiles, opts = {}) {
     minutes,
     fieldNotesDiff,
     fieldNotesMd,
+    fieldNotesInstructions,
   };
 }

@@ -2,11 +2,11 @@ When field-notes mode is ON, extend the response schema:
 
 {
   …(minutes, decision)…,
-  "field_notes_diff": "<unified diff here>"
+  "field_notes_instructions": "<step-by-step edits>"
 }
 
 Rules:
-1. Only change notebook lines you can justify by looking at today’s images.
+1. Write concise instructions for updating the notebook, justified by today’s images.
 2. Use `[filename.jpg]` links to cite evidence; they will autolink.
 3. If uncertain, insert a "(?)" marker rather than inventing details.
 4. Keep ≤ 3 `![]()` inline embeds per update to stay lightweight.

@@ -202,21 +202,27 @@ export async function triageDirectory({
             console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
             let parsed = parseReply(reply, batch, {
-              expectFieldNotesDiff: !!notesWriter,
+              expectFieldNotesInstructions: !!notesWriter,
             });
-            const { keep, aside, notes, minutes, fieldNotesDiff, fieldNotesMd } =
-              parsed;
-            if (notesWriter && (fieldNotesMd || fieldNotesDiff)) {
+            const {
+              keep,
+              aside,
+              notes,
+              minutes,
+              fieldNotesInstructions,
+              fieldNotesMd,
+            } = parsed;
+            if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
-              } else if (fieldNotesDiff) {
+              } else if (fieldNotesInstructions) {
                 const secondPrompt = await renderTemplate(
                   new URL('../prompts/field_notes_second_pass.hbs', import.meta.url)
                     .pathname,
                   {
                     prompt: basePrompt,
                     existing: notesText,
-                    diff: fieldNotesDiff,
+                    instructions: fieldNotesInstructions,
                   }
                 );
                 const secondId = crypto.randomUUID();
