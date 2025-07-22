@@ -113,15 +113,15 @@ describe("parseReply", () => {
     expect(aside).toContain(files[1]);
   });
 
-  it("extracts field notes diff", () => {
+  it("extracts field note instructions", () => {
     const obj = {
       decision: { keep: [], aside: [] },
-      field_notes_diff: "diff",
+      field_notes_instructions: "Add note",
     };
-    const { fieldNotesDiff } = parseReply(JSON.stringify(obj), files, {
-      expectFieldNotesDiff: true,
+    const { fieldNotesInstructions } = parseReply(JSON.stringify(obj), files, {
+      expectFieldNotesInstructions: true,
     });
-    expect(fieldNotesDiff).toBe("diff");
+    expect(fieldNotesInstructions).toBe("Add note");
   });
 
   it("extracts field notes markdown", () => {
