@@ -1,5 +1,7 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
@@ -8,6 +10,21 @@ import { parseReply } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
+
+const exec = promisify(execFile);
+
+async function ensureGitRepo(dir) {
+  try {
+    await stat(path.join(dir, ".git"));
+  } catch {
+    await exec("git", ["init"], { cwd: dir });
+  }
+}
+
+async function commitFile(repoDir, file, message) {
+  await exec("git", ["add", file], { cwd: repoDir });
+  await exec("git", ["commit", "-m", message], { cwd: repoDir });
+}
 
 function formatDuration(ms) {
   const sec = Math.round(ms / 1000);
@@ -47,6 +64,7 @@ export async function triageDirectory({
   fieldNotes = false,
   verbose = false,
   depth = 0,
+  gitRoot,
 }) {
   if (!provider) {
     const m = await import('./providers/openai.js');
@@ -54,6 +72,11 @@ export async function triageDirectory({
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
+
+  if (!gitRoot) gitRoot = dir;
+  if (fieldNotes && depth === 0) {
+    await ensureGitRepo(gitRoot);
+  }
 
   console.log(`${indent}📁  Scanning ${dir}`);
 
@@ -209,6 +232,9 @@ export async function triageDirectory({
             if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
+                if (parsed.commitMessage) {
+                  await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+                }
               } else if (fieldNotesInstructions) {
                 let secondPrompt = await buildPrompt(promptPath, {
                   curators,
@@ -241,6 +267,9 @@ export async function triageDirectory({
                 parsed = parseReply(second, batch, { expectFieldNotesMd: true });
                 if (parsed.fieldNotesMd) {
                   await notesWriter.writeFull(parsed.fieldNotesMd);
+                  if (parsed.commitMessage) {
+                    await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+                  }
                 }
               }
             }
@@ -308,6 +337,7 @@ export async function triageDirectory({
         parallel,
         fieldNotes,
         depth: depth + 1,
+        gitRoot,
       });
     } else {
       let keepCount = 0;
