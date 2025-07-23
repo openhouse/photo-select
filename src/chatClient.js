@@ -375,6 +375,7 @@ export function parseReply(text, allFiles, opts = {}) {
   let fieldNotesDiff;
   let fieldNotesMd;
   let fieldNotesInstructions;
+  let commitMessage;
   // Try JSON first
   try {
     const obj = JSON.parse(text);
@@ -389,6 +390,9 @@ export function parseReply(text, allFiles, opts = {}) {
       typeof obj.field_notes_instructions === 'string'
     ) {
       fieldNotesInstructions = obj.field_notes_instructions;
+    }
+    if (typeof obj.commit_message === 'string') {
+      commitMessage = obj.commit_message.trim();
     }
 
     const extract = (node) => {
@@ -479,5 +483,6 @@ export function parseReply(text, allFiles, opts = {}) {
     fieldNotesDiff,
     fieldNotesMd,
     fieldNotesInstructions,
+    commitMessage,
   };
 }

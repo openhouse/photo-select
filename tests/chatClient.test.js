@@ -131,6 +131,14 @@ describe("parseReply", () => {
     });
     expect(fieldNotesMd).toBe("notes");
   });
+
+  it("extracts commit message", () => {
+    const obj = { field_notes_md: "notes", commit_message: "Add note" };
+    const { commitMessage } = parseReply(JSON.stringify(obj), files, {
+      expectFieldNotesMd: true,
+    });
+    expect(commitMessage).toBe("Add note");
+  });
 });
 
 /** Verify images are labelled in messages */

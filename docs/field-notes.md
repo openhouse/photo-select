@@ -10,6 +10,7 @@ The `--field-notes` flag enables a lightweight notebook that evolves alongside e
 4. Bare filenames such as `DSCF0001.jpg` automatically link to images in the same directory.
 5. When more than three inline images (`![]()`) appear in a single entry a warning is appended so the notes remain compact.
 6. Include a brief description when linking or embedding images, e.g. `[cube overview](DSCF0001.jpg)` or `![cube overview](DSCF0001.jpg)`. The curatorial template now requires alt‑text for every reference.
+7. If the target directory lacks a `.git` repository one is initialized automatically. Updates from the second pass are committed with the curator-provided message.
 
 Disable the feature by omitting the flag. Each level keeps its own notebook so progress can be reviewed later.
 
