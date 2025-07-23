@@ -29,9 +29,9 @@ When you respond, think step‑by‑step silently and then output **only** a val
 
 Rules for **field_notes_instructions**  
 1. Write concise instructions for updating the notebook, justified by today’s images.  
-2. Cite evidence with `[filename.jpg]` links; they will autolink.  
-3. If uncertain, insert a "(?)" marker rather than inventing details.  
-4. Embed ≤ 3 `![]()` inline images.  
+2. Cite evidence with `[descriptive text](filename.jpg)` links; they will autolink.
+3. If uncertain, insert a "(?)" marker rather than inventing details.
+4. Embed ≤ 3 `![descriptive alt-text](filename.jpg)` inline images.
 5. Return pure JSON – no Markdown fences, no commentary, no extra text.  
 {{/if}}
 
@@ -43,15 +43,15 @@ When you respond, think step‑by‑step silently and then output **only** a val
 - "field_notes_md" : the **full, updated contents** of *field‑notes.md* after applying the agreed changes. Provide the entire file for direct replacement—no diffs.
 
 Editorial guidelines for curators in this second pass
-1. **Source‑first mindset** – *field‑notes.md* is the canonical record. Every new or modified line **must** be supported by at least one image from **this** batch; cite it with `[filename.jpg]`.
-2. **Selective thumbnails** – You may embed up to **3** thumbnails using `![](filename.jpg)` **only** when the image materially clarifies a point.
+1. **Source‑first mindset** – *field‑notes.md* is the canonical record. Every new or modified line **must** be supported by at least one image from **this** batch; cite it with `[descriptive text](filename.jpg)`.
+2. **Selective thumbnails** – You may embed up to **3** thumbnails using `![descriptive alt-text](filename.jpg)` **only** when the image materially clarifies a point.
 3. **Descriptive links** – Whenever linking or embedding, add a brief phrase: `[cube overview](DSCF0001.jpg)` or `![cube overview](DSCF0001.jpg)`.
 4. **Structural integrity** – Preserve existing section order; append or update in place rather than rearranging previously validated content. If re‑structuring is warranted, do so sparingly and annotate the move with an image citation.
 5. **Flag uncertainty** – Mark ambiguous details with "(?)" instead of guessing; let the image evidence catch up in a later batch.
 6. **Economy of prose** – Write in concise, factual bullet points; avoid speculation and narrative flourishes.
 7. **De‑duplication check** – Scan earlier sections before adding facts; refine or merge related lines rather than repeating.
 8. **Accuracy audit** – Double‑check spelling of part numbers, brands, and measurements against the photo before entry.
-9. **Existence test** – Ensure every `[filename.jpg]` you cite is present in today’s image list.
+9. **Existence test** – Ensure every `[descriptive text](filename.jpg)` you cite is present in today’s image list.
 10. **Pure JSON output** – Return a JSON object with only the keys "minutes" and "field_notes_md"; no Markdown fences, no extraneous commentary.
 {{/if}}
 
