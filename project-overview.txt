@@ -1576,6 +1576,9 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 | `{{images}}`     | runtime file scan | ✓                         |
 | `{{context}}`    | `--context` file  | optional                  |
 | `{{fieldNotes}}` | prior notebook    | when `--field-notes` flag |
+| `{{fieldNotesPrev}}` | previous notebook version | second pass |
+| `{{fieldNotesPrev2}}` | version before that | second pass |
+| `{{commitMessages}}` | git commit messages | second pass |
 
 ---
 

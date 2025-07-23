@@ -26,6 +26,45 @@ async function commitFile(repoDir, file, message) {
   await exec("git", ["commit", "-m", message], { cwd: repoDir });
 }
 
+async function getRevisionHistory(repoDir, file, count = 2) {
+  try {
+    const rel = path.relative(repoDir, file);
+    const { stdout } = await exec(
+      "git",
+      ["log", "--format=%H", "--follow", "--", rel],
+      { cwd: repoDir }
+    );
+    const hashes = stdout.trim().split("\n").filter(Boolean);
+    const versions = [];
+    for (let i = 1; i <= count && i < hashes.length; i++) {
+      const sha = hashes[i];
+      const { stdout: content } = await exec(
+        "git",
+        ["show", `${sha}:${rel}`],
+        { cwd: repoDir }
+      );
+      versions.push(content.trim());
+    }
+    return versions;
+  } catch {
+    return [];
+  }
+}
+
+async function getCommitMessages(repoDir, file) {
+  try {
+    const rel = path.relative(repoDir, file);
+    const { stdout } = await exec(
+      "git",
+      ["log", "--format=%s", "--follow", "--", rel],
+      { cwd: repoDir }
+    );
+    return stdout.trim().split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function formatDuration(ms) {
   const sec = Math.round(ms / 1000);
   const h = Math.floor(sec / 3600);
@@ -236,11 +275,23 @@ export async function triageDirectory({
                   await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
                 }
               } else if (fieldNotesInstructions) {
+                const [prev1 = "", prev2 = ""] = await getRevisionHistory(
+                  gitRoot,
+                  notesWriter.file,
+                  2
+                );
+                const commitMsgs = await getCommitMessages(
+                  gitRoot,
+                  notesWriter.file
+                );
                 let secondPrompt = await buildPrompt(promptPath, {
                   curators,
                   contextPath,
                   images: batch,
                   fieldNotes: notesText,
+                  fieldNotesPrev: prev1,
+                  fieldNotesPrev2: prev2,
+                  commitMessages: commitMsgs,
                   hasFieldNotes: !!notesWriter,
                   isSecondPass: true,
                 });

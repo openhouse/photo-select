@@ -19,6 +19,9 @@ export async function buildPrompt(
     images = [],
     contextPath,
     fieldNotes,
+    fieldNotesPrev,
+    fieldNotesPrev2,
+    commitMessages,
     hasFieldNotes = false,
     isSecondPass = false,
   }
@@ -31,6 +34,9 @@ export async function buildPrompt(
     images: images.map((f) => path.basename(f)),
     context,
     fieldNotes,
+    fieldNotesPrev,
+    fieldNotesPrev2,
+    commitMessages,
     hasFieldNotes,
     isSecondPass,
   });

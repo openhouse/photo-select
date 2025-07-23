@@ -107,6 +107,7 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 
 When enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message.
+During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
 
 See [docs/field-notes.md](docs/field-notes.md) for a description of how the
 notebook system works.
