@@ -17,6 +17,22 @@ Background for today's review:
 Field‑notes snapshot prior to this batch:
 {{fieldNotes}}
 {{/if}}
+{{#if isSecondPass}}
+{{#if fieldNotesPrev}}
+Previous revision:
+{{fieldNotesPrev}}
+{{/if}}
+{{#if fieldNotesPrev2}}
+Earlier revision:
+{{fieldNotesPrev2}}
+{{/if}}
+{{#if commitMessages}}
+Git commit messages for this level:
+{{#each commitMessages}}
+- {{this}}
+{{/each}}
+{{/if}}
+{{/if}}
 
 {{!-- ──────────────── PASS‑SPECIFIC INSTRUCTIONS ──────────────── --}}
 
@@ -54,6 +70,7 @@ Editorial guidelines for curators in this second pass
 8. **Accuracy audit** – Double‑check spelling of part numbers, brands, and measurements against the photo before entry.
 9. **Existence test** – Ensure every `[descriptive text](filename.jpg)` you cite is present in today’s image list.
 10. **Pure JSON output** – Return a JSON object with only the keys "minutes" and "field_notes_md"; no Markdown fences, no extraneous commentary.
+11. **Self-contained record** – Only the updated file will persist. Summarise any needed context from the history here.
 {{/if}}
 
 {{/unless}}
