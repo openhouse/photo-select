@@ -66,65 +66,72 @@ These rules apply to every curator pass that occurs **after** an image‑batch h
 One pass = one Git commit; most commits should touch ≤ 50 lines.
 
 ────────────────────────────────────────────────────────────────────────
-1. SOURCE‑FIRST EVIDENCE
+1. SOURCE‑FIRST
    • Every new or modified line **must** cite ≥ 1 photo from this batch:  
      ─ inline link …… [text](IMG_1234.jpg)  
      ─ or thumbnail … ![text](IMG_1234.jpg)  
    • If no supporting image exists yet, write “(img ?)” and place the fact
      under **Outstanding Unknowns** instead of the main narrative.
 
-2. THUMBNAIL BUDGET  (max 3 embedded images)
-   • Embed only when the picture explains something prose cannot.  
-   • To add a 4th, first demote an older thumbnail → plain link.  
-   • Recommended file size < 80 kB each.
+2. THUMBNAIL BUDGET (max 3)
+   • Embed only when the picture explains something prose cannot.
+   • To add a 4th, first demote an older thumb → plain link.
 
 3. SECTION DISCIPLINE
-   • Preserve the current heading hierarchy.  
-   • Append or refine in place—avoid large‑scale re‑ordering.  
-   • If relocation is required, append:  “⟵ moved from §1.4 [link]”.
+   • Preserve the heading hierarchy; append or refine in place.
+   • If relocation is essential, append “⟵ moved from §X.Y [link]”.
 
-4. AMBIGUITY HANDLING
+4. **SCOPE GUARD**
+   • Stick to *photo‑verifiable facts*. Move strategy, finance, or anecdote to a separate memo—*not* this file.
+
+5. AMBIGUITY
    • Unknown value … “(?)”  
    • Approximation … “≈”  
    • Never fabricate data; let the next batch resolve it.
 
-5. ECONOMY OF PROSE
+6. ECONOMY OF PROSE
    • Bullet points, ≤ 25 words.  
    • Begin each bullet with a **type tag** →  _Spec:, Risk:, Action:, Note:_
    • Use nouns & numbers; omit adjectives unless functional (e.g., “hot PSU”).
 
-6. DUPLICATION PASS
+7. DUPLICATION PASS
    • Search before adding; merge or update existing bullets.  
    • If updating, append “(updated)” and a fresh image link.
 
-7. NOMENCLATURE & SPELLING
+8. NOMENCLATURE
    • Copy model/part numbers **exactly** from photo labels.  
    • Brands in **Title Case**; units in SI / IEC (mm, V, A).
 
-8. IMAGE EXISTENCE CHECK
+9. IMAGE EXISTENCE CHECK
    • Before commit: `test -f filename.jpg` (CI will also verify).  
    • Broken links block the merge.
 
-9. SAFETY & RISK FLAGS
+10. SAFETY FLAGS
    • Prefix any safety issue with “❗ ” (trip hazard, exposed mains, etc.).  
    • These are auto‑collected into *risk‑register.md* by CI.
 
-10. COMMIT HEADER & FOOTER
-    • Start file with a 3‑line header:  
-      `Timestamp UTC | Curator Initials | ≤ 60 char summary`  
-    • End file with a fenced “Δ‑Summary” block:  
+11. **HERO SLOT**
+    • Only one “Primary Hero” embed per file.
+    • Swap it **once per curator** per day max; demote the old hero → link.
+
+12. **TABLE HYGIENE**
+    • When editing a table, update *only* the changed rows; maintain
+      column order and trailing pipe.
+
+13. COMMIT HEADER & FOOTER
+    • Header: `Timestamp UTC | Curator Initials | ≤ 60 char summary`
+    • Footer fenced block:
       ```Δ‑Summary
-      + Added: PSU label [IMG_0123.jpg]
-      ~ Updated: Fan spec 🟡→🟢 [IMG_0456.jpg]
-      - Retired: old ceiling‑seam thumb
-      ```  
+      + Added: …
+      ~ Updated: …
+      - Retired: …
+      ```
 
-11. PEER REVIEW
-    • A second curator must approve in GitHub before merge to *main*.  
-    • “Approve” = evidence links valid, style rules followed.
+14. PEER REVIEW
+    • A second curator must “Approve” before merge to *main*.
 
-12. CHANGE‑SIZE GUARD
-    • > 100 changed lines?  Split into logical commits.
+15. CHANGE‑SIZE GUARD
+    • > 100 changed lines? Split into logical commits.
 ────────────────────────────────────────────────────────────────────────
 {{/if}}
 

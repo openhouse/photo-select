@@ -87,6 +87,14 @@ The script automatically:
 3. Sets `--dir` to your current working directory unless you specify it
    explicitly.
 
+### demote-thumb.js
+
+Run `node scripts/demote-thumb.js <file> <image>` to convert an embedded
+thumbnail to a plain link inside a Markdown file. The tool also appends
+`~ Demoted: <image>` to the `Δ‑Summary` block, creating it if missing.
+
+This helps you stay within the three‑thumbnail budget when curating notes.
+
 All CLI flags—including `--api-key`, `--model`, and `--no-recurse`—can be passed
 through to the script unchanged.
 
