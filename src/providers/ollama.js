@@ -38,7 +38,11 @@ export default class OllamaProvider {
         const flatMessages = [system, { role: 'user', content: textParts.join('\n') }];
         onProgress('request');
         const params = { model, messages: flatMessages, images: imageData, stream: false };
-        if (OLLAMA_FORMAT) {
+
+        // Ollama vision models fail if `format:"json"` is combined with images.
+        // Only request JSON mode when no image data is present so text-only
+        // conversations still benefit from structured output.
+        if (OLLAMA_FORMAT && imageData.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
         const res = await fetch(`${BASE_URL}/api/chat`, {
