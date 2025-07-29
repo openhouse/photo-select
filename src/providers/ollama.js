@@ -53,10 +53,12 @@ export default class OllamaProvider {
           },
         ];
         onProgress('request');
+        // Attach images to the single user message per Ollama API
+        flatMessages[0].images = imageData;
+
         const params = {
           model,
           messages: flatMessages,
-          images: imageData,
           stream: false,
           num_predict: OLLAMA_NUM_PREDICT,
         };
