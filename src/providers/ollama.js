@@ -1,4 +1,4 @@
-import { buildMessages } from '../chatClient.js';
+import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
@@ -8,6 +8,11 @@ const OLLAMA_FORMAT =
   process.env.PHOTO_SELECT_OLLAMA_FORMAT === ''
     ? null
     : process.env.PHOTO_SELECT_OLLAMA_FORMAT || 'json';
+// default to a long response similar to OpenAI's 4096 token cap
+const OLLAMA_NUM_PREDICT = Number.parseInt(
+  process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
+  10
+) || MAX_RESPONSE_TOKENS;
 
 export default class OllamaProvider {
   async chat({ prompt, images, model, curators = [], maxRetries = 3, onProgress = () => {} }) {
@@ -48,7 +53,13 @@ export default class OllamaProvider {
           },
         ];
         onProgress('request');
-        const params = { model, messages: flatMessages, images: imageData, stream: false };
+        const params = {
+          model,
+          messages: flatMessages,
+          images: imageData,
+          stream: false,
+          num_predict: OLLAMA_NUM_PREDICT,
+        };
 
         // Ollama vision models fail if `format:"json"` is combined with images.
         // Only request JSON mode when no image data is present so text-only
