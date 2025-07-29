@@ -27,9 +27,16 @@ export default class OllamaProvider {
           body: JSON.stringify(params),
         });
         if (res.status === 503) throw new Error('service unavailable');
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+          const msg = data.error || `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        if (!data.message?.content) {
+          throw new Error('empty response');
+        }
         onProgress('done');
-        return data.message?.content || '';
+        return data.message.content;
       } catch (err) {
         if (attempt >= maxRetries) throw err;
         attempt += 1;
