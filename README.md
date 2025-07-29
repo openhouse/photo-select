@@ -153,6 +153,16 @@ Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
 The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
 to override this value if your environment needs a different window.
 
+### JSON-only replies from Ollama
+
+The Ollama provider now defaults to requesting JSON responses for reliable
+parsing. Set `PHOTO_SELECT_OLLAMA_FORMAT` to override the `format` parameter or
+leave it empty to disable.
+
+```bash
+export PHOTO_SELECT_OLLAMA_FORMAT=""  # omit format entirely
+```
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
