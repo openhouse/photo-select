@@ -35,7 +35,19 @@ export default class OllamaProvider {
         } else {
           textParts.push(String(user.content));
         }
-        const flatMessages = [system, { role: 'user', content: textParts.join('\n') }];
+        // Ollama vision models often ignore the `system` role. Embed the prompt
+        // instructions directly in a single user message so both OpenAI and
+        // Ollama honour the JSON schema.
+        const flatMessages = [
+          {
+            role: 'user',
+            content: [
+              system.content.trim(),
+              '',
+              textParts.join('\n'),
+            ].join('\n'),
+          },
+        ];
         onProgress('request');
         const params = { model, messages: flatMessages, images: imageData, stream: false };
 
