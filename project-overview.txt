@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Tue Jul 29 13:13:42 EDT 2025
+Generated on: Tue Jul 29 14:46:55 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -2760,7 +2760,18 @@ export default class OllamaProvider {
         } else {
           textParts.push(String(user.content));
         }
-        const flatMessages = [system, { role: 'user', content: textParts.join('\n') }];
+        // Ollama vision models may ignore the "system" role. Embed the prompt
+        // instructions into a single user message so every model sees them.
+        const flatMessages = [
+          {
+            role: 'user',
+            content: [
+              system.content.trim(),
+              '',
+              textParts.join('\n'),
+            ].join('\n'),
+          },
+        ];
         onProgress('request');
         const params = { model, messages: flatMessages, images: imageData, stream: false };
 
@@ -3598,22 +3609,22 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Tue Jul 29 13:13:44 EDT 2025
-13:13  up 2 days,  1:04, 12 users, load averages: 2.60 2.86 3.16
+Tue Jul 29 14:46:57 EDT 2025
+14:46  up 2 days,  2:37, 12 users, load averages: 2.94 5.47 5.71
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi    65Gi    18%    425k  687M    0%   /
-devfs            226Ki   226Ki     0Bi   100%     780     0  100%   /dev
-/dev/disk3s6     7.3Ti   1.0Gi    65Gi     2%       1  687M    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi    65Gi    17%    1.8k  687M    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   685Mi    65Gi     2%     329  687M    0%   /System/Volumes/Update
+/dev/disk3s1s1   7.3Ti    14Gi    65Gi    18%    425k  681M    0%   /
+devfs            226Ki   226Ki     0Bi   100%     781     0  100%   /dev
+/dev/disk3s6     7.3Ti   1.0Gi    65Gi     2%       1  681M    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi    65Gi    17%    1.8k  681M    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   685Mi    65Gi     2%     329  681M    0%   /System/Volumes/Update
 /dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   7.2Ti    65Gi   100%    6.3M  687M    1%   /System/Volumes/Data
+/dev/disk3s5     7.3Ti   7.2Ti    65Gi   100%    6.3M  681M    1%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk6s1     8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
 /dev/disk8s1      18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
@@ -3621,7 +3632,7 @@ map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volu
 /dev/disk12s1     18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
 /dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
 /dev/disk4s1      30Gi    18Gi    12Gi    60%       0     0     -   /Volumes/DR-70D
-/dev/disk3s1     7.3Ti    14Gi    65Gi    18%    426k  687M    0%   /System/Volumes/Update/mnt1
+/dev/disk3s1     7.3Ti    14Gi    65Gi    18%    426k  681M    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -4617,7 +4628,7 @@ PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/
 ### Ollama Models
 ```
 NAME                  ID              SIZE      MODIFIED     
-qwen2.5vl:72b         05ea68274581    48 GB     14 hours ago    
+qwen2.5vl:72b         05ea68274581    48 GB     15 hours ago    
 r1-1776:70b           140ea940f21d    42 GB     4 months ago    
 deepseek-r1:14b       ea35dfe18182    9.0 GB    5 months ago    
 deepseek-r1:8b        28f8fd6cdc67    4.9 GB    5 months ago    
