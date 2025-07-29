@@ -16,8 +16,28 @@ export default class OllamaProvider {
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
+        // Ollama's chat endpoint expects string content and a separate
+        // `images` array. Flatten any multipart content and extract the
+        // base64 images from the OpenAI-style structure produced by
+        // `buildMessages`.
+        const [system, user] = messages;
+        const textParts = [];
+        const imageData = [];
+        if (Array.isArray(user.content)) {
+          for (const part of user.content) {
+            if (part.type === 'text') textParts.push(part.text);
+            if (part.type === 'image_url' && part.image_url?.url) {
+              const url = part.image_url.url;
+              const match = url.match(/^data:image\/\w+;base64,(.*)$/);
+              imageData.push(match ? match[1] : url);
+            }
+          }
+        } else {
+          textParts.push(String(user.content));
+        }
+        const flatMessages = [system, { role: 'user', content: textParts.join('\n') }];
         onProgress('request');
-        const params = { model, messages, stream: false };
+        const params = { model, messages: flatMessages, images: imageData, stream: false };
         if (OLLAMA_FORMAT) {
           params.format = OLLAMA_FORMAT;
         }
