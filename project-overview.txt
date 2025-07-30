@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Tue Jul 29 17:22:43 EDT 2025
+Generated on: Wed Jul 30 08:59:47 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -55,9 +55,10 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── chatClient.test.js
     ├── fieldNotesWriter.test.js
     ├── imageSelector.test.js
+    ├── ollamaProvider.test.js
     └── orchestrator.test.js
 
-10 directories, 37 files
+10 directories, 38 files
 ```
 
 ---
@@ -559,6 +560,48 @@ describe("pickRandom", () => {
 });
 ```
 
+### File: ./tests/ollamaProvider.test.js
+```
+import { describe, it, expect, vi } from 'vitest';
+import OllamaProvider from '../src/providers/ollama.js';
+
+vi.mock('../src/chatClient.js', () => ({
+  buildMessages: vi.fn(async () => ({
+    messages: [
+      { role: 'system', content: 'sys' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'info' },
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/jpeg;base64,abc' },
+          },
+        ],
+      },
+    ],
+  })),
+  MAX_RESPONSE_TOKENS: 128,
+}));
+
+vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
+
+describe('OllamaProvider', () => {
+  it('includes images within the user message', async () => {
+    const provider = new OllamaProvider();
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ message: { content: 'ok' } }),
+    }));
+    await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[1].images).toEqual(['abc']);
+    expect(body.images).toBeUndefined();
+  });
+});
+```
+
 ### File: ./tests/fieldNotesWriter.test.js
 ```
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -884,6 +927,7 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
+| `--verbose` | `false` | Print extra logs and save prompts/responses |
 
 When enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message.
 During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
@@ -922,7 +966,9 @@ reduces the chance of retry loops on slow requests.
 
 Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
 The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
-to override this value if your environment needs a different window.
+or `OLLAMA_HTTP_TIMEOUT` to override this value if your environment
+needs a different window. `OLLAMA_HTTP_TIMEOUT` mirrors the official
+Ollama SDK and is respected when using the bundled provider.
 
 ### JSON-only replies from Ollama
 
@@ -936,6 +982,10 @@ export PHOTO_SELECT_OLLAMA_FORMAT=""  # omit format entirely
 
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
 By default it matches the 4096-token limit used for OpenAI.
+
+`PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
+from either provider. The default is 20 minutes. Pass `--verbose` or set
+`PHOTO_SELECT_VERBOSE=1` to print additional debugging output when requests fail.
 
 ### People metadata (optional)
 
@@ -1186,7 +1236,8 @@ Now everything—random choice, conversation, and file moves—happens automatic
     "dotenv": "^16.5.0",
     "handlebars": "^4.7.8",
     "openai": "^4.0.0",
-    "sharp": "^0.34.2"
+    "sharp": "^0.34.2",
+    "undici": "^6.21.3"
   },
   "devDependencies": {
     "vitest": "^1.5.0"
@@ -2728,8 +2779,19 @@ export async function getProvider(name = 'openai') {
 ```
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
+import { Agent } from 'undici';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const DEFAULT_TIMEOUT = 20 * 60 * 1000;
+const TIMEOUT_MS =
+  Number.parseInt(process.env.OLLAMA_HTTP_TIMEOUT, 10) ||
+  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) ||
+  DEFAULT_TIMEOUT;
+const agent = new Agent({
+  connect: { timeout: TIMEOUT_MS },
+  bodyTimeout: TIMEOUT_MS,
+  headersTimeout: TIMEOUT_MS,
+});
 // Allow callers to override the request format, defaulting to JSON for
 // consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
 const OLLAMA_FORMAT =
@@ -2749,10 +2811,9 @@ export default class OllamaProvider {
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
-        // Ollama's chat endpoint expects string content and a separate
-        // `images` array. Flatten any multipart content and extract the
-        // base64 images from the OpenAI-style structure produced by
-        // `buildMessages`.
+        // Extract base64 strings from OpenAI-style content parts and
+        // attach them to the original user message rather than flattening
+        // everything into a single block.
         const [system, user] = messages;
         const textParts = [];
         const imageData = [];
@@ -2768,23 +2829,14 @@ export default class OllamaProvider {
         } else {
           textParts.push(String(user.content));
         }
-        // Ollama vision models may ignore the "system" role. Embed the prompt
-        // instructions into a single user message so every model sees them.
-        const flatMessages = [
-          {
-            role: 'user',
-            content: [
-              system.content.trim(),
-              '',
-              textParts.join('\n'),
-            ].join('\n'),
-          },
-        ];
+        user.content = textParts.join('\n');
+        if (imageData.length) user.images = imageData;
+        const finalMessages = [system, user];
         onProgress('request');
+
         const params = {
           model,
-          messages: flatMessages,
-          images: imageData,
+          messages: finalMessages,
           stream: false,
           num_predict: OLLAMA_NUM_PREDICT,
         };
@@ -2795,11 +2847,17 @@ export default class OllamaProvider {
         if (OLLAMA_FORMAT && imageData.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const res = await fetch(`${BASE_URL}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
+          signal: controller.signal,
+          timeout: TIMEOUT_MS,
+          dispatcher: agent,
         });
+        clearTimeout(timer);
         if (res.status === 503) throw new Error('service unavailable');
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.error) {
@@ -2812,6 +2870,9 @@ export default class OllamaProvider {
         onProgress('done');
         return data.message.content;
       } catch (err) {
+        if (process.env.PHOTO_SELECT_VERBOSE) {
+          console.error('ollama fetch failure:', err);
+        }
         if (attempt >= maxRetries) throw err;
         attempt += 1;
         const wait = 2 ** attempt * 1000;
@@ -2902,6 +2963,10 @@ const {
   verbose,
   ollamaBaseUrl,
 } = program.opts();
+
+if (verbose) {
+  process.env.PHOTO_SELECT_VERBOSE = '1';
+}
 
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
@@ -3623,30 +3688,30 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Tue Jul 29 17:22:47 EDT 2025
-17:22  up 2 days,  5:13, 14 users, load averages: 2.49 3.81 4.21
+Wed Jul 30 08:59:50 EDT 2025
+ 8:59  up 2 days, 20:50, 14 users, load averages: 1.98 3.22 6.33
 ```
 
 ### Disk Usage
 ```
-Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi    11Gi    56%    425k  117M    0%   /
-devfs            227Ki   227Ki     0Bi   100%     784     0  100%   /dev
-/dev/disk3s6     7.3Ti   1.0Gi    11Gi     9%       1  117M    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi    11Gi    55%    1.8k  117M    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   685Mi    11Gi     6%     329  117M    0%   /System/Volumes/Update
-/dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
-/dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
-/dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   7.2Ti    11Gi   100%    6.3M  117M    5%   /System/Volumes/Data
-map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
-/dev/disk6s1     8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
-/dev/disk8s1      18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
-/dev/disk10s1    8.4Gi   8.1Gi   248Mi    98%      13  2.5M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-F5C6F012-5536-4988-8A2F-A3A204D4ABFE
-/dev/disk12s1     18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
-/dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
-/dev/disk4s1      30Gi    18Gi    12Gi    60%       0     0     -   /Volumes/DR-70D
-/dev/disk3s1     7.3Ti    14Gi    11Gi    56%    426k  117M    0%   /System/Volumes/Update/mnt1
+Filesystem                           Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s1s1                      7.3Ti    14Gi    12Gi    54%    425k  124M    0%   /
+devfs                               224Ki   224Ki     0Bi   100%     776     0  100%   /dev
+/dev/disk3s6                        7.3Ti   1.0Gi    12Gi     8%       1  124M    0%   /System/Volumes/VM
+/dev/disk3s2                        7.3Ti    13Gi    12Gi    53%    1.8k  124M    0%   /System/Volumes/Preboot
+/dev/disk3s4                        7.3Ti   684Mi    12Gi     6%     329  124M    0%   /System/Volumes/Update
+/dev/disk1s2                        500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
+/dev/disk1s1                        500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
+/dev/disk1s3                        500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
+/dev/disk3s5                        7.3Ti   7.2Ti    12Gi   100%    6.3M  124M    5%   /System/Volumes/Data
+map auto_home                         0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
+/dev/disk6s1                        8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
+/dev/disk8s1                         18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
+/dev/disk10s1                       8.4Gi   8.1Gi   248Mi    98%      13  2.5M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-F5C6F012-5536-4988-8A2F-A3A204D4ABFE
+/dev/disk12s1                        18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
+/dev/disk2s1                        5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
+/Applications/Audible.app/Wrapper   7.3Ti   7.2Ti    12Gi   100%    6.3M  131M    5%   /private/var/folders/yh/6tlwwnn50zdf84ttzgsxb0tw0000gn/X/FF5D994C-669B-5D66-A07F-3B37DAFA8FE8
+/dev/disk3s1                        7.3Ti    14Gi    12Gi    54%    426k  124M    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -4636,22 +4701,22 @@ CONDA_PROMPT_MODIFIER=(base)
 CONDA_SHLVL=1
 CONDA_PYTHON_EXE=/opt/anaconda3/bin/python
 CONDA_DEFAULT_ENV=base
-PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/jburkart/.nvm/versions/node/v23.8.0/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/Apple/usr/bin:/Applications/iTerm.app/Contents/Resources/utilities
+PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/jburkart/.nvm/versions/node/v20.19.2/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/Apple/usr/bin:/Applications/iTerm.app/Contents/Resources/utilities
 ```
 
 ### Ollama Models
 ```
-NAME                   ID              SIZE      MODIFIED       
-llama3.2-vision:90b    bee2a956f3a8    54 GB     12 minutes ago    
-qwen2.5vl:72b          05ea68274581    48 GB     18 hours ago      
-r1-1776:70b            140ea940f21d    42 GB     4 months ago      
-deepseek-r1:14b        ea35dfe18182    9.0 GB    5 months ago      
-deepseek-r1:8b         28f8fd6cdc67    4.9 GB    5 months ago      
-deepseek-r1:7b         0a8c26691023    4.7 GB    5 months ago      
-deepseek-r1:1.5b       a42b25d8c10a    1.1 GB    5 months ago      
-deepseek-r1:70b        0c1615a8ca32    42 GB     5 months ago      
-deepseek-r1:32b        38056bbcbb2d    19 GB     5 months ago      
-deepseek-r1:latest     0a8c26691023    4.7 GB    5 months ago      
+NAME                   ID              SIZE      MODIFIED     
+llama3.2-vision:90b    bee2a956f3a8    54 GB     16 hours ago    
+qwen2.5vl:72b          05ea68274581    48 GB     34 hours ago    
+r1-1776:70b            140ea940f21d    42 GB     4 months ago    
+deepseek-r1:14b        ea35dfe18182    9.0 GB    5 months ago    
+deepseek-r1:8b         28f8fd6cdc67    4.9 GB    5 months ago    
+deepseek-r1:7b         0a8c26691023    4.7 GB    5 months ago    
+deepseek-r1:1.5b       a42b25d8c10a    1.1 GB    5 months ago    
+deepseek-r1:70b        0c1615a8ca32    42 GB     5 months ago    
+deepseek-r1:32b        38056bbcbb2d    19 GB     5 months ago    
+deepseek-r1:latest     0a8c26691023    4.7 GB    5 months ago    
 ```
 
 Overview generation complete. The file 'project-overview.txt' has been created.
