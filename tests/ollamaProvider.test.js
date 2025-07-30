@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
 import OllamaProvider from '../src/providers/ollama.js';
 
+let chatMock;
+vi.hoisted(() => {
+  globalThis.__chatMock = vi.fn(async () => ({ message: { content: 'ok' } }));
+});
+
+vi.mock('ollama', () => ({
+  Ollama: vi.fn(() => ({ chat: globalThis.__chatMock })),
+}));
+
 vi.mock('../src/chatClient.js', () => ({
   buildMessages: vi.fn(async () => ({
     messages: [
@@ -25,23 +34,14 @@ vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
 describe('OllamaProvider', () => {
   it('includes images within the user message', async () => {
     const provider = new OllamaProvider();
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ message: { content: 'ok' } }),
-    }));
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
-    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const body = globalThis.__chatMock.mock.calls[0][0];
     expect(body.messages).toHaveLength(2);
-    expect(body.messages[1].images).toEqual(['abc']);
-    expect(body.images).toBeUndefined();
+    expect(body.messages[1].images).toEqual(['img.jpg']);
   });
 
   it('saves the request payload when provided', async () => {
     const provider = new OllamaProvider();
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ message: { content: 'ok' } }),
-    }));
     const saver = vi.fn();
     await provider.chat({
       prompt: 'p',
