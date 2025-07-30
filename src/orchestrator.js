@@ -128,6 +128,7 @@ export async function triageDirectory({
   if (verbose) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+    await mkdir(path.join(levelDir, '_payloads'), { recursive: true });
   }
   const failedArchives = [];
   const copyFileSafe = async (
@@ -237,11 +238,23 @@ export async function triageDirectory({
               const pFile = path.join(levelDir, '_prompts', `batch-${idx + 1}-${promptId}.txt`);
               await writeFile(pFile, prompt, 'utf8');
             }
+            const savePayload = verbose
+              ? async (obj) => {
+                  const dir = path.join(levelDir, '_payloads');
+                  await mkdir(dir, { recursive: true });
+                  const file = path.join(
+                    dir,
+                    `batch-${idx + 1}-${promptId}.json`
+                  );
+                  await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                }
+              : undefined;
             const reply = await provider.chat({
               prompt,
               images: batch,
               model,
               curators,
+              savePayload,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
               },
@@ -301,11 +314,23 @@ export async function triageDirectory({
                   const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
                   await writeFile(sp, secondPrompt, 'utf8');
                 }
+                const secondSavePayload = verbose
+                  ? async (obj) => {
+                      const dir = path.join(levelDir, '_payloads');
+                      await mkdir(dir, { recursive: true });
+                      const file = path.join(
+                        dir,
+                        `batch-${idx + 1}-${secondId}-second.json`
+                      );
+                      await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                    }
+                  : undefined;
                 const second = await provider.chat({
                   prompt: secondPrompt,
                   images: batch,
                   model,
                   curators,
+                  savePayload: secondSavePayload,
                   stream: true,
                   onProgress: (stage) => {
                     bar.update(stageMap[stage] || 0, { stage });

@@ -26,7 +26,15 @@ const OLLAMA_NUM_PREDICT = Number.parseInt(
 ) || MAX_RESPONSE_TOKENS;
 
 export default class OllamaProvider {
-  async chat({ prompt, images, model, curators = [], maxRetries = 3, onProgress = () => {} }) {
+  async chat({
+    prompt,
+    images,
+    model,
+    curators = [],
+    maxRetries = 3,
+    onProgress = () => {},
+    savePayload,
+  } = {}) {
     let attempt = 0;
     while (true) {
       try {
@@ -70,6 +78,12 @@ export default class OllamaProvider {
         if (OLLAMA_FORMAT && imageData.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
+
+        // ─── save full payload for debugging ────────────────────────────
+        if (typeof savePayload === 'function') {
+          await savePayload(JSON.parse(JSON.stringify(params)));
+        }
+        // ───────────────────────────────────────────────────────────────
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const res = await fetch(`${BASE_URL}/api/chat`, {
