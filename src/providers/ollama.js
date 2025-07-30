@@ -1,5 +1,6 @@
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
+import { Agent } from 'undici';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
@@ -7,6 +8,11 @@ const TIMEOUT_MS =
   Number.parseInt(process.env.OLLAMA_HTTP_TIMEOUT, 10) ||
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) ||
   DEFAULT_TIMEOUT;
+const agent = new Agent({
+  connect: { timeout: TIMEOUT_MS },
+  bodyTimeout: TIMEOUT_MS,
+  headersTimeout: TIMEOUT_MS,
+});
 // Allow callers to override the request format, defaulting to JSON for
 // consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
 const OLLAMA_FORMAT =
@@ -70,6 +76,7 @@ export default class OllamaProvider {
           body: JSON.stringify(params),
           signal: controller.signal,
           timeout: TIMEOUT_MS,
+          dispatcher: agent,
         });
         clearTimeout(timer);
         if (res.status === 503) throw new Error('service unavailable');
