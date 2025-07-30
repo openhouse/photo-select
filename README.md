@@ -113,6 +113,7 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
+| `--verbose` | `false` | Print extra logs and save prompts/responses |
 
 When enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message.
 During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
@@ -151,7 +152,9 @@ reduces the chance of retry loops on slow requests.
 
 Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
 The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
-to override this value if your environment needs a different window.
+or `OLLAMA_HTTP_TIMEOUT` to override this value if your environment
+needs a different window. `OLLAMA_HTTP_TIMEOUT` mirrors the official
+Ollama SDK and is respected when using the bundled provider.
 
 ### JSON-only replies from Ollama
 
@@ -167,7 +170,8 @@ Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
 By default it matches the 4096-token limit used for OpenAI.
 
 `PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
-from either provider. The default is 20 minutes.
+from either provider. The default is 20 minutes. Pass `--verbose` or set
+`PHOTO_SELECT_VERBOSE=1` to print additional debugging output when requests fail.
 
 ### People metadata (optional)
 
