@@ -2,6 +2,9 @@ import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const DEFAULT_TIMEOUT = 20 * 60 * 1000;
+const TIMEOUT_MS =
+  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT;
 // Allow callers to override the request format, defaulting to JSON for
 // consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
 const OLLAMA_FORMAT =
@@ -69,11 +72,16 @@ export default class OllamaProvider {
         if (OLLAMA_FORMAT && imageData.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const res = await fetch(`${BASE_URL}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
+          signal: controller.signal,
+          timeout: TIMEOUT_MS,
         });
+        clearTimeout(timer);
         if (res.status === 503) throw new Error('service unavailable');
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.error) {
