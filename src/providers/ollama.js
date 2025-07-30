@@ -1,18 +1,9 @@
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
-import { Agent } from 'undici';
+import { Ollama } from 'ollama';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const DEFAULT_TIMEOUT = 20 * 60 * 1000;
-const TIMEOUT_MS =
-  Number.parseInt(process.env.OLLAMA_HTTP_TIMEOUT, 10) ||
-  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) ||
-  DEFAULT_TIMEOUT;
-const agent = new Agent({
-  connect: { timeout: TIMEOUT_MS },
-  bodyTimeout: TIMEOUT_MS,
-  headersTimeout: TIMEOUT_MS,
-});
+const client = new Ollama({ host: BASE_URL });
 // Allow callers to override the request format, defaulting to JSON for
 // consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
 const OLLAMA_FORMAT =
@@ -40,28 +31,25 @@ export default class OllamaProvider {
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
-        // Extract base64 strings from OpenAI-style content parts and
-        // attach them to the original user message rather than flattening
-        // everything into a single block.
         const [system, user] = messages;
         const injectedText = system.content.trim();
         const textParts = [];
-        const imageData = [];
+        const imagePaths = [];
         if (injectedText) textParts.push(injectedText);
         if (Array.isArray(user.content)) {
+          let idx = 0;
           for (const part of user.content) {
             if (part.type === 'text') textParts.push(part.text);
-            if (part.type === 'image_url' && part.image_url?.url) {
-              const url = part.image_url.url;
-              const match = url.match(/^data:image\/\w+;base64,(.*)$/);
-              imageData.push(match ? match[1] : url);
+            if (part.type === 'image_url') {
+              const file = images[idx++];
+              if (file) imagePaths.push(file);
             }
           }
         } else {
           textParts.push(String(user.content));
         }
         user.content = textParts.join('\n');
-        if (imageData.length) user.images = imageData;
+        if (imagePaths.length) user.images = imagePaths;
         const finalMessages = [system, user];
         onProgress('request');
 
@@ -69,38 +57,21 @@ export default class OllamaProvider {
           model,
           messages: finalMessages,
           stream: false,
-          num_predict: OLLAMA_NUM_PREDICT,
+          options: { num_predict: OLLAMA_NUM_PREDICT },
         };
 
         // Ollama vision models fail if `format:"json"` is combined with images.
         // Only request JSON mode when no image data is present so text-only
         // conversations still benefit from structured output.
-        if (OLLAMA_FORMAT && imageData.length === 0) {
+        if (OLLAMA_FORMAT && imagePaths.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
 
-        // ─── save full payload for debugging ────────────────────────────
         if (typeof savePayload === 'function') {
           await savePayload(JSON.parse(JSON.stringify(params)));
         }
-        // ───────────────────────────────────────────────────────────────
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-        const res = await fetch(`${BASE_URL}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
-          signal: controller.signal,
-          timeout: TIMEOUT_MS,
-          dispatcher: agent,
-        });
-        clearTimeout(timer);
-        if (res.status === 503) throw new Error('service unavailable');
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.error) {
-          const msg = data.error || `HTTP ${res.status}`;
-          throw new Error(msg);
-        }
+
+        const data = await client.chat(params);
         if (!data.message?.content) {
           throw new Error('empty response');
         }

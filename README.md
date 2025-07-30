@@ -70,6 +70,9 @@ photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 
 Run `photo-select --help` to see all options.
 
+The Ollama provider uses the official `ollama` JavaScript library. Images are
+sent by file path so no base64 encoding step is required.
+
 ### photo-select-here.sh
 
 If you keep the repository cloned on your system, the `photo-select-here.sh`
