@@ -21,10 +21,9 @@ export default class OllamaProvider {
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
-        // Ollama's chat endpoint expects string content and a separate
-        // `images` array. Flatten any multipart content and extract the
-        // base64 images from the OpenAI-style structure produced by
-        // `buildMessages`.
+        // Extract base64 strings from OpenAI-style content parts and
+        // attach them to the original user message rather than flattening
+        // everything into a single block.
         const [system, user] = messages;
         const textParts = [];
         const imageData = [];
@@ -40,25 +39,14 @@ export default class OllamaProvider {
         } else {
           textParts.push(String(user.content));
         }
-        // Ollama vision models may ignore the "system" role. Embed the prompt
-        // instructions into a single user message so every model sees them.
-        const flatMessages = [
-          {
-            role: 'user',
-            content: [
-              system.content.trim(),
-              '',
-              textParts.join('\n'),
-            ].join('\n'),
-          },
-        ];
+        user.content = textParts.join('\n');
+        if (imageData.length) user.images = imageData;
+        const finalMessages = [system, user];
         onProgress('request');
-        // Attach images to the single user message per Ollama API
-        flatMessages[0].images = imageData;
 
         const params = {
           model,
-          messages: flatMessages,
+          messages: finalMessages,
           stream: false,
           num_predict: OLLAMA_NUM_PREDICT,
         };
