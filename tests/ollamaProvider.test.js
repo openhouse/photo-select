@@ -31,7 +31,8 @@ describe('OllamaProvider', () => {
     }));
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
     const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(body.messages[0].images).toEqual(['abc']);
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[1].images).toEqual(['abc']);
     expect(body.images).toBeUndefined();
   });
 });
