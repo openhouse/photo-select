@@ -36,8 +36,10 @@ export default class OllamaProvider {
         // attach them to the original user message rather than flattening
         // everything into a single block.
         const [system, user] = messages;
+        const injectedText = system.content.trim();
         const textParts = [];
         const imageData = [];
+        if (injectedText) textParts.push(injectedText);
         if (Array.isArray(user.content)) {
           for (const part of user.content) {
             if (part.type === 'text') textParts.push(part.text);
