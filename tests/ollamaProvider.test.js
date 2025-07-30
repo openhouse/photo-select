@@ -35,4 +35,23 @@ describe('OllamaProvider', () => {
     expect(body.messages[1].images).toEqual(['abc']);
     expect(body.images).toBeUndefined();
   });
+
+  it('saves the request payload when provided', async () => {
+    const provider = new OllamaProvider();
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ message: { content: 'ok' } }),
+    }));
+    const saver = vi.fn();
+    await provider.chat({
+      prompt: 'p',
+      images: ['img.jpg'],
+      model: 'm',
+      savePayload: saver,
+    });
+    expect(saver).toHaveBeenCalled();
+    const payload = saver.mock.calls[0][0];
+    expect(payload).toHaveProperty('model', 'm');
+    expect(payload).toHaveProperty('messages');
+  });
 });
