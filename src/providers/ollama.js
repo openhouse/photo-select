@@ -4,7 +4,9 @@ import { delay } from '../config.js';
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
 const TIMEOUT_MS =
-  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT;
+  Number.parseInt(process.env.OLLAMA_HTTP_TIMEOUT, 10) ||
+  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) ||
+  DEFAULT_TIMEOUT;
 // Allow callers to override the request format, defaulting to JSON for
 // consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
 const OLLAMA_FORMAT =
@@ -82,6 +84,9 @@ export default class OllamaProvider {
         onProgress('done');
         return data.message.content;
       } catch (err) {
+        if (process.env.PHOTO_SELECT_VERBOSE) {
+          console.error('ollama fetch failure:', err);
+        }
         if (attempt >= maxRetries) throw err;
         attempt += 1;
         const wait = 2 ** attempt * 1000;

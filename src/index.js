@@ -65,6 +65,10 @@ const {
   ollamaBaseUrl,
 } = program.opts();
 
+if (verbose) {
+  process.env.PHOTO_SELECT_VERBOSE = '1';
+}
+
 if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
 }
