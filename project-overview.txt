@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Wed Jul 30 08:59:47 EDT 2025
+Generated on: Wed Jul 30 15:52:51 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -598,6 +598,25 @@ describe('OllamaProvider', () => {
     expect(body.messages).toHaveLength(2);
     expect(body.messages[1].images).toEqual(['abc']);
     expect(body.images).toBeUndefined();
+  });
+
+  it('saves the request payload when provided', async () => {
+    const provider = new OllamaProvider();
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ message: { content: 'ok' } }),
+    }));
+    const saver = vi.fn();
+    await provider.chat({
+      prompt: 'p',
+      images: ['img.jpg'],
+      model: 'm',
+      savePayload: saver,
+    });
+    expect(saver).toHaveBeenCalled();
+    const payload = saver.mock.calls[0][0];
+    expect(payload).toHaveProperty('model', 'm');
+    expect(payload).toHaveProperty('messages');
   });
 });
 ```
@@ -2805,7 +2824,15 @@ const OLLAMA_NUM_PREDICT = Number.parseInt(
 ) || MAX_RESPONSE_TOKENS;
 
 export default class OllamaProvider {
-  async chat({ prompt, images, model, curators = [], maxRetries = 3, onProgress = () => {} }) {
+  async chat({
+    prompt,
+    images,
+    model,
+    curators = [],
+    maxRetries = 3,
+    onProgress = () => {},
+    savePayload,
+  } = {}) {
     let attempt = 0;
     while (true) {
       try {
@@ -2815,8 +2842,10 @@ export default class OllamaProvider {
         // attach them to the original user message rather than flattening
         // everything into a single block.
         const [system, user] = messages;
+        const injectedText = system.content.trim();
         const textParts = [];
         const imageData = [];
+        if (injectedText) textParts.push(injectedText);
         if (Array.isArray(user.content)) {
           for (const part of user.content) {
             if (part.type === 'text') textParts.push(part.text);
@@ -2847,6 +2876,12 @@ export default class OllamaProvider {
         if (OLLAMA_FORMAT && imageData.length === 0) {
           params.format = OLLAMA_FORMAT;
         }
+
+        // ─── save full payload for debugging ────────────────────────────
+        if (typeof savePayload === 'function') {
+          await savePayload(JSON.parse(JSON.stringify(params)));
+        }
+        // ───────────────────────────────────────────────────────────────
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const res = await fetch(`${BASE_URL}/api/chat`, {
@@ -3382,6 +3417,7 @@ export async function triageDirectory({
   if (verbose) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+    await mkdir(path.join(levelDir, '_payloads'), { recursive: true });
   }
   const failedArchives = [];
   const copyFileSafe = async (
@@ -3491,11 +3527,23 @@ export async function triageDirectory({
               const pFile = path.join(levelDir, '_prompts', `batch-${idx + 1}-${promptId}.txt`);
               await writeFile(pFile, prompt, 'utf8');
             }
+            const savePayload = verbose
+              ? async (obj) => {
+                  const dir = path.join(levelDir, '_payloads');
+                  await mkdir(dir, { recursive: true });
+                  const file = path.join(
+                    dir,
+                    `batch-${idx + 1}-${promptId}.json`
+                  );
+                  await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                }
+              : undefined;
             const reply = await provider.chat({
               prompt,
               images: batch,
               model,
               curators,
+              savePayload,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
               },
@@ -3555,11 +3603,23 @@ export async function triageDirectory({
                   const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
                   await writeFile(sp, secondPrompt, 'utf8');
                 }
+                const secondSavePayload = verbose
+                  ? async (obj) => {
+                      const dir = path.join(levelDir, '_payloads');
+                      await mkdir(dir, { recursive: true });
+                      const file = path.join(
+                        dir,
+                        `batch-${idx + 1}-${secondId}-second.json`
+                      );
+                      await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                    }
+                  : undefined;
                 const second = await provider.chat({
                   prompt: secondPrompt,
                   images: batch,
                   model,
                   curators,
+                  savePayload: secondSavePayload,
                   stream: true,
                   onProgress: (stage) => {
                     bar.update(stageMap[stage] || 0, { stage });
@@ -3688,22 +3748,22 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Wed Jul 30 08:59:50 EDT 2025
- 8:59  up 2 days, 20:50, 14 users, load averages: 1.98 3.22 6.33
+Wed Jul 30 15:52:53 EDT 2025
+15:52  up 3 days,  3:43, 14 users, load averages: 3.13 3.56 3.72
 ```
 
 ### Disk Usage
 ```
 Filesystem                           Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1                      7.3Ti    14Gi    12Gi    54%    425k  124M    0%   /
+/dev/disk3s1s1                      7.3Ti    14Gi    16Gi    46%    425k  171M    0%   /
 devfs                               224Ki   224Ki     0Bi   100%     776     0  100%   /dev
-/dev/disk3s6                        7.3Ti   1.0Gi    12Gi     8%       1  124M    0%   /System/Volumes/VM
-/dev/disk3s2                        7.3Ti    13Gi    12Gi    53%    1.8k  124M    0%   /System/Volumes/Preboot
-/dev/disk3s4                        7.3Ti   684Mi    12Gi     6%     329  124M    0%   /System/Volumes/Update
+/dev/disk3s6                        7.3Ti   1.0Gi    16Gi     6%       1  171M    0%   /System/Volumes/VM
+/dev/disk3s2                        7.3Ti    13Gi    16Gi    45%    1.8k  171M    0%   /System/Volumes/Preboot
+/dev/disk3s4                        7.3Ti   684Mi    16Gi     4%     329  171M    0%   /System/Volumes/Update
 /dev/disk1s2                        500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1                        500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3                        500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5                        7.3Ti   7.2Ti    12Gi   100%    6.3M  124M    5%   /System/Volumes/Data
+/dev/disk3s5                        7.3Ti   7.2Ti    16Gi   100%    6.3M  171M    4%   /System/Volumes/Data
 map auto_home                         0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk6s1                        8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
 /dev/disk8s1                         18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
@@ -3711,7 +3771,7 @@ map auto_home                         0Bi     0Bi     0Bi   100%       0     0  
 /dev/disk12s1                        18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
 /dev/disk2s1                        5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
 /Applications/Audible.app/Wrapper   7.3Ti   7.2Ti    12Gi   100%    6.3M  131M    5%   /private/var/folders/yh/6tlwwnn50zdf84ttzgsxb0tw0000gn/X/FF5D994C-669B-5D66-A07F-3B37DAFA8FE8
-/dev/disk3s1                        7.3Ti    14Gi    12Gi    54%    426k  124M    0%   /System/Volumes/Update/mnt1
+/dev/disk3s1                        7.3Ti    14Gi    16Gi    46%    426k  171M    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -4707,8 +4767,8 @@ PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/
 ### Ollama Models
 ```
 NAME                   ID              SIZE      MODIFIED     
-llama3.2-vision:90b    bee2a956f3a8    54 GB     16 hours ago    
-qwen2.5vl:72b          05ea68274581    48 GB     34 hours ago    
+llama3.2-vision:90b    bee2a956f3a8    54 GB     23 hours ago    
+qwen2.5vl:72b          05ea68274581    48 GB     41 hours ago    
 r1-1776:70b            140ea940f21d    42 GB     4 months ago    
 deepseek-r1:14b        ea35dfe18182    9.0 GB    5 months ago    
 deepseek-r1:8b         28f8fd6cdc67    4.9 GB    5 months ago    
