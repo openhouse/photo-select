@@ -165,7 +165,8 @@ Both providers generate a JSON schema for each request so vision models return
 typed responses. The environment variables `PHOTO_SELECT_OLLAMA_FORMAT` and
 `PHOTO_SELECT_OPENAI_FORMAT` can override this behaviour and are parsed as JSON
 when the value begins with `{`. Use an empty string to omit the parameter. The
-legacy `"json"` flag remains available for Ollama but can hang with images.
+legacy `"json"` flag is still available for Ollama but is unreliable with
+images; schema-based structured outputs work with vision models.
 
 ```bash
 export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object","properties":{...}}'
@@ -174,7 +175,7 @@ export PHOTO_SELECT_OLLAMA_FORMAT=""
 ```
 
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
-By default it matches the 4096-token limit used for OpenAI.
+By default it roughly matches the 4,096-token output limit of many OpenAI models.
 
 `PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
 from either provider. The default is 20 minutes. Pass `--verbose` or set
