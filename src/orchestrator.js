@@ -254,6 +254,7 @@ export async function triageDirectory({
               images: batch,
               model,
               curators,
+              expectFieldNotesInstructions: !!notesWriter,
               savePayload,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
@@ -330,6 +331,7 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
+                  expectFieldNotesMd: true,
                   savePayload: secondSavePayload,
                   stream: true,
                   onProgress: (stage) => {

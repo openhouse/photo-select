@@ -1,5 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
-import OllamaProvider from '../src/providers/ollama.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+async function loadProvider() {
+  const mod = await import('../src/providers/ollama.js');
+  return mod.default;
+}
 
 let chatMock;
 vi.hoisted(() => {
@@ -32,7 +36,15 @@ vi.mock('../src/chatClient.js', () => ({
 vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
 
 describe('OllamaProvider', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.PHOTO_SELECT_OLLAMA_FORMAT;
+    globalThis.__chatMock.mockClear();
+  });
+
   it('includes images within the user message', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
     const body = globalThis.__chatMock.mock.calls[0][0];
@@ -41,6 +53,8 @@ describe('OllamaProvider', () => {
   });
 
   it('saves the request payload when provided', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     const saver = vi.fn();
     await provider.chat({
@@ -53,5 +67,37 @@ describe('OllamaProvider', () => {
     const payload = saver.mock.calls[0][0];
     expect(payload).toHaveProperty('model', 'm');
     expect(payload).toHaveProperty('messages');
+  });
+
+  it('omits legacy json format when images are included', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body).not.toHaveProperty('format');
+  });
+
+  it('passes schema format even with images', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = '{"type":"object"}';
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body.format).toEqual({ type: 'object' });
+  });
+
+  it('generates schema when no override is set', async () => {
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({
+      prompt: 'p',
+      images: [],
+      model: 'm',
+      expectFieldNotesInstructions: true,
+    });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body.format.properties).toHaveProperty('field_notes_instructions');
+    expect(body.format.properties).toHaveProperty('minutes');
   });
 });
