@@ -1,15 +1,15 @@
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
 import { Ollama } from 'ollama';
+import { buildReplySchema } from '../replySchema.js';
+import { parseFormatEnv } from '../formatOverride.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const client = new Ollama({ host: BASE_URL });
-// Allow callers to override the request format, defaulting to JSON for
-// consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
-const OLLAMA_FORMAT =
-  process.env.PHOTO_SELECT_OLLAMA_FORMAT === ''
-    ? null
-    : process.env.PHOTO_SELECT_OLLAMA_FORMAT || 'json';
+// Check for an environment override. When undefined we generate a schema
+// dynamically for each request. Set the variable to "" to omit the parameter
+// entirely.
+const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
 // default to a long response similar to OpenAI's 4096 token cap
 const OLLAMA_NUM_PREDICT = Number.parseInt(
   process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
@@ -25,6 +25,8 @@ export default class OllamaProvider {
     maxRetries = 3,
     onProgress = () => {},
     savePayload,
+    expectFieldNotesInstructions = false,
+    expectFieldNotesMd = false,
   } = {}) {
     let attempt = 0;
     while (true) {
@@ -60,11 +62,20 @@ export default class OllamaProvider {
           options: { num_predict: OLLAMA_NUM_PREDICT },
         };
 
-        // Ollama vision models fail if `format:"json"` is combined with images.
-        // Only request JSON mode when no image data is present so text-only
-        // conversations still benefit from structured output.
-        if (OLLAMA_FORMAT && imagePaths.length === 0) {
-          params.format = OLLAMA_FORMAT;
+        // Build the request format. If an environment override is not provided
+        // generate a schema that matches the expected reply shape.
+        let format = OLLAMA_FORMAT_OVERRIDE;
+        if (format === undefined) {
+          format = buildReplySchema({
+            instructions: expectFieldNotesInstructions,
+            fullNotes: expectFieldNotesMd,
+          });
+        }
+        if (format !== null) {
+          const isPlainJson = format === 'json';
+          if (!(isPlainJson && imagePaths.length > 0)) {
+            params.format = format;
+          }
         }
 
         if (typeof savePayload === 'function') {

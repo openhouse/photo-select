@@ -221,6 +221,7 @@ export async function chatCompletion({
   curators = [],
   stream = false,
   onProgress = () => {},
+  responseFormat,
 }) {
   const extras = await curatorsFromTags(images);
   const added = extras.filter((n) => !curators.includes(n));
@@ -264,9 +265,12 @@ export async function chatCompletion({
       const baseParams = {
         model,
         messages,
-        // allow ample space for the JSON decision block and minutes
-        response_format: { type: "json_object" },
       };
+      if (responseFormat === undefined) {
+        baseParams.response_format = { type: 'json_object' };
+      } else if (responseFormat !== null) {
+        baseParams.response_format = responseFormat;
+      }
       if (/^o\d/.test(model)) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
       } else {
@@ -318,7 +322,12 @@ export async function chatCompletion({
           model,
           instructions,
           input,
-          text: { format: { type: "json_object" } },
+          text:
+            responseFormat === undefined
+              ? { format: { type: 'json_object' } }
+              : responseFormat === null
+                ? undefined
+                : { format: responseFormat },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;

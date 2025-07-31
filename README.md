@@ -159,14 +159,18 @@ or `OLLAMA_HTTP_TIMEOUT` to override this value if your environment
 needs a different window. `OLLAMA_HTTP_TIMEOUT` mirrors the official
 Ollama SDK and is respected when using the bundled provider.
 
-### JSON-only replies from Ollama
+### Structured outputs and JSON mode
 
-The Ollama provider now defaults to requesting JSON responses for reliable
-parsing. Set `PHOTO_SELECT_OLLAMA_FORMAT` to override the `format` parameter or
-leave it empty to disable.
+Both providers generate a JSON schema for each request so vision models return
+typed responses. The environment variables `PHOTO_SELECT_OLLAMA_FORMAT` and
+`PHOTO_SELECT_OPENAI_FORMAT` can override this behaviour and are parsed as JSON
+when the value begins with `{`. Use an empty string to omit the parameter. The
+legacy `"json"` flag remains available for Ollama but can hang with images.
 
 ```bash
-export PHOTO_SELECT_OLLAMA_FORMAT=""  # omit format entirely
+export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object","properties":{...}}'
+# or disable the parameter entirely
+export PHOTO_SELECT_OLLAMA_FORMAT=""
 ```
 
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
@@ -351,11 +355,17 @@ through that API, so no extra flags are needed.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
 8. Stop when a directory has zero unclassified images.
 
-### JSON mode
+### Structured outputs (OpenAI)
 
-The OpenAI request uses `response_format: { type: "json_object" }` so the
-assistant replies with strict JSON. This avoids needing to strip Markdown
-fences and guarantees parseable output.
+OpenAI requests now include a JSON schema so the API returns typed responses.
+Set `PHOTO_SELECT_OPENAI_FORMAT` to override this or provide an empty string to
+skip the `response_format` parameter entirely.
+
+```bash
+export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'
+export PHOTO_SELECT_OPENAI_FORMAT=""  # disable the parameter
+```
+
 The CLI allows up to 4096 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
 `src/chatClient.js`) so the minutes and JSON decision block are returned in
 full.
