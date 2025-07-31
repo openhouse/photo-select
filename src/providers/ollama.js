@@ -6,11 +6,12 @@ import { parseFormatEnv } from '../formatOverride.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const client = new Ollama({ host: BASE_URL });
-// Check for an environment override. When undefined we generate a schema
+// Check for an environment override. When undefined we generate a JSON schema
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
 const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
-// default to a long response similar to OpenAI's 4096 token cap
+// Default to a long response (~4k tokens) matching the output limit of many
+// OpenAI models.
 const OLLAMA_NUM_PREDICT = Number.parseInt(
   process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
   10
@@ -63,7 +64,9 @@ export default class OllamaProvider {
         };
 
         // Build the request format. If an environment override is not provided
-        // generate a schema that matches the expected reply shape.
+        // generate a structured-output schema matching the expected reply
+        // shape. Legacy "json" mode remains available but is unreliable with
+        // images.
         let format = OLLAMA_FORMAT_OVERRIDE;
         if (format === undefined) {
           format = buildReplySchema({
