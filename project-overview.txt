@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Wed Jul 30 15:52:51 EDT 2025
+Generated on: Wed Jul 30 23:47:58 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -43,6 +43,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   ├── config.js
 │   ├── errorHandler.js
 │   ├── fieldNotesWriter.js
+│   ├── formatOverride.js
 │   ├── imageSelector.js
 │   ├── index.js
 │   ├── orchestrator.js
@@ -50,15 +51,17 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   │   ├── index.js
 │   │   ├── ollama.js
 │   │   └── openai.js
+│   ├── replySchema.js
 │   └── templates.js
 └── tests
     ├── chatClient.test.js
     ├── fieldNotesWriter.test.js
     ├── imageSelector.test.js
     ├── ollamaProvider.test.js
+    ├── openaiProvider.test.js
     └── orchestrator.test.js
 
-10 directories, 38 files
+10 directories, 41 files
 ```
 
 ---
@@ -130,6 +133,61 @@ fi
 ### File: ./tests
 ```
 (File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./tests/openaiProvider.test.js
+```
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+async function loadProvider() {
+  const mod = await import('../src/providers/openai.js');
+  return mod.default;
+}
+
+let callArgs;
+vi.hoisted(() => {
+  globalThis.__chatCompletion = vi.fn(async (opts) => {
+    callArgs = opts;
+    return 'ok';
+  });
+});
+
+vi.mock('../src/chatClient.js', () => ({
+  chatCompletion: globalThis.__chatCompletion,
+}));
+
+describe('OpenAIProvider', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.PHOTO_SELECT_OPENAI_FORMAT;
+    callArgs = undefined;
+  });
+
+  it('generates schema when env is unset', async () => {
+    const OpenAIProvider = await loadProvider();
+    const provider = new OpenAIProvider();
+    await provider.chat({ expectFieldNotesInstructions: true });
+    expect(callArgs.responseFormat.schema.properties).toHaveProperty(
+      'field_notes_instructions'
+    );
+  });
+
+  it('uses override string', async () => {
+    process.env.PHOTO_SELECT_OPENAI_FORMAT = 'json_object';
+    const OpenAIProvider = await loadProvider();
+    const provider = new OpenAIProvider();
+    await provider.chat();
+    expect(callArgs.responseFormat).toEqual({ type: 'json_object' });
+  });
+
+  it('omits parameter when empty', async () => {
+    process.env.PHOTO_SELECT_OPENAI_FORMAT = '';
+    const OpenAIProvider = await loadProvider();
+    const provider = new OpenAIProvider();
+    await provider.chat();
+    expect(callArgs.responseFormat).toBeUndefined();
+  });
+});
 ```
 
 ### File: ./tests/orchestrator.test.js
@@ -562,8 +620,21 @@ describe("pickRandom", () => {
 
 ### File: ./tests/ollamaProvider.test.js
 ```
-import { describe, it, expect, vi } from 'vitest';
-import OllamaProvider from '../src/providers/ollama.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+async function loadProvider() {
+  const mod = await import('../src/providers/ollama.js');
+  return mod.default;
+}
+
+let chatMock;
+vi.hoisted(() => {
+  globalThis.__chatMock = vi.fn(async () => ({ message: { content: 'ok' } }));
+});
+
+vi.mock('ollama', () => ({
+  Ollama: vi.fn(() => ({ chat: globalThis.__chatMock })),
+}));
 
 vi.mock('../src/chatClient.js', () => ({
   buildMessages: vi.fn(async () => ({
@@ -587,25 +658,26 @@ vi.mock('../src/chatClient.js', () => ({
 vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
 
 describe('OllamaProvider', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.PHOTO_SELECT_OLLAMA_FORMAT;
+    globalThis.__chatMock.mockClear();
+  });
+
   it('includes images within the user message', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ message: { content: 'ok' } }),
-    }));
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
-    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const body = globalThis.__chatMock.mock.calls[0][0];
     expect(body.messages).toHaveLength(2);
-    expect(body.messages[1].images).toEqual(['abc']);
-    expect(body.images).toBeUndefined();
+    expect(body.messages[1].images).toEqual(['img.jpg']);
   });
 
   it('saves the request payload when provided', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ message: { content: 'ok' } }),
-    }));
     const saver = vi.fn();
     await provider.chat({
       prompt: 'p',
@@ -617,6 +689,38 @@ describe('OllamaProvider', () => {
     const payload = saver.mock.calls[0][0];
     expect(payload).toHaveProperty('model', 'm');
     expect(payload).toHaveProperty('messages');
+  });
+
+  it('omits legacy json format when images are included', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body).not.toHaveProperty('format');
+  });
+
+  it('passes schema format even with images', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = '{"type":"object"}';
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body.format).toEqual({ type: 'object' });
+  });
+
+  it('generates schema when no override is set', async () => {
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({
+      prompt: 'p',
+      images: [],
+      model: 'm',
+      expectFieldNotesInstructions: true,
+    });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body.format.properties).toHaveProperty('field_notes_instructions');
+    expect(body.format.properties).toHaveProperty('minutes');
   });
 });
 ```
@@ -903,6 +1007,9 @@ photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 
 Run `photo-select --help` to see all options.
 
+The Ollama provider uses the official `ollama` JavaScript library. Images are
+sent by file path so no base64 encoding step is required.
+
 ### photo-select-here.sh
 
 If you keep the repository cloned on your system, the `photo-select-here.sh`
@@ -991,15 +1098,16 @@ Ollama SDK and is respected when using the bundled provider.
 
 ### Structured outputs and JSON mode
 
-Both providers now generate a JSON schema for each request so vision models can
-return typed responses. `PHOTO_SELECT_OLLAMA_FORMAT` and
-`PHOTO_SELECT_OPENAI_FORMAT` override this behaviour and are parsed as JSON when
-the value begins with `{`. Use an empty string to omit the respective parameter.
-The legacy `"json"` flag remains available for Ollama but may hang with images.
+Both providers generate a JSON schema for each request so vision models return
+typed responses. The environment variables `PHOTO_SELECT_OLLAMA_FORMAT` and
+`PHOTO_SELECT_OPENAI_FORMAT` can override this behaviour and are parsed as JSON
+when the value begins with `{`. Use an empty string to omit the parameter. The
+legacy `"json"` flag remains available for Ollama but can hang with images.
 
 ```bash
-export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object"}'
-export PHOTO_SELECT_OLLAMA_FORMAT=""  # disable the parameter
+export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object","properties":{...}}'
+# or disable the parameter entirely
+export PHOTO_SELECT_OLLAMA_FORMAT=""
 ```
 
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
@@ -1187,8 +1295,8 @@ through that API, so no extra flags are needed.
 ### Structured outputs (OpenAI)
 
 OpenAI requests now include a JSON schema so the API returns typed responses.
-Set `PHOTO_SELECT_OPENAI_FORMAT` to override this. Values beginning with `{` are
-parsed as JSON while an empty string omits the parameter entirely.
+Set `PHOTO_SELECT_OPENAI_FORMAT` to override this or provide an empty string to
+skip the `response_format` parameter entirely.
 
 ```bash
 export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'
@@ -1263,6 +1371,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
     "diff": "^8.0.2",
     "dotenv": "^16.5.0",
     "handlebars": "^4.7.8",
+    "ollama": "^0.5.16",
     "openai": "^4.0.0",
     "sharp": "^0.34.2",
     "undici": "^6.21.3"
@@ -2513,6 +2622,7 @@ export async function chatCompletion({
   curators = [],
   stream = false,
   onProgress = () => {},
+  responseFormat,
 }) {
   const extras = await curatorsFromTags(images);
   const added = extras.filter((n) => !curators.includes(n));
@@ -2556,9 +2666,12 @@ export async function chatCompletion({
       const baseParams = {
         model,
         messages,
-        // allow ample space for the JSON decision block and minutes
-        response_format: { type: "json_object" },
       };
+      if (responseFormat === undefined) {
+        baseParams.response_format = { type: 'json_object' };
+      } else if (responseFormat !== null) {
+        baseParams.response_format = responseFormat;
+      }
       if (/^o\d/.test(model)) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
       } else {
@@ -2610,7 +2723,12 @@ export async function chatCompletion({
           model,
           instructions,
           input,
-          text: { format: { type: "json_object" } },
+          text:
+            responseFormat === undefined
+              ? { format: { type: 'json_object' } }
+              : responseFormat === null
+                ? undefined
+                : { format: responseFormat },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
@@ -2780,6 +2898,23 @@ export function parseReply(text, allFiles, opts = {}) {
 }
 ```
 
+### File: ./src/formatOverride.js
+```
+export function parseFormatEnv(varName) {
+  if (Object.prototype.hasOwnProperty.call(process.env, varName)) {
+    const raw = process.env[varName];
+    if (raw === '') return null;
+    try {
+      return /^{/.test(raw.trim()) ? JSON.parse(raw) : raw;
+    } catch {
+      return raw;
+    }
+  }
+  return undefined;
+}
+
+```
+
 ### File: ./src/providers
 ```
 (File type is inode/directory — skipping raw dump.)
@@ -2807,25 +2942,16 @@ export async function getProvider(name = 'openai') {
 ```
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
-import { Agent } from 'undici';
+import { Ollama } from 'ollama';
+import { buildReplySchema } from '../replySchema.js';
+import { parseFormatEnv } from '../formatOverride.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const DEFAULT_TIMEOUT = 20 * 60 * 1000;
-const TIMEOUT_MS =
-  Number.parseInt(process.env.OLLAMA_HTTP_TIMEOUT, 10) ||
-  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) ||
-  DEFAULT_TIMEOUT;
-const agent = new Agent({
-  connect: { timeout: TIMEOUT_MS },
-  bodyTimeout: TIMEOUT_MS,
-  headersTimeout: TIMEOUT_MS,
-});
-// Allow callers to override the request format, defaulting to JSON for
-// consistent parsing. Set PHOTO_SELECT_OLLAMA_FORMAT to "" to omit the param.
-const OLLAMA_FORMAT =
-  process.env.PHOTO_SELECT_OLLAMA_FORMAT === ''
-    ? null
-    : process.env.PHOTO_SELECT_OLLAMA_FORMAT || 'json';
+const client = new Ollama({ host: BASE_URL });
+// Check for an environment override. When undefined we generate a schema
+// dynamically for each request. Set the variable to "" to omit the parameter
+// entirely.
+const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
 // default to a long response similar to OpenAI's 4096 token cap
 const OLLAMA_NUM_PREDICT = Number.parseInt(
   process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
@@ -2841,34 +2967,33 @@ export default class OllamaProvider {
     maxRetries = 3,
     onProgress = () => {},
     savePayload,
+    expectFieldNotesInstructions = false,
+    expectFieldNotesMd = false,
   } = {}) {
     let attempt = 0;
     while (true) {
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
-        // Extract base64 strings from OpenAI-style content parts and
-        // attach them to the original user message rather than flattening
-        // everything into a single block.
         const [system, user] = messages;
         const injectedText = system.content.trim();
         const textParts = [];
-        const imageData = [];
+        const imagePaths = [];
         if (injectedText) textParts.push(injectedText);
         if (Array.isArray(user.content)) {
+          let idx = 0;
           for (const part of user.content) {
             if (part.type === 'text') textParts.push(part.text);
-            if (part.type === 'image_url' && part.image_url?.url) {
-              const url = part.image_url.url;
-              const match = url.match(/^data:image\/\w+;base64,(.*)$/);
-              imageData.push(match ? match[1] : url);
+            if (part.type === 'image_url') {
+              const file = images[idx++];
+              if (file) imagePaths.push(file);
             }
           }
         } else {
           textParts.push(String(user.content));
         }
         user.content = textParts.join('\n');
-        if (imageData.length) user.images = imageData;
+        if (imagePaths.length) user.images = imagePaths;
         const finalMessages = [system, user];
         onProgress('request');
 
@@ -2876,40 +3001,30 @@ export default class OllamaProvider {
           model,
           messages: finalMessages,
           stream: false,
-          num_predict: OLLAMA_NUM_PREDICT,
+          options: { num_predict: OLLAMA_NUM_PREDICT },
         };
 
-        // Skip the legacy "json" flag when images are present. Structured
-        // output schemas work fine with vision models.
-        if (OLLAMA_FORMAT !== null) {
-          const isPlainJson = OLLAMA_FORMAT === 'json';
-          if (!(isPlainJson && imageData.length > 0)) {
-            params.format = OLLAMA_FORMAT;
+        // Build the request format. If an environment override is not provided
+        // generate a schema that matches the expected reply shape.
+        let format = OLLAMA_FORMAT_OVERRIDE;
+        if (format === undefined) {
+          format = buildReplySchema({
+            instructions: expectFieldNotesInstructions,
+            fullNotes: expectFieldNotesMd,
+          });
+        }
+        if (format !== null) {
+          const isPlainJson = format === 'json';
+          if (!(isPlainJson && imagePaths.length > 0)) {
+            params.format = format;
           }
         }
 
-        // ─── save full payload for debugging ────────────────────────────
         if (typeof savePayload === 'function') {
           await savePayload(JSON.parse(JSON.stringify(params)));
         }
-        // ───────────────────────────────────────────────────────────────
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-        const res = await fetch(`${BASE_URL}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(params),
-          signal: controller.signal,
-          timeout: TIMEOUT_MS,
-          dispatcher: agent,
-        });
-        clearTimeout(timer);
-        if (res.status === 503) throw new Error('service unavailable');
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data.error) {
-          const msg = data.error || `HTTP ${res.status}`;
-          throw new Error(msg);
-        }
+
+        const data = await client.chat(params);
         if (!data.message?.content) {
           throw new Error('empty response');
         }
@@ -2933,9 +3048,32 @@ export default class OllamaProvider {
 ### File: ./src/providers/openai.js
 ```
 import { chatCompletion } from '../chatClient.js';
+import { buildReplySchema } from '../replySchema.js';
+import { parseFormatEnv } from '../formatOverride.js';
+
+const OPENAI_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OPENAI_FORMAT');
 
 export default class OpenAIProvider {
-  async chat(opts) {
+  async chat({
+    expectFieldNotesInstructions = false,
+    expectFieldNotesMd = false,
+    ...opts
+  } = {}) {
+    let format = OPENAI_FORMAT_OVERRIDE;
+    if (format === undefined) {
+      format = {
+        type: 'json_object',
+        schema: buildReplySchema({
+          instructions: expectFieldNotesInstructions,
+          fullNotes: expectFieldNotesMd,
+        }),
+      };
+    } else if (typeof format === 'string') {
+      format = { type: format };
+    }
+    if (format !== null) {
+      opts.responseFormat = format;
+    }
     return chatCompletion(opts);
   }
 }
@@ -3184,6 +3322,53 @@ export async function buildPrompt(
   });
 }
 
+```
+
+### File: ./src/replySchema.js
+```
+export function buildReplySchema({ instructions = false, fullNotes = false } = {}) {
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['minutes', 'decision'],
+    properties: {
+      minutes: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['speaker', 'text'],
+          properties: {
+            speaker: { type: 'string' },
+            text: { type: 'string' },
+          },
+        },
+      },
+      decision: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          keep: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+          aside: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+        },
+      },
+    },
+  };
+  if (instructions) {
+    schema.properties.field_notes_instructions = { type: 'string' };
+  }
+  if (fullNotes) {
+    schema.properties.field_notes_md = { type: 'string' };
+    schema.properties.commit_message = { type: 'string' };
+  }
+  return schema;
+}
 ```
 
 ### File: ./src/fieldNotesWriter.js
@@ -3554,6 +3739,7 @@ export async function triageDirectory({
               images: batch,
               model,
               curators,
+              expectFieldNotesInstructions: !!notesWriter,
               savePayload,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
@@ -3630,6 +3816,7 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
+                  expectFieldNotesMd: true,
                   savePayload: secondSavePayload,
                   stream: true,
                   onProgress: (stage) => {
@@ -3759,22 +3946,22 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Wed Jul 30 15:52:53 EDT 2025
-15:52  up 3 days,  3:43, 14 users, load averages: 3.13 3.56 3.72
+Wed Jul 30 23:48:01 EDT 2025
+23:48  up 3 days, 11:39, 14 users, load averages: 5.01 7.93 6.32
 ```
 
 ### Disk Usage
 ```
 Filesystem                           Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1                      7.3Ti    14Gi    16Gi    46%    425k  171M    0%   /
-devfs                               224Ki   224Ki     0Bi   100%     776     0  100%   /dev
-/dev/disk3s6                        7.3Ti   1.0Gi    16Gi     6%       1  171M    0%   /System/Volumes/VM
-/dev/disk3s2                        7.3Ti    13Gi    16Gi    45%    1.8k  171M    0%   /System/Volumes/Preboot
-/dev/disk3s4                        7.3Ti   684Mi    16Gi     4%     329  171M    0%   /System/Volumes/Update
+/dev/disk3s1s1                      7.3Ti    14Gi    15Gi    48%    425k  162M    0%   /
+devfs                               227Ki   227Ki     0Bi   100%     784     0  100%   /dev
+/dev/disk3s6                        7.3Ti   1.0Gi    15Gi     7%       1  162M    0%   /System/Volumes/VM
+/dev/disk3s2                        7.3Ti    13Gi    15Gi    47%    1.8k  162M    0%   /System/Volumes/Preboot
+/dev/disk3s4                        7.3Ti   684Mi    15Gi     5%     329  162M    0%   /System/Volumes/Update
 /dev/disk1s2                        500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1                        500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3                        500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5                        7.3Ti   7.2Ti    16Gi   100%    6.3M  171M    4%   /System/Volumes/Data
+/dev/disk3s5                        7.3Ti   7.2Ti    15Gi   100%    6.3M  162M    4%   /System/Volumes/Data
 map auto_home                         0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
 /dev/disk6s1                        8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
 /dev/disk8s1                         18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
@@ -3782,7 +3969,8 @@ map auto_home                         0Bi     0Bi     0Bi   100%       0     0  
 /dev/disk12s1                        18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
 /dev/disk2s1                        5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
 /Applications/Audible.app/Wrapper   7.3Ti   7.2Ti    12Gi   100%    6.3M  131M    5%   /private/var/folders/yh/6tlwwnn50zdf84ttzgsxb0tw0000gn/X/FF5D994C-669B-5D66-A07F-3B37DAFA8FE8
-/dev/disk3s1                        7.3Ti    14Gi    16Gi    46%    426k  171M    0%   /System/Volumes/Update/mnt1
+/dev/disk4s1                         30Gi    18Gi    12Gi    60%       0     0     -   /Volumes/DR-70D
+/dev/disk3s1                        7.3Ti    14Gi    15Gi    48%    426k  162M    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -4778,8 +4966,8 @@ PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/
 ### Ollama Models
 ```
 NAME                   ID              SIZE      MODIFIED     
-llama3.2-vision:90b    bee2a956f3a8    54 GB     23 hours ago    
-qwen2.5vl:72b          05ea68274581    48 GB     41 hours ago    
+llama3.2-vision:90b    bee2a956f3a8    54 GB     31 hours ago    
+qwen2.5vl:72b          05ea68274581    48 GB     2 days ago      
 r1-1776:70b            140ea940f21d    42 GB     4 months ago    
 deepseek-r1:14b        ea35dfe18182    9.0 GB    5 months ago    
 deepseek-r1:8b         28f8fd6cdc67    4.9 GB    5 months ago    
