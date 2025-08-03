@@ -46,6 +46,11 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
+  .option(
+    "--workers <n>",
+    "Number of worker processes (each runs batches sequentially)",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
   .parse(process.argv);
 
 const {
@@ -58,6 +63,7 @@ const {
   curators,
   context: contextPath,
   parallel,
+  workers,
   ollamaBaseUrl,
 } = program.opts();
 
@@ -95,6 +101,7 @@ if (!finalModel) {
       curators,
       contextPath,
       parallel,
+      workers,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
