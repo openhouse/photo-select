@@ -149,7 +149,10 @@ export async function triageDirectory({
         multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
 
       let batchIdx = 0;
+<<<<<<< HEAD
+=======
       let completed = 0;
+>>>>>>> 315e9a00710fd5e55b5f5c9d7a57a5f68425e84e
       const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
 
       async function workerFn() {
@@ -202,6 +205,8 @@ export async function triageDirectory({
               console.log(
                 `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
               );
+<<<<<<< HEAD
+=======
 
               completed += keep.length + aside.length;
               if (completed) {
@@ -212,6 +217,7 @@ export async function triageDirectory({
                   `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
                 );
               }
+>>>>>>> 315e9a00710fd5e55b5f5c9d7a57a5f68425e84e
             } catch (err) {
               bar.update(4, { stage: "error" });
               bar.stop();

@@ -111,7 +111,10 @@ describe("triageDirectory", () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+<<<<<<< HEAD
+=======
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+>>>>>>> 315e9a00710fd5e55b5f5c9d7a57a5f68425e84e
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
@@ -119,10 +122,13 @@ describe("triageDirectory", () => {
       recurse: false,
       workers: 2,
     });
+<<<<<<< HEAD
+=======
     const etaLogs = logSpy.mock.calls.filter(([m]) =>
       m.includes("ETA to finish level")
     );
     expect(etaLogs.length).toBeGreaterThanOrEqual(2);
+>>>>>>> 315e9a00710fd5e55b5f5c9d7a57a5f68425e84e
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
