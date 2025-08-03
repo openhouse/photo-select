@@ -30,6 +30,7 @@ function formatDuration(ms) {
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
  * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
+ * @param {number} [options.workers]         Number of worker processes for dynamic batches
  * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
 export async function triageDirectory({
@@ -41,6 +42,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  workers,
   depth = 0,
 }) {
   if (!provider) {
@@ -128,90 +130,186 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
-    const selection = pickRandom(images, total);
-    console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
+    if (workers && workers > 0) {
+      const queue = pickRandom(images, images.length);
+      console.log(
+        `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+      );
 
-    const batches = [];
-    for (let i = 0; i < selection.length; i += 10) {
-      batches.push(selection.slice(i, i + 10));
-    }
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
+      const getBar = (idx) =>
+        multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
 
-    console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
+      let batchIdx = 0;
+      let completed = 0;
+      const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
 
-    const multibar = new MultiBar(
-      {
-        clearOnComplete: false,
-        hideCursor: true,
-        format: `${indent}{prefix} |{bar}| {stage}`,
-      },
-      Presets.shades_classic
-    );
-    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
-    const bars = batches.map((_, i) =>
-      multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
-    );
+      async function workerFn() {
+        while (true) {
+          const batch = nextBatch();
+          if (!batch) break;
+          const idx = ++batchIdx;
+          const bar = getBar(idx);
+          await batchStore.run({ batch: idx }, async () => {
+            try {
+              const start = Date.now();
+              const reply = await provider.chat({
+                prompt,
+                images: batch,
+                model,
+                curators,
+                onProgress: (stage) => {
+                  bar.update(stageMap[stage] || 0, { stage });
+                },
+                stream: true,
+              });
+              const ms = Date.now() - start;
+              bar.update(4, { stage: "done" });
+              bar.stop();
+              console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+              console.log(`${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`);
 
-    let nextIndex = 0;
-    async function worker() {
-      while (true) {
-        const idx = nextIndex++;
-        if (idx >= batches.length) break;
-        const batch = batches[idx];
-        const bar = bars[idx];
-        await batchStore.run({ batch: idx + 1 }, async () => {
-          try {
-            const start = Date.now();
-            const reply = await provider.chat({
-              prompt,
-              images: batch,
-              model,
-              curators,
-              onProgress: (stage) => {
-                bar.update(stageMap[stage] || 0, { stage });
-              },
-              stream: true,
-            });
-            const ms = Date.now() - start;
-            bar.update(4, { stage: "done" });
-            bar.stop();
-            console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-            console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
+              const { keep, aside, unclassified, notes, minutes } = parseReply(
+                reply,
+                batch
+              );
+              if (minutes.length) {
+                const uuid = crypto.randomUUID();
+                const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+                console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+              }
 
-            const { keep, aside, notes, minutes } = parseReply(reply, batch);
-            if (minutes.length) {
-              const uuid = crypto.randomUUID();
-              const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-              await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-              console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+              const keepDir = path.join(dir, "_keep");
+              const asideDir = path.join(dir, "_aside");
+              await Promise.all([
+                moveFiles(keep, keepDir, notes),
+                moveFiles(aside, asideDir, notes),
+              ]);
+
+              if (unclassified.length) {
+                queue.push(...unclassified);
+              }
+
+              console.log(
+                `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+              );
+
+              completed += keep.length + aside.length;
+              if (completed) {
+                const remaining = totalImages - completed;
+                const elapsed = Date.now() - levelStart;
+                const etaMs = (elapsed / completed) * remaining;
+                console.log(
+                  `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                );
+              }
+            } catch (err) {
+              bar.update(4, { stage: "error" });
+              bar.stop();
+              console.warn(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
             }
-
-            const keepDir = path.join(dir, "_keep");
-            const asideDir = path.join(dir, "_aside");
-            await Promise.all([
-              moveFiles(keep, keepDir, notes),
-              moveFiles(aside, asideDir, notes),
-            ]);
-
-            console.log(
-              `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-            );
-          } catch (err) {
-            bar.update(4, { stage: "error" });
-            bar.stop();
-            console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
-          }
-        });
+          });
+        }
       }
-    }
 
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
-    multibar.stop();
+      const pool = Array.from(
+        { length: Math.min(workers, Math.max(queue.length, 1)) },
+        () => workerFn()
+      );
+      await Promise.all(pool);
+      multibar.stop();
+    } else {
+      const total = Math.min(images.length, parallel * 10);
+      const selection = pickRandom(images, total);
+      console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
+      const batches = [];
+      for (let i = 0; i < selection.length; i += 10) {
+        batches.push(selection.slice(i, i + 10));
+      }
+      console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
+
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
+      const bars = batches.map((_, i) =>
+        multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
+      );
+
+      let nextIndex = 0;
+      async function workerFn() {
+        while (true) {
+          const idx = nextIndex++;
+          if (idx >= batches.length) break;
+          const batch = batches[idx];
+          const bar = bars[idx];
+          await batchStore.run({ batch: idx + 1 }, async () => {
+            try {
+              const start = Date.now();
+              const reply = await provider.chat({
+                prompt,
+                images: batch,
+                model,
+                curators,
+                onProgress: (stage) => {
+                  bar.update(stageMap[stage] || 0, { stage });
+                },
+                stream: true,
+              });
+              const ms = Date.now() - start;
+              bar.update(4, { stage: "done" });
+              bar.stop();
+              console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+              console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
+
+              const { keep, aside, notes, minutes } = parseReply(reply, batch);
+              if (minutes.length) {
+                const uuid = crypto.randomUUID();
+                const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+                console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+              }
+
+              const keepDir = path.join(dir, "_keep");
+              const asideDir = path.join(dir, "_aside");
+              await Promise.all([
+                moveFiles(keep, keepDir, notes),
+                moveFiles(aside, asideDir, notes),
+              ]);
+
+              console.log(
+                `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+              );
+            } catch (err) {
+              bar.update(4, { stage: "error" });
+              bar.stop();
+              console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
+            }
+          });
+        }
+      }
+
+      const pool = Array.from(
+        { length: Math.min(parallel, batches.length) },
+        () => workerFn()
+      );
+      await Promise.all(pool);
+      multibar.stop();
+    }
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
     if (processed) {
@@ -242,6 +340,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         parallel,
+        workers,
         depth: depth + 1,
       });
     } else {
