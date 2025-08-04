@@ -149,8 +149,10 @@ export async function triageDirectory({
         const getBar = (idx) =>
           multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
         const log = (msg) => {
-          multibar.log(msg);
-          if (process.env.NODE_ENV === "test") console.log(msg);
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
         };
 
         let batchIdx = 0;
@@ -179,6 +181,7 @@ export async function triageDirectory({
                 const ms = Date.now() - start;
                 bar.update(4, { stage: "done" });
                 bar.stop();
+                multibar.remove(bar);
                 log(`${indent}🤖  ChatGPT reply:\n${reply}`);
                 log(`${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`);
 
@@ -220,6 +223,7 @@ export async function triageDirectory({
               } catch (err) {
                 bar.update(4, { stage: "error" });
                 bar.stop();
+                multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
               }
             });
@@ -258,8 +262,10 @@ export async function triageDirectory({
           multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
         );
         const log = (msg) => {
-          multibar.log(msg);
-          if (process.env.NODE_ENV === "test") console.log(msg);
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
         };
 
         let nextIndex = 0;
@@ -285,6 +291,7 @@ export async function triageDirectory({
                 const ms = Date.now() - start;
                 bar.update(4, { stage: "done" });
                 bar.stop();
+                multibar.remove(bar);
                 log(`${indent}🤖  ChatGPT reply:\n${reply}`);
                 log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
@@ -309,6 +316,7 @@ export async function triageDirectory({
               } catch (err) {
                 bar.update(4, { stage: "error" });
                 bar.stop();
+                multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
               }
             });
