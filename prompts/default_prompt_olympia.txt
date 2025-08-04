@@ -6,7 +6,7 @@ I am going to make some fine art photo prints of my friend Olympia Kazi's 50th b
 
 Would you help me make selections? 
 
-I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration and which ones we should set aside. Use the **exact** filenames provided. All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent.
+I'm going to share photos with you 10 at a time. Please decide which ones we should keep in consideration, which ones we should revisit later, and which ones we should set aside. Use the **exact** filenames provided. All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent.
 
 Respond *only* with a JSON object of the form:
 
@@ -18,10 +18,14 @@ Respond *only* with a JSON object of the form:
   "aside": {
     "filename2.jpg": "[Please share your valued observations and thoughts on this image, here.]",
     ...
+  },
+  "revisit": {
+    "filename3.jpg": "[Please share your valued observations and thoughts on why this image should be reconsidered later.]",
+    ...
   }
 }
 
-Every filename must appear exactly once as a key in either "keep" or "aside". Include your observations on each image. No other text.
+Every filename must appear exactly once as a key in either "keep", "revisit", or "aside". Include your observations on each image. No other text.
 
 ===
 
