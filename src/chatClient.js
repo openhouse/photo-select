@@ -279,12 +279,12 @@ export async function chatCompletion({
           ...baseParams,
           stream: true,
         });
+        onProgress('stream');
         text = "";
         for await (const chunk of streamResp) {
           const delta = chunk.choices?.[0]?.delta?.content;
           if (delta) {
             text += delta;
-            onProgress('stream');
           }
         }
       } else {
