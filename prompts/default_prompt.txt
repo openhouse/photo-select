@@ -8,7 +8,7 @@ Reflect the thoughtful, iterative process described in the briefing: curators sh
 
 After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
 
-If you are uncertain about a photo, **omit it from the decision block**.
+If you are uncertain about a photo, you may list it under `revisit` to defer the choice. Photos omitted from the decision block will also be revisited later.
 Never invent filenames or keys.
 
 {
@@ -23,6 +23,10 @@ Never invent filenames or keys.
     },
     "aside": {
       "filename2.jpg": "why it is set aside",
+      ...
+    },
+    "revisit": {
+      "filename3.jpg": "why it should be reconsidered later",
       ...
     }
   }

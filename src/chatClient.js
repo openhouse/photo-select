@@ -369,6 +369,7 @@ export function parseReply(text, allFiles) {
 
   const keep = new Set();
   const aside = new Set();
+  const revisit = new Set();
   const notes = new Map();
   const minutes = [];
 
@@ -380,8 +381,8 @@ export function parseReply(text, allFiles) {
       if (!node || typeof node !== 'object') return null;
       if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
 
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
+      if (node.keep || node.aside || node.revisit) return node;
+      if (node.decision && (node.decision.keep || node.decision.aside || node.decision.revisit)) {
         if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
         return node.decision;
       }
@@ -414,6 +415,7 @@ export function parseReply(text, allFiles) {
 
       handle('keep', keep);
       handle('aside', aside);
+      handle('revisit', revisit);
       // continue to normalization below
     }
   } catch {
@@ -435,10 +437,12 @@ export function parseReply(text, allFiles) {
         let decision;
         if (lower.includes("keep")) decision = "keep";
         if (lower.includes("aside")) decision = "aside";
+        if (lower.includes("revisit") || lower.includes("defer")) decision = "revisit";
         if (decision === "keep") keep.add(f);
         if (decision === "aside") aside.add(f);
+        if (decision === "revisit") revisit.add(f);
 
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+        const m = line.match(/(?:keep|aside|revisit|defer)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
         if (m && m[1]) notes.set(f, m[1].trim());
       }
     }
@@ -447,13 +451,17 @@ export function parseReply(text, allFiles) {
   // Leave any files unmentioned in the reply unmoved so they can be triaged
   // in a later batch. Only files explicitly marked keep or aside are returned.
 
-  // Prefer keeping when a file appears in both groups
+  // Prefer keeping when a file appears in multiple groups, with aside taking precedence over revisit
   for (const f of keep) {
     aside.delete(f);
+    revisit.delete(f);
+  }
+  for (const f of aside) {
+    revisit.delete(f);
   }
 
-  const decided = new Set([...keep, ...aside]);
+  const decided = new Set([...keep, ...aside, ...revisit]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
 
-  return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
+  return { keep: [...keep], aside: [...aside], revisit: [...revisit], unclassified, notes, minutes };
 }

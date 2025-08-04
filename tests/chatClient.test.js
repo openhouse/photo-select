@@ -102,6 +102,14 @@ describe("parseReply", () => {
     expect(aside).not.toContain(files[0]);
   });
 
+  it("parses revisit directives", () => {
+    const reply = JSON.stringify({ keep: ["DSCF1234.jpg"], revisit: ["DSCF5678.jpg"] });
+    const { keep, revisit, unclassified } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+    expect(revisit).toContain(files[1]);
+    expect(unclassified).toContain(files[2]);
+  });
+
   it("parses minutes and nested decision", () => {
     const reply = JSON.stringify({
       minutes: [{ speaker: "Curator", text: "looks good" }],

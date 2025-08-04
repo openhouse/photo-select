@@ -51,7 +51,7 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 ## 3  Reply Schema Invariants
 
 - **minutes** → `array<{ speaker:string, text:string }>`; last `text` ends with a forward‑looking question.
-- **decision** → object with optional keys **exactly** `"keep"` and `"aside"`; each maps `filename → rationale`.
+ - **decision** → object with optional keys **exactly** `"keep"`, `"aside"`, and `"revisit"`; each maps `filename → rationale`.
 - **field_notes_diff** or **field_notes_md** as per Phase rules.
 - **No additional top‑level keys**.
 

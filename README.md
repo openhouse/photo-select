@@ -1,6 +1,6 @@
 # photo‑select
 
-A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
+A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep,” “revisit,” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
 ---
@@ -309,9 +309,9 @@ through that API, so no extra flags are needed.
 
 1. Pick up to 10 random images (all common photo extensions).
 2. Send them to ChatGPT with the prompt (filenames included).
-3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
-4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
-5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
+3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep, revisit, or set aside and why.
+4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image. Files labeled `revisit` are noted but left in place.
+5. Move the `keep` and `aside` files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block or tagged `revisit` remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
