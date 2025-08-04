@@ -145,9 +145,32 @@ export async function triageDirectory({
         Presets.shades_classic
       );
       try {
-        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
-        const getBar = (idx) =>
-          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+        const stageMap = {
+          encoding: 1,
+          request: 2,
+          waiting: 3,
+          stream: 3,
+          done: 4,
+          error: 4,
+        };
+        const getBar = (idx) => {
+          const bar = multibar.create(4, 0, {
+            prefix: `Batch ${idx}`,
+            stage: "queued",
+          });
+          let lastStage;
+          return {
+            update(stage) {
+              if (stage !== lastStage) {
+                bar.update(stageMap[stage] || 0, { stage });
+                lastStage = stage;
+              }
+            },
+            stop() {
+              bar.stop();
+            },
+          };
+        };
 
         let batchIdx = 0;
         let completed = 0;
@@ -167,15 +190,13 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
+                  onProgress: (stage) => bar.update(stage),
                   stream: true,
                 });
                 const ms = Date.now() - start;
-                bar.update(4, { stage: "done" });
+                bar.update("done");
                 bar.stop();
-                console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                console.log(`${indent}🤖  ChatGPT reply:\n${reply.trim()}`);
                 console.log(`${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`);
 
                 const { keep, aside, unclassified, notes, minutes } = parseReply(
@@ -214,7 +235,7 @@ export async function triageDirectory({
                   );
                 }
               } catch (err) {
-                bar.update(4, { stage: "error" });
+                bar.update("error");
                 bar.stop();
                 console.warn(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
               }
@@ -249,10 +270,32 @@ export async function triageDirectory({
         Presets.shades_classic
       );
       try {
-        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
-        const bars = batches.map((_, i) =>
-          multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
-        );
+        const stageMap = {
+          encoding: 1,
+          request: 2,
+          waiting: 3,
+          stream: 3,
+          done: 4,
+          error: 4,
+        };
+        const getBar = (idx) => {
+          const bar = multibar.create(4, 0, {
+            prefix: `Batch ${idx + 1}`,
+            stage: "queued",
+          });
+          let lastStage;
+          return {
+            update(stage) {
+              if (stage !== lastStage) {
+                bar.update(stageMap[stage] || 0, { stage });
+                lastStage = stage;
+              }
+            },
+            stop() {
+              bar.stop();
+            },
+          };
+        };
 
         let nextIndex = 0;
         async function workerFn() {
@@ -260,7 +303,7 @@ export async function triageDirectory({
             const idx = nextIndex++;
             if (idx >= batches.length) break;
             const batch = batches[idx];
-            const bar = bars[idx];
+            const bar = getBar(idx);
             await batchStore.run({ batch: idx + 1 }, async () => {
               try {
                 const start = Date.now();
@@ -269,15 +312,13 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
+                  onProgress: (stage) => bar.update(stage),
                   stream: true,
                 });
                 const ms = Date.now() - start;
-                bar.update(4, { stage: "done" });
+                bar.update("done");
                 bar.stop();
-                console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                console.log(`${indent}🤖  ChatGPT reply:\n${reply.trim()}`);
                 console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
                 const { keep, aside, notes, minutes } = parseReply(reply, batch);
@@ -299,7 +340,7 @@ export async function triageDirectory({
                   `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
                 );
               } catch (err) {
-                bar.update(4, { stage: "error" });
+                bar.update("error");
                 bar.stop();
                 console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
               }
