@@ -87,6 +87,7 @@ function ensureJsonMention(text) {
 }
 
 const CACHE_DIR = path.resolve('.cache');
+const CACHE_KEY_PREFIX = 'v2';
 
 async function getCachedReply(key) {
   try {
@@ -101,11 +102,21 @@ async function setCachedReply(key, text) {
   await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
 }
 
-export async function cacheKey({ prompt, images, model, curators = [] }) {
+export async function cacheKey({
+  prompt,
+  images,
+  model,
+  curators = [],
+  verbosity,
+  reasoningEffort,
+}) {
   const hash = crypto.createHash('sha256');
+  hash.update(CACHE_KEY_PREFIX);
   hash.update(model);
   hash.update(prompt);
   if (curators.length) hash.update(curators.join(','));
+  if (verbosity) hash.update(verbosity);
+  if (reasoningEffort) hash.update(reasoningEffort);
   for (const file of images) {
     const info = await stat(file);
     hash.update(file);
@@ -216,6 +227,8 @@ export async function chatCompletion({
   prompt,
   images,
   model = "gpt-4o",
+  verbosity = "high",
+  reasoningEffort = "high",
   maxRetries = 3,
   cache = true,
   curators = [],
@@ -238,11 +251,45 @@ export async function chatCompletion({
 
   finalPrompt = ensureJsonMention(finalPrompt);
 
+  const isGpt5 = model.startsWith("gpt-5");
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       onProgress('encoding');
+      if (isGpt5) {
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+          verbosity,
+          reasoningEffort,
+        });
+        if (cache) {
+          const hit = await getCachedReply(key);
+          if (hit) return hit;
+        }
+        onProgress('request');
+        const rsp = await openai.responses.create({
+          model,
+          instructions,
+          input,
+          text: { verbosity, format: { type: 'json_object' } },
+          reasoning: { effort: reasoningEffort },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        });
+        const text = rsp.output_text;
+        if (cache) await setCachedReply(key, text);
+        onProgress('done');
+        return text;
+      }
+
       const { messages, used } = await buildMessages(
         finalPrompt,
         images,
@@ -300,6 +347,7 @@ export async function chatCompletion({
       const isNetwork = err?.name === "APIConnectionError" ||
         ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
+        !isGpt5 &&
         (err instanceof NotFoundError || err.status === 404) &&
         (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
       ) {

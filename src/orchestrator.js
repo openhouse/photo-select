@@ -31,6 +31,8 @@ function formatDuration(ms) {
  * @param {string} [options.contextPath]     Optional additional context file
  * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
  * @param {number} [options.workers]         Number of worker processes for dynamic batches
+ * @param {string} [options.verbosity]       Verbosity level for GPT-5 models
+ * @param {string} [options.reasoningEffort] Reasoning effort for GPT-5 models
  * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
 export async function triageDirectory({
@@ -43,6 +45,8 @@ export async function triageDirectory({
   contextPath,
   parallel = 1,
   workers,
+  verbosity,
+  reasoningEffort,
   depth = 0,
 }) {
   if (!provider) {
@@ -173,6 +177,8 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
+                  verbosity,
+                  reasoningEffort,
                   onProgress: (stage) => {
                     bar.update(stageMap[stage] || 0, { stage });
                   },
@@ -278,16 +284,18 @@ export async function triageDirectory({
             await batchStore.run({ batch: idx + 1 }, async () => {
               try {
                 const start = Date.now();
-                const reply = await provider.chat({
-                  prompt,
-                  images: batch,
-                  model,
-                  curators,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                  stream: true,
-                });
+            const reply = await provider.chat({
+              prompt,
+              images: batch,
+              model,
+              curators,
+              verbosity,
+              reasoningEffort,
+              onProgress: (stage) => {
+                bar.update(stageMap[stage] || 0, { stage });
+              },
+              stream: true,
+            });
                 const ms = Date.now() - start;
                 bar.update(4, { stage: "done" });
                 bar.stop();
@@ -363,6 +371,8 @@ export async function triageDirectory({
         contextPath,
         parallel,
         workers,
+        verbosity,
+        reasoningEffort,
         depth: depth + 1,
       });
     } else {

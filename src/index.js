@@ -44,6 +44,16 @@ program
     "-x, --context <file>",
     "Text file with exhibition context for the curators"
   )
+  .option(
+    "--verbosity <level>",
+    "LLM verbosity (low|medium|high)",
+    process.env.PHOTO_SELECT_VERBOSITY || "high"
+  )
+  .option(
+    "--reasoning-effort <level>",
+    "Reasoning effort (minimal|low|medium|high)",
+    process.env.PHOTO_SELECT_REASONING_EFFORT || "high"
+  )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
   .option(
@@ -64,6 +74,8 @@ const {
   context: contextPath,
   parallel,
   workers,
+  verbosity,
+  reasoningEffort,
   ollamaBaseUrl,
 } = program.opts();
 
@@ -102,6 +114,8 @@ if (!finalModel) {
       contextPath,
       parallel,
       workers,
+      verbosity,
+      reasoningEffort,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
