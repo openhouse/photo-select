@@ -219,6 +219,38 @@ describe("chatCompletion", () => {
     expect(result).toBe("ok");
   });
 
+  it("uses responses API with verbosity and reasoning for gpt-5 models", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const result = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5-mini",
+      cache: false,
+    });
+    expect(responsesSpy).toHaveBeenCalled();
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("high");
+    expect(args.reasoning.effort).toBe("high");
+    expect(result).toBe("ok");
+  });
+
+  it("allows overriding verbosity and reasoning effort", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+      verbosity: "low",
+      reasoningEffort: "minimal",
+    });
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("low");
+    expect(args.reasoning.effort).toBe("minimal");
+  });
+
   it("logs additional curators from tags", async () => {
     vi.resetModules();
     const { chatCompletion } = await import("../src/chatClient.js");

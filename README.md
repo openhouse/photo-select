@@ -102,6 +102,8 @@ through to the script unchanged.
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
+| `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
+| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
 | `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
