@@ -294,8 +294,9 @@ describe("chatCompletion", () => {
     expect(args.text.verbosity).toBe("low");
     expect(args.reasoning.effort).toBe("minimal");
     expect(args.text.format.type).toBe("json_schema");
+    expect(args.text.format.name).toBe("photo_select_decision");
     expect(
-      args.text.format.json_schema.schema.properties.minutes.items.properties.speaker.enum
+      args.text.format.schema.properties.minutes.items.properties.speaker.enum
     ).toContain("Jamie");
     expect(result).toBe("ok");
   });

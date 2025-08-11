@@ -347,7 +347,11 @@ export async function chatCompletion({
           input,
           text: {
             verbosity,
-            format: { type: 'json_schema', json_schema: schema },
+            format: {
+              type: 'json_schema',
+              name: schema.name,
+              schema: schema.schema,
+            },
           },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
@@ -441,7 +445,11 @@ export async function chatCompletion({
           instructions,
           input,
           text: {
-            format: { type: 'json_schema', json_schema: schema },
+            format: {
+              type: 'json_schema',
+              name: schema.name,
+              schema: schema.schema,
+            },
             verbosity,
           },
           reasoning: { effort: reasoningEffort },
