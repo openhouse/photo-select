@@ -1,6 +1,7 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
 import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
@@ -80,6 +81,58 @@ export async function curatorsFromTags(files) {
  * minutes plus the full JSON decision block without truncation. */
 export const MAX_RESPONSE_TOKENS = 4096;
 
+export function buildGPT5Schema({ files = [], speakers = [] }) {
+  const decisionItem = {
+    type: 'object',
+    required: ['file'],
+    additionalProperties: false,
+    properties: {
+      file: { type: 'string', enum: files },
+      reason: { type: 'string' },
+    },
+  };
+  return {
+    name: 'photo_select_decision',
+    schema: {
+      type: 'object',
+      required: ['keep', 'aside', 'unclassified', 'notes', 'minutes'],
+      additionalProperties: false,
+      properties: {
+        keep: { type: 'array', items: decisionItem },
+        aside: { type: 'array', items: decisionItem },
+        unclassified: { type: 'array', items: { type: 'string', enum: files } },
+        notes: {
+          type: 'array',
+          description: 'Batch-level commentary, not per-file reasons',
+          items: { type: 'string' },
+        },
+        minutes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['speaker', 'text'],
+            additionalProperties: false,
+            properties: {
+              speaker: { type: 'string', enum: speakers },
+              text: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+export function schemaForBatch(used, curators = []) {
+  const files = used.map((f) => path.basename(f));
+  const speakers = Array.from(new Set([...curators, 'Jamie']));
+  return buildGPT5Schema({ files, speakers });
+}
+
+export function useResponses(model) {
+  return /^gpt-5/.test(model);
+}
+
 function ensureJsonMention(text) {
   return /\bjson\b/i.test(text)
     ? text
@@ -87,7 +140,7 @@ function ensureJsonMention(text) {
 }
 
 const CACHE_DIR = path.resolve('.cache');
-const CACHE_KEY_PREFIX = 'v2';
+const CACHE_KEY_PREFIX = 'v3';
 
 async function getCachedReply(key) {
   try {
@@ -227,14 +280,23 @@ export async function chatCompletion({
   prompt,
   images,
   model = "gpt-4o",
-  verbosity = "high",
-  reasoningEffort = "high",
+  verbosity = "low",
+  reasoningEffort = "minimal",
   maxRetries = 3,
   cache = true,
   curators = [],
   stream = false,
   onProgress = () => {},
 }) {
+  const allowedVerbosity = ["low", "medium", "high"];
+  const allowedEffort = ["minimal", "low", "medium", "high"];
+  if (!allowedVerbosity.includes(verbosity)) {
+    throw new Error(`invalid verbosity: ${verbosity}`);
+  }
+  if (!allowedEffort.includes(reasoningEffort)) {
+    throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
+  }
+
   const extras = await curatorsFromTags(images);
   const added = extras.filter((n) => !curators.includes(n));
   const finalCurators = Array.from(new Set([...curators, ...extras]));
@@ -250,8 +312,9 @@ export async function chatCompletion({
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
+  finalPrompt += "\nOnly include these filenames; do not invent new ones.";
 
-  const isGpt5 = model.startsWith("gpt-5");
+  const isGpt5 = useResponses(model);
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -275,12 +338,17 @@ export async function chatCompletion({
           const hit = await getCachedReply(key);
           if (hit) return hit;
         }
+        const schema = schemaForBatch(used, finalCurators);
         onProgress('request');
+        onProgress('waiting');
         const rsp = await openai.responses.create({
           model,
           instructions,
           input,
-          text: { verbosity, format: { type: 'json_object' } },
+          text: {
+            verbosity,
+            format: { type: 'json_schema', json_schema: schema },
+          },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
@@ -314,7 +382,8 @@ export async function chatCompletion({
         // allow ample space for the JSON decision block and minutes
         response_format: { type: "json_object" },
       };
-      if (/^o\d/.test(model)) {
+      const needsCompletionTokens = /^o\d/.test(model) || /^gpt-5/.test(model);
+      if (needsCompletionTokens) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
@@ -361,16 +430,26 @@ export async function chatCompletion({
           images: used,
           model,
           curators: finalCurators,
+          verbosity,
+          reasoningEffort,
         });
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress('request');
+        onProgress('waiting');
         const rsp = await openai.responses.create({
           model,
           instructions,
           input,
-          text: { format: { type: "json_object" } },
+          text: {
+            format: { type: 'json_schema', json_schema: schema },
+            verbosity,
+          },
+          reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
         if (cache) await setCachedReply(key, text);
+        onProgress('done');
         return text;
       }
 
@@ -393,12 +472,12 @@ export async function chatCompletion({
  *  • “DSCF1234 — keep  …reason…”
  *  • “Set aside: DSCF5678”
  */
-export function parseReply(text, allFiles) {
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
+export function parseReply(text, allFiles, meta = {}) {
+  let body = text;
+  const fenced = body.trim();
   if (fenced.startsWith('```')) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
+    if (match) body = match[1];
   }
   const map = new Map();
   for (const f of allFiles) {
@@ -419,35 +498,38 @@ export function parseReply(text, allFiles) {
   const aside = new Set();
   const notes = new Map();
   const minutes = [];
+  let unclassified = [];
 
-  // Try JSON first
+  let parsed = false;
   try {
-    const obj = JSON.parse(text);
-
+    const obj = JSON.parse(body);
     const extract = (node) => {
       if (!node || typeof node !== 'object') return null;
       if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
       if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
+      if (node.decision && node.decision.keep && node.decision.aside) return node.decision;
       for (const val of Object.values(node)) {
         const found = extract(val);
         if (found) return found;
       }
       return null;
     };
-
     const decision = extract(obj);
     if (decision) {
       const handle = (group, set) => {
         const val = decision[group];
         if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
+          for (const item of val) {
+            if (typeof item === 'string') {
+              const f = lookup(item);
+              if (f) set.add(f);
+            } else if (item && typeof item === 'object') {
+              const f = lookup(item.file);
+              if (f) {
+                set.add(f);
+                if (item.reason) notes.set(f, String(item.reason));
+              }
+            }
           }
         } else if (val && typeof val === 'object') {
           for (const [n, reason] of Object.entries(val)) {
@@ -459,35 +541,42 @@ export function parseReply(text, allFiles) {
           }
         }
       };
-
       handle('keep', keep);
       handle('aside', aside);
-      // continue to normalization below
+      if (Array.isArray(decision.unclassified)) {
+        for (const n of decision.unclassified) {
+          const f = lookup(n);
+          if (f) unclassified.push(f);
+        }
+      }
+      parsed = true;
     }
   } catch {
-    // fall through to plain text handling
+    // ignore JSON errors
   }
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+  if (!parsed) {
+    const lines = body.split("\n");
+    for (const raw of lines) {
+      const line = raw.trim();
+      const lower = line.toLowerCase();
+      const tm = line.match(/^([^:]+):\s*(.+)$/);
+      if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      for (const [name, f] of map) {
+        let short = name;
+        const idx = name.indexOf("dscf");
+        if (idx !== -1) short = name.slice(idx);
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
+        if (lower.includes(name) || (short !== name && lower.includes(short))) {
+          let decision;
+          if (lower.includes("keep")) decision = "keep";
+          if (lower.includes("aside")) decision = "aside";
+          if (decision === "keep") keep.add(f);
+          if (decision === "aside") aside.add(f);
 
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
+          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+          if (m && m[1]) notes.set(f, m[1].trim());
+        }
       }
     }
   }
@@ -496,12 +585,36 @@ export function parseReply(text, allFiles) {
   // in a later batch. Only files explicitly marked keep or aside are returned.
 
   // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
+  for (const f of keep) aside.delete(f);
 
   const decided = new Set([...keep, ...aside]);
-  const unclassified = allFiles.filter((f) => !decided.has(f));
+  if (!unclassified.length) {
+    unclassified = allFiles.filter((f) => !decided.has(f));
+  } else {
+    unclassified = unclassified.filter((f) => !decided.has(f));
+  }
+
+  if (
+    keep.size === 0 &&
+    aside.size === 0 &&
+    minutes.length === 0 &&
+    notes.size === 0
+  ) {
+    const failFile = `failed-reply-${crypto.randomUUID()}.json`;
+    const payload = {
+      model: meta.model,
+      verbosity: meta.verbosity,
+      reasoningEffort: meta.reasoningEffort,
+      files: allFiles.map((f) => path.basename(f)),
+      reply: body,
+    };
+    try {
+      writeFileSync(failFile, JSON.stringify(payload, null, 2));
+    } catch {
+      // ignore file write errors
+    }
+    console.warn(`⚠️  empty reply saved to ${failFile}`);
+  }
 
   return { keep: [...keep], aside: [...aside], unclassified, notes, minutes };
 }
