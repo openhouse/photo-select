@@ -302,6 +302,43 @@ describe("chatCompletion", () => {
     expect(result).toBe("ok");
   });
 
+  it("extracts JSON from output_json when output_text is empty", async () => {
+    responsesSpy.mockClear();
+    const payload = {
+      output_text: "",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_json",
+              json: {
+                keep: [{ file: "DSCF1234.jpg", reason: "sharp" }],
+                aside: [{ file: "DSCF5678.jpg", reason: "blurry" }],
+                unclassified: [],
+                notes: [],
+                minutes: [],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    responsesSpy.mockResolvedValueOnce(payload);
+    const reply = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+    });
+    const testFiles = ["/tmp/DSCF1234.jpg", "/tmp/DSCF5678.jpg"];
+    const { keep, aside } = parseReply(reply, testFiles);
+    expect(keep).toContain(testFiles[0]);
+    expect(aside).toContain(testFiles[1]);
+    await fs.rm('.debug', { recursive: true, force: true });
+  });
+
   it("allows overriding verbosity and reasoning effort", async () => {
     responsesSpy.mockClear();
     responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
@@ -405,6 +442,7 @@ describe("buildGPT5Schema", () => {
       "file",
       "reason",
     ]);
+    expect(schema.schema.properties.keep.description).toBeTruthy();
   });
 
   it("provides batch helper", () => {

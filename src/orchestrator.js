@@ -196,6 +196,14 @@ export async function triageDirectory({
                   batch,
                   { model, verbosity, reasoningEffort }
                 );
+                if (process.env.PHOTO_SELECT_DEBUG) {
+                  log(
+                    `${indent}\uD83D\uDC1B  Counts: keep=${keep.length}, aside=${aside.length}, unclassified=${unclassified.length}, notes=${notes.size}`
+                  );
+                  for (const [f, note] of notes) {
+                    log(`${indent}\uD83D\uDCDD  ${path.basename(f)} → ${note}`);
+                  }
+                }
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
                   const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
@@ -304,11 +312,19 @@ export async function triageDirectory({
                 log(`${indent}🤖  ChatGPT reply:\n${reply}`);
                 log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
-                const { keep, aside, notes, minutes } = parseReply(
+                const { keep, aside, unclassified = [], notes, minutes } = parseReply(
                   reply,
                   batch,
                   { model, verbosity, reasoningEffort }
                 );
+                if (process.env.PHOTO_SELECT_DEBUG) {
+                  log(
+                    `${indent}\uD83D\uDC1B  Counts: keep=${keep.length}, aside=${aside.length}, unclassified=${unclassified.length}, notes=${notes.size}`
+                  );
+                  for (const [f, note] of notes) {
+                    log(`${indent}\uD83D\uDCDD  ${path.basename(f)} \u2192 ${note}`);
+                  }
+                }
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
                   const minutesFile = path.join(dir, `minutes-${uuid}.txt`);

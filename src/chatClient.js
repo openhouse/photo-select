@@ -1,6 +1,6 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, appendFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -24,6 +24,61 @@ const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
+
+const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
+
+async function logWarn(msg) {
+  console.warn(msg);
+  await mkdir('.debug', { recursive: true });
+  await appendFile('.debug/warnings.log', `${msg}\n`);
+}
+
+function extractPayload(rsp) {
+  if (typeof rsp.output_text === 'string' && rsp.output_text.trim()) {
+    return { text: rsp.output_text, json: null };
+  }
+  const msg = rsp.output?.find((o) => o.type === 'message');
+  const jsonPart = msg?.content?.find((c) => c.type === 'output_json' && c.json);
+  if (jsonPart) {
+    return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
+  }
+  const textPart = msg?.content?.find((c) => c.type === 'output_text' && c.text?.trim());
+  if (textPart) return { text: textPart.text, json: null };
+  return { text: '', json: null };
+}
+
+async function extractTextWithLogging(rsp) {
+  const types =
+    rsp.output?.flatMap((o) =>
+      o.type === 'message' ? (o.content || []).map((c) => c.type) : [o.type]
+    ) || [];
+  console.log(`\uD83D\uDD0E responses.create content types: ${types.join(', ')}`);
+  console.log(
+    `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
+  );
+  const { text, json } = extractPayload(rsp);
+  const debug = process.env.PHOTO_SELECT_DEBUG;
+  if (!text.trim() || debug) {
+    await mkdir('.debug', { recursive: true });
+    const f = `.debug/resp-${Date.now()}.json`;
+    let body = JSON.stringify(rsp, null, 2);
+    if (Buffer.byteLength(body) > MAX_DEBUG_BYTES) {
+      body = body.slice(0, MAX_DEBUG_BYTES);
+      await logWarn(`⚠️  Responses payload truncated to ${MAX_DEBUG_BYTES} bytes at ${f}`);
+    }
+    await writeFile(f, body);
+    if (!text.trim()) {
+      await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
+    } else {
+      console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
+      await appendFile('.debug/warnings.log', `Saved Responses payload to ${f}\n`);
+    }
+  }
+  if (debug) {
+    console.log(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
+  }
+  return { text, json };
+}
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
   try {
@@ -98,9 +153,21 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
       required: ['keep', 'aside', 'unclassified', 'notes', 'minutes'],
       additionalProperties: false,
       properties: {
-        keep: { type: 'array', items: decisionItem },
-        aside: { type: 'array', items: decisionItem },
-        unclassified: { type: 'array', items: { type: 'string', enum: files } },
+        keep: {
+          type: 'array',
+          description: 'Files to keep in the gallery',
+          items: decisionItem,
+        },
+        aside: {
+          type: 'array',
+          description: 'Files set aside for later review',
+          items: decisionItem,
+        },
+        unclassified: {
+          type: 'array',
+          description: 'Files not classified in this batch',
+          items: { type: 'string', enum: files },
+        },
         notes: {
           type: 'array',
           description: 'Batch-level commentary, not per-file reasons',
@@ -108,6 +175,7 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
         },
         minutes: {
           type: 'array',
+          description: 'Transcript of curator discussion ending with a question',
           items: {
             type: 'object',
             required: ['speaker', 'text'],
@@ -357,7 +425,7 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
-        const text = rsp.output_text;
+        const { text } = await extractTextWithLogging(rsp);
         if (cache) await setCachedReply(key, text);
         onProgress('done');
         return text;
@@ -457,7 +525,7 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
-        const text = rsp.output_text;
+        const { text } = await extractTextWithLogging(rsp);
         if (cache) await setCachedReply(key, text);
         onProgress('done');
         return text;
