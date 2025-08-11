@@ -295,6 +295,7 @@ describe("chatCompletion", () => {
     expect(args.reasoning.effort).toBe("minimal");
     expect(args.text.format.type).toBe("json_schema");
     expect(args.text.format.name).toBe("photo_select_decision");
+    expect(args.text.format.strict).toBe(true);
     expect(
       args.text.format.schema.properties.minutes.items.properties.speaker.enum
     ).toContain("Jamie");
@@ -400,6 +401,10 @@ describe("buildGPT5Schema", () => {
     expect(
       schema.schema.properties.minutes.items.properties.speaker.enum
     ).toEqual(["Jamie", "Alexandra Munroe"]);
+    expect(schema.schema.properties.keep.items.required).toEqual([
+      "file",
+      "reason",
+    ]);
   });
 
   it("provides batch helper", () => {

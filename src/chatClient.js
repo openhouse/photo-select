@@ -84,7 +84,7 @@ export const MAX_RESPONSE_TOKENS = 4096;
 export function buildGPT5Schema({ files = [], speakers = [] }) {
   const decisionItem = {
     type: 'object',
-    required: ['file'],
+    required: ['file', 'reason'],
     additionalProperties: false,
     properties: {
       file: { type: 'string', enum: files },
@@ -140,7 +140,7 @@ function ensureJsonMention(text) {
 }
 
 const CACHE_DIR = path.resolve('.cache');
-const CACHE_KEY_PREFIX = 'v3';
+const CACHE_KEY_PREFIX = 'v4';
 
 async function getCachedReply(key) {
   try {
@@ -351,6 +351,7 @@ export async function chatCompletion({
               type: 'json_schema',
               name: schema.name,
               schema: schema.schema,
+              strict: true,
             },
           },
           reasoning: { effort: reasoningEffort },
@@ -449,6 +450,7 @@ export async function chatCompletion({
               type: 'json_schema',
               name: schema.name,
               schema: schema.schema,
+              strict: true,
             },
             verbosity,
           },
