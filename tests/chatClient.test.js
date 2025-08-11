@@ -462,6 +462,7 @@ describe("buildGPT5Schema", () => {
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
     expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
+    expect(item.required).toEqual(["filename", "decision", "reason"]);
     expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
   });
 

@@ -6,7 +6,7 @@ All people depicted have signed legal releases granting permission for their lik
 Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
-After capturing these remarks as meeting minutes, output a JSON object summarising the final decision. Never invent filenames or keys. Return only JSON in exactly this structure; include only filenames from this batch. If uncertain about a photo, omit it from the decisions.
+After capturing these remarks as meeting minutes, output a JSON object summarising the final decision. Never invent filenames or keys. Return only JSON in exactly this structure; include only filenames from this batch. If uncertain about a photo, omit it from the decisions. Always include a reason for each decision; use empty string if none.
 
 {
   "minutes": [
@@ -14,11 +14,11 @@ After capturing these remarks as meeting minutes, output a JSON object summarisi
     ...
   ],
   "decisions": [
-    {
-      "filename": "filename1.jpg",
-      "decision": "keep",
-      "reason": "why it stays"
-    },
+      {
+        "filename": "filename1.jpg",
+        "decision": "keep",
+        "reason": "why it stays (use empty string if none)"
+      },
     {
       "filename": "filename2.jpg",
       "decision": "aside",
