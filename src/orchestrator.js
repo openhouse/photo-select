@@ -7,6 +7,79 @@ import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply } from "./chatClient.js";
 import { MultiBar, Presets } from "cli-progress";
 
+function extractJsonBlock(body) {
+  if (!body) return null;
+  let s = String(body).trim();
+  const fenced = s.match(/^```\w*\n([\s\S]*?)\n```$/);
+  if (fenced) s = fenced[1];
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== '1';
+}
+function color(s, code) {
+  return useColor() ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+const dim = (s) => color(s, 2),
+  green = (s) => color(s, 32),
+  yellow = (s) => color(s, 33);
+
+function prettyLLMReply(raw, opts = {}) {
+  const json = extractJsonBlock(raw);
+  if (!json) {
+    try {
+      return JSON.stringify(JSON.parse(String(raw)), null, 2);
+    } catch {
+      return String(raw);
+    }
+  }
+  const maxMinutes = Number(
+    process.env.PHOTO_SELECT_PRETTY_MINUTES || 20
+  );
+  let out = '';
+
+  if (Array.isArray(json.minutes)) {
+    out += `${dim('— Minutes —')}\n`;
+    const shown = json.minutes.slice(0, maxMinutes);
+    for (const m of shown) {
+      if (m && typeof m === 'object') {
+        const who = (m.speaker ?? 'Curator').toString();
+        const txt = (m.text ?? '').toString();
+        out += `  • ${who}: ${txt}\n`;
+      }
+    }
+    if (json.minutes.length > shown.length) {
+      out += dim(`  … +${json.minutes.length - shown.length} more\n`);
+    }
+  }
+
+  if (Array.isArray(json.decisions)) {
+    const keeps = json.decisions.filter(
+      (d) => d && d.decision === 'keep'
+    );
+    const asides = json.decisions.filter(
+      (d) => d && d.decision === 'aside'
+    );
+    out += `${dim('— Decisions —')} ${keeps.length} keep / ${asides.length} aside\n`;
+    for (const d of keeps)
+      out += `  ${green('KEEP')}  ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ''
+      }\n`;
+    for (const d of asides)
+      out += `  ${yellow('ASIDE')} ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ''
+      }\n`;
+  } else {
+    out += JSON.stringify(json, null, 2) + '\n';
+  }
+  return out.trimEnd();
+}
+
 function formatDuration(ms) {
   const sec = Math.round(ms / 1000);
   const h = Math.floor(sec / 3600);
@@ -189,7 +262,14 @@ export async function triageDirectory({
                 bar.update(4, { stage: "done" });
                 bar.stop();
                 multibar.remove(bar);
-                log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                if (process.env.PHOTO_SELECT_PRETTY !== '0') {
+                  log(
+                    `${indent}🤖  ChatGPT reply (pretty):\n` +
+                      prettyLLMReply(reply)
+                  );
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                }
                 log(`${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`);
 
                 const { keep, aside, unclassified, notes, minutes } = parseReply(
@@ -208,8 +288,38 @@ export async function triageDirectory({
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
                   const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-                  await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-                  log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+                  let minutesText = minutes.join('\n');
+                  const jsonForMinutes = extractJsonBlock(reply);
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON !== '0'
+                  ) {
+                    const pretty = JSON.stringify(jsonForMinutes, null, 2);
+                    minutesText +=
+                      '\n\n=== LLM JSON (full) ===\n```json\n' +
+                      pretty +
+                      '\n```\n';
+                  }
+                  await writeFile(minutesFile, minutesText, 'utf8');
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON_SIDECAR === '1'
+                  ) {
+                    const jsonSidecar = minutesFile.replace(/\.txt$/i, '.json');
+                    await writeFile(
+                      jsonSidecar,
+                      JSON.stringify(jsonForMinutes, null, 2),
+                      'utf8'
+                    );
+                  }
+
+                  log(
+                    `${indent}📝  Saved meeting minutes${
+                      jsonForMinutes ? ' (w/ decisions JSON)' : ''
+                    } to ${minutesFile}`
+                  );
                 }
 
                 const keepDir = path.join(dir, "_keep");
@@ -311,7 +421,14 @@ export async function triageDirectory({
                 bar.update(4, { stage: "done" });
                 bar.stop();
                 multibar.remove(bar);
-                log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                if (process.env.PHOTO_SELECT_PRETTY !== '0') {
+                  log(
+                    `${indent}🤖  ChatGPT reply (pretty):\n` +
+                      prettyLLMReply(reply)
+                  );
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                }
                 log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
                 const { keep, aside, unclassified = [], notes, minutes } = parseReply(
@@ -330,8 +447,38 @@ export async function triageDirectory({
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
                   const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-                  await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-                  log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+                  let minutesText = minutes.join('\n');
+                  const jsonForMinutes = extractJsonBlock(reply);
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON !== '0'
+                  ) {
+                    const pretty = JSON.stringify(jsonForMinutes, null, 2);
+                    minutesText +=
+                      '\n\n=== LLM JSON (full) ===\n```json\n' +
+                      pretty +
+                      '\n```\n';
+                  }
+                  await writeFile(minutesFile, minutesText, 'utf8');
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON_SIDECAR === '1'
+                  ) {
+                    const jsonSidecar = minutesFile.replace(/\.txt$/i, '.json');
+                    await writeFile(
+                      jsonSidecar,
+                      JSON.stringify(jsonForMinutes, null, 2),
+                      'utf8'
+                    );
+                  }
+
+                  log(
+                    `${indent}📝  Saved meeting minutes${
+                      jsonForMinutes ? ' (w/ decisions JSON)' : ''
+                    } to ${minutesFile}`
+                  );
                 }
 
                 const keepDir = path.join(dir, "_keep");

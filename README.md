@@ -138,6 +138,18 @@ from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
 
+### Pretty output & minutes JSON
+
+The CLI prettifies model replies and embeds the full decisions JSON in the
+saved minutes by default. Control this behaviour with environment variables:
+
+| variable | default | effect |
+| --- | --- | --- |
+| `PHOTO_SELECT_PRETTY` | `1` | Show a colourised summary of minutes and decisions. Set to `0` for raw text. |
+| `PHOTO_SELECT_PRETTY_MINUTES` | `20` | Number of minute lines to display in the summary. |
+| `PHOTO_SELECT_MINUTES_JSON` | `1` | Append fenced JSON to minutes files. Set to `0` to skip. |
+| `PHOTO_SELECT_MINUTES_JSON_SIDECAR` | `0` | Write a separate `minutes-*.json` alongside the text file when `1`. |
+
 ### Custom timeout
 
 Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
