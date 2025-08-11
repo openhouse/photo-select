@@ -161,11 +161,12 @@ export function buildGPT5Schema({ files = [] }) {
   const decisionItem = {
     type: 'object',
     additionalProperties: false,
-    required: ['filename', 'decision'],
+    // Strict JSON schema requires required[] to include every key in properties.
+    required: ['filename', 'decision', 'reason'],
     properties: {
       filename: { type: 'string', enum: files },
       decision: { type: 'string', enum: ['keep', 'aside'] },
-      reason: { type: 'string' },
+      reason: { type: 'string' } // allow empty string when no rationale
     },
   };
   return {
