@@ -10,7 +10,8 @@ import { delay } from "./config.js";
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  timeout: Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
+  timeout:
+    Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
 });
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
@@ -29,36 +30,42 @@ const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
 
 function debugDir() {
   const base = process.env.PHOTO_SELECT_DEBUG_DIR || process.cwd();
-  return path.join(base, '.debug');
+  return path.join(base, ".debug");
 }
 
 async function logWarn(msg) {
   console.warn(msg);
   const dir = debugDir();
   await mkdir(dir, { recursive: true });
-  await appendFile(path.join(dir, 'warnings.log'), `${msg}\n`);
+  await appendFile(path.join(dir, "warnings.log"), `${msg}\n`);
 }
 
 function extractPayload(rsp) {
-  if (typeof rsp.output_text === 'string' && rsp.output_text.trim()) {
+  if (typeof rsp.output_text === "string" && rsp.output_text.trim()) {
     return { text: rsp.output_text, json: null };
   }
-  const msg = rsp.output?.find((o) => o.type === 'message');
-  const jsonPart = msg?.content?.find((c) => c.type === 'output_json' && c.json);
+  const msg = rsp.output?.find((o) => o.type === "message");
+  const jsonPart = msg?.content?.find(
+    (c) => c.type === "output_json" && c.json
+  );
   if (jsonPart) {
     return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
   }
-  const textPart = msg?.content?.find((c) => c.type === 'output_text' && c.text?.trim());
+  const textPart = msg?.content?.find(
+    (c) => c.type === "output_text" && c.text?.trim()
+  );
   if (textPart) return { text: textPart.text, json: null };
-  return { text: '', json: null };
+  return { text: "", json: null };
 }
 
 async function extractTextWithLogging(rsp) {
   const types =
     rsp.output?.flatMap((o) =>
-      o.type === 'message' ? (o.content || []).map((c) => c.type) : [o.type]
+      o.type === "message" ? (o.content || []).map((c) => c.type) : [o.type]
     ) || [];
-  console.log(`\uD83D\uDD0E responses.create content types: ${types.join(', ')}`);
+  console.log(
+    `\uD83D\uDD0E responses.create content types: ${types.join(", ")}`
+  );
   console.log(
     `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
   );
@@ -71,14 +78,19 @@ async function extractTextWithLogging(rsp) {
     let body = JSON.stringify(rsp, null, 2);
     if (Buffer.byteLength(body) > MAX_DEBUG_BYTES) {
       body = body.slice(0, MAX_DEBUG_BYTES);
-      await logWarn(`⚠️  Responses payload truncated to ${MAX_DEBUG_BYTES} bytes at ${f}`);
+      await logWarn(
+        `⚠️  Responses payload truncated to ${MAX_DEBUG_BYTES} bytes at ${f}`
+      );
     }
     await writeFile(f, body);
     if (!text.trim()) {
       await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
     } else {
       console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
-      await appendFile(path.join(dir, 'warnings.log'), `Saved Responses payload to ${f}\n`);
+      await appendFile(
+        path.join(dir, "warnings.log"),
+        `Saved Responses payload to ${f}\n`
+      );
     }
   }
   if (debug) {
@@ -108,7 +120,9 @@ async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
-    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
+    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
+      filename
+    )}/persons`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -116,7 +130,7 @@ async function getPeople(filename) {
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
-    const msg = err?.message || err?.code || 'unknown error';
+    const msg = err?.message || err?.code || "unknown error";
     console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
     return [];
@@ -144,41 +158,44 @@ export async function curatorsFromTags(files) {
 export const MAX_RESPONSE_TOKENS = 8192;
 
 export function buildGPT5Schema({ files = [], speakers = [] }) {
-  const fileProps = Object.fromEntries(files.map((f) => [f, { type: 'string' }]));
+  const fileProps = Object.fromEntries(
+    files.map((f) => [f, { type: "string" }])
+  );
   return {
-    name: 'photo_select_decision',
+    name: "photo_select_decision",
     schema: {
-      type: 'object',
-      required: ['minutes', 'decision'],
+      type: "object",
+      required: ["minutes", "decision"],
       additionalProperties: false,
       properties: {
         minutes: {
-          type: 'array',
-          description: 'Transcript of curator discussion ending with a question',
+          type: "array",
+          description:
+            "Transcript of curator discussion ending with a question",
           items: {
-            type: 'object',
-            required: ['speaker', 'text'],
+            type: "object",
+            required: ["speaker", "text"],
             additionalProperties: false,
             properties: {
-              speaker: { type: 'string', enum: speakers },
-              text: { type: 'string' },
+              speaker: { type: "string", enum: speakers },
+              text: { type: "string" },
             },
           },
         },
         decision: {
-          type: 'object',
-          required: ['keep', 'aside'],
+          type: "object",
+          required: ["keep", "aside"],
           additionalProperties: false,
           properties: {
             keep: {
-              type: 'object',
-              description: 'Files to keep in the gallery',
+              type: "object",
+              description: "Files to keep in the gallery",
               properties: fileProps,
               additionalProperties: false,
             },
             aside: {
-              type: 'object',
-              description: 'Files set aside for later review',
+              type: "object",
+              description: "Files set aside for now",
               properties: fileProps,
               additionalProperties: false,
             },
@@ -191,8 +208,8 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
 
 export function schemaForBatch(used, curators = []) {
   const files = used.map((f) => path.basename(f));
-  const clean = (n) => n.replace(/^and\s+/i, '').trim();
-  const speakers = Array.from(new Set([...curators.map(clean), 'Jamie']));
+  const clean = (n) => n.replace(/^and\s+/i, "").trim();
+  const speakers = Array.from(new Set([...curators.map(clean), "Jamie"]));
   return buildGPT5Schema({ files, speakers });
 }
 
@@ -201,17 +218,15 @@ export function useResponses(model) {
 }
 
 function ensureJsonMention(text) {
-  return /\bjson\b/i.test(text)
-    ? text
-    : `${text}\nRespond in json format.`;
+  return /\bjson\b/i.test(text) ? text : `${text}\nRespond in json format.`;
 }
 
-const CACHE_DIR = path.resolve('.cache');
-const CACHE_KEY_PREFIX = 'v4';
+const CACHE_DIR = path.resolve(".cache");
+const CACHE_KEY_PREFIX = "v4";
 
 async function getCachedReply(key) {
   try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
+    return await readFile(path.join(CACHE_DIR, `${key}.txt`), "utf8");
   } catch {
     return null;
   }
@@ -219,7 +234,7 @@ async function getCachedReply(key) {
 
 async function setCachedReply(key, text) {
   await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
+  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, "utf8");
 }
 
 export async function cacheKey({
@@ -230,11 +245,11 @@ export async function cacheKey({
   verbosity,
   reasoningEffort,
 }) {
-  const hash = crypto.createHash('sha256');
+  const hash = crypto.createHash("sha256");
   hash.update(CACHE_KEY_PREFIX);
   hash.update(model);
   hash.update(prompt);
-  if (curators.length) hash.update(curators.join(','));
+  if (curators.length) hash.update(curators.join(","));
   if (verbosity) hash.update(verbosity);
   if (reasoningEffort) hash.update(reasoningEffort);
   for (const file of images) {
@@ -243,7 +258,7 @@ export async function cacheKey({
     hash.update(String(info.mtimeMs));
     hash.update(String(info.size));
   }
-  return hash.digest('hex');
+  return hash.digest("hex");
 }
 
 /**
@@ -253,7 +268,7 @@ export async function cacheKey({
 export async function buildMessages(prompt, images, curators = []) {
   let content = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     content = content.replace(/\{\{curators\}\}/g, names);
   }
   const system = { role: "system", content };
@@ -269,7 +284,9 @@ export async function buildMessages(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     userImageParts.push(
       { type: "text", text: JSON.stringify(info) },
       {
@@ -281,7 +298,6 @@ export async function buildMessages(prompt, images, curators = []) {
       }
     );
   }
-
 
   const userText = {
     role: "user",
@@ -298,7 +314,7 @@ export async function buildMessages(prompt, images, curators = []) {
 export async function buildInput(prompt, images, curators = []) {
   let instructions = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     instructions = instructions.replace(/\{\{curators\}\}/g, names);
   }
   const used = [];
@@ -312,7 +328,9 @@ export async function buildInput(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     imageParts.push(
       { type: "input_text", text: JSON.stringify(info) },
       {
@@ -323,14 +341,16 @@ export async function buildInput(prompt, images, curators = []) {
     );
   }
 
-
   return {
     instructions,
     input: [
       {
         role: "user",
         content: [
-          { type: "input_text", text: ensureJsonMention("Here are the images:") },
+          {
+            type: "input_text",
+            text: ensureJsonMention("Here are the images:"),
+          },
           ...imageParts,
         ],
       },
@@ -364,7 +384,7 @@ export async function chatCompletion({
     throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
   }
 
-  const clean = (n) => n.replace(/^and\s+/i, '').trim();
+  const clean = (n) => n.replace(/^and\s+/i, "").trim();
   const extras = (await curatorsFromTags(images)).map(clean);
   const baseCurators = curators.map(clean);
   const added = extras.filter((n) => !baseCurators.includes(n));
@@ -372,11 +392,13 @@ export async function chatCompletion({
   if (added.length) {
     const info = batchStore.getStore();
     const prefix = info?.batch ? `Batch ${info.batch} ` : "";
-    console.log(`👥  ${prefix}additional curators from tags: ${added.join(', ')}`);
+    console.log(
+      `👥  ${prefix}additional curators from tags: ${added.join(", ")}`
+    );
   }
   let finalPrompt = prompt;
   if (finalCurators.length) {
-    const names = finalCurators.join(', ');
+    const names = finalCurators.join(", ");
     finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
   }
 
@@ -388,7 +410,7 @@ export async function chatCompletion({
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      onProgress('encoding');
+      onProgress("encoding");
       if (isGpt5) {
         const { instructions, input, used } = await buildInput(
           finalPrompt,
@@ -408,8 +430,8 @@ export async function chatCompletion({
           if (hit) return hit;
         }
         const schema = schemaForBatch(used, finalCurators);
-        onProgress('request');
-        onProgress('waiting');
+        onProgress("request");
+        onProgress("waiting");
         const baseOpts = {
           model,
           instructions,
@@ -417,7 +439,7 @@ export async function chatCompletion({
           text: {
             verbosity,
             format: {
-              type: 'json_schema',
+              type: "json_schema",
               name: schema.name,
               schema: schema.schema,
               strict: true,
@@ -429,16 +451,16 @@ export async function chatCompletion({
         let rsp = await openai.responses.create(baseOpts);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
-          console.warn('⚠️ Empty text; retrying with minimal reasoning…');
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
           rsp = await openai.responses.create({
             ...baseOpts,
-            reasoning: { effort: 'minimal' },
+            reasoning: { effort: "minimal" },
             temperature: 0.2,
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text);
-        onProgress('done');
+        onProgress("done");
         return text;
       }
 
@@ -459,7 +481,7 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
-      onProgress('request');
+      onProgress("request");
       const baseParams = {
         model,
         messages,
@@ -472,14 +494,14 @@ export async function chatCompletion({
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
-      onProgress('waiting');
+      onProgress("waiting");
       let text;
       if (stream) {
         const streamResp = await openai.chat.completions.create({
           ...baseParams,
           stream: true,
         });
-        onProgress('stream');
+        onProgress("stream");
         text = "";
         for await (const chunk of streamResp) {
           const delta = chunk.choices?.[0]?.delta?.content;
@@ -492,17 +514,20 @@ export async function chatCompletion({
         text = choices[0].message.content;
       }
       if (cache) await setCachedReply(key, text);
-      onProgress('done');
+      onProgress("done");
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
       const code = err?.code || err?.cause?.code;
-      const isNetwork = err?.name === "APIConnectionError" ||
+      const isNetwork =
+        err?.name === "APIConnectionError" ||
         ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
         !isGpt5 &&
         (err instanceof NotFoundError || err.status === 404) &&
-        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
+        (/v1\/responses/.test(msg) ||
+          /v1\/completions/.test(msg) ||
+          /not a chat model/i.test(msg))
       ) {
         const { instructions, input, used } = await buildInput(
           finalPrompt,
@@ -518,15 +543,15 @@ export async function chatCompletion({
           reasoningEffort,
         });
         const schema = schemaForBatch(used, finalCurators);
-        onProgress('request');
-        onProgress('waiting');
+        onProgress("request");
+        onProgress("waiting");
         const baseOpts = {
           model,
           instructions,
           input,
           text: {
             format: {
-              type: 'json_schema',
+              type: "json_schema",
               name: schema.name,
               schema: schema.schema,
               strict: true,
@@ -539,16 +564,16 @@ export async function chatCompletion({
         let rsp = await openai.responses.create(baseOpts);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
-          console.warn('⚠️ Empty text; retrying with minimal reasoning…');
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
           rsp = await openai.responses.create({
             ...baseOpts,
-            reasoning: { effort: 'minimal' },
+            reasoning: { effort: "minimal" },
             temperature: 0.2,
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text);
-        onProgress('done');
+        onProgress("done");
         return text;
       }
 
@@ -574,7 +599,7 @@ export async function chatCompletion({
 export function parseReply(text, allFiles, meta = {}) {
   let body = text;
   const fenced = body.trim();
-  if (fenced.startsWith('```')) {
+  if (fenced.startsWith("```")) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
     if (match) body = match[1];
   }
@@ -603,10 +628,12 @@ export function parseReply(text, allFiles, meta = {}) {
   try {
     const obj = JSON.parse(body);
     const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+      if (!node || typeof node !== "object") return null;
+      if (Array.isArray(node.minutes))
+        minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
       if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) return node.decision;
+      if (node.decision && node.decision.keep && node.decision.aside)
+        return node.decision;
       for (const val of Object.values(node)) {
         const found = extract(val);
         if (found) return found;
@@ -619,10 +646,10 @@ export function parseReply(text, allFiles, meta = {}) {
         const val = decision[group];
         if (Array.isArray(val)) {
           for (const item of val) {
-            if (typeof item === 'string') {
+            if (typeof item === "string") {
               const f = lookup(item);
               if (f) set.add(f);
-            } else if (item && typeof item === 'object') {
+            } else if (item && typeof item === "object") {
               const f = lookup(item.file);
               if (f) {
                 set.add(f);
@@ -630,7 +657,7 @@ export function parseReply(text, allFiles, meta = {}) {
               }
             }
           }
-        } else if (val && typeof val === 'object') {
+        } else if (val && typeof val === "object") {
           for (const [n, reason] of Object.entries(val)) {
             const f = lookup(n);
             if (f) {
@@ -640,8 +667,8 @@ export function parseReply(text, allFiles, meta = {}) {
           }
         }
       };
-      handle('keep', keep);
-      handle('aside', aside);
+      handle("keep", keep);
+      handle("aside", aside);
       if (Array.isArray(decision.unclassified)) {
         for (const n of decision.unclassified) {
           const f = lookup(n);
@@ -699,7 +726,10 @@ export function parseReply(text, allFiles, meta = {}) {
     minutes.length === 0 &&
     notes.size === 0
   ) {
-    const failFile = path.join(debugDir(), `failed-reply-${crypto.randomUUID()}.json`);
+    const failFile = path.join(
+      debugDir(),
+      `failed-reply-${crypto.randomUUID()}.json`
+    );
     const payload = {
       model: meta.model,
       verbosity: meta.verbosity,
