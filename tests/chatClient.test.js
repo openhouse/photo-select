@@ -106,6 +106,22 @@ describe("parseReply", () => {
     expect(aside).not.toContain(files[2]);
   });
 
+  it("parses strict decisions array", () => {
+    const json = JSON.stringify({
+      minutes: [{ speaker: "Jamie", text: "ok" }],
+      decisions: [
+        { filename: "DSCF1234.jpg", decision: "keep", reason: "good light" },
+        { filename: "DSCF5678.jpg", decision: "aside", reason: "blurry" }
+      ]
+    });
+    const { keep, aside, notes, minutes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(notes.get(files[1])).toMatch(/blurry/);
+    expect(minutes[0]).toMatch(/Jamie/);
+  });
+
   it("parses mixed object and string entries", () => {
     const json = JSON.stringify({
       keep: [
@@ -310,8 +326,7 @@ describe("chatCompletion", () => {
     expect(args.text.format.name).toBe("photo_select_decision");
     expect(args.text.format.strict).toBe(true);
     expect(
-      args.text.format.schema.properties.minutes.items.properties.speaker.enum
-    ).toContain("Jamie");
+      args.text.format.schema.properties.minutes.items.properties.speaker.type).toBe("string");
     expect(result).toBe("ok");
   });
 
@@ -440,34 +455,21 @@ describe("cacheKey", () => {
 });
 
 describe("buildGPT5Schema", () => {
-  it("enumerates files and speakers", () => {
+  it("enumerates files", () => {
     const schema = buildGPT5Schema({
       files: ["a.jpg", "b.jpg"],
-      speakers: ["Jamie", "Alexandra Munroe"],
     });
-    const keepProps = Object.keys(
-      schema.schema.properties.decision.properties.keep.properties
-    );
-    expect(keepProps).toEqual(["a.jpg", "b.jpg"]);
-    expect(
-      schema.schema.properties.minutes.items.properties.speaker.enum
-    ).toEqual(["Jamie", "Alexandra Munroe"]);
-    expect(
-      schema.schema.properties.decision.properties.keep.additionalProperties
-    ).toBe(false);
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
+    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
   });
 
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
     const schema = schemaForBatch(used, ["Curator-1"]);
-    const keepProps = Object.keys(
-      schema.schema.properties.decision.properties.keep.properties
-    );
-    expect(keepProps).toEqual(["a.jpg", "b.jpg"]);
-    const speakers =
-      schema.schema.properties.minutes.items.properties.speaker.enum;
-    expect(speakers).toContain("Curator-1");
-    expect(speakers).toContain("Jamie");
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
   });
 });
 

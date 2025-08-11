@@ -157,49 +157,42 @@ export async function curatorsFromTags(files) {
  * minutes plus the full JSON decision block without truncation. */
 export const MAX_RESPONSE_TOKENS = 8192;
 
-export function buildGPT5Schema({ files = [], speakers = [] }) {
-  const fileProps = Object.fromEntries(
-    files.map((f) => [f, { type: "string" }])
-  );
+export function buildGPT5Schema({ files = [] }) {
+  const decisionItem = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['filename', 'decision'],
+    properties: {
+      filename: { type: 'string', enum: files },
+      decision: { type: 'string', enum: ['keep', 'aside'] },
+      reason: { type: 'string' },
+    },
+  };
   return {
-    name: "photo_select_decision",
+    name: 'photo_select_decision',
     schema: {
-      type: "object",
-      required: ["minutes", "decision"],
+      type: 'object',
+      required: ['minutes', 'decisions'],
       additionalProperties: false,
       properties: {
         minutes: {
-          type: "array",
-          description:
-            "Transcript of curator discussion ending with a question",
+          type: 'array',
+          description: 'Transcript of curator discussion',
           items: {
-            type: "object",
-            required: ["speaker", "text"],
+            type: 'object',
+            required: ['speaker', 'text'],
             additionalProperties: false,
             properties: {
-              speaker: { type: "string", enum: speakers },
-              text: { type: "string" },
+              speaker: { type: 'string' },
+              text: { type: 'string' },
             },
           },
         },
-        decision: {
-          type: "object",
-          required: ["keep", "aside"],
-          additionalProperties: false,
-          properties: {
-            keep: {
-              type: "object",
-              description: "Files to keep in the gallery",
-              properties: fileProps,
-              additionalProperties: false,
-            },
-            aside: {
-              type: "object",
-              description: "Files set aside for now",
-              properties: fileProps,
-              additionalProperties: false,
-            },
-          },
+        decisions: {
+          type: 'array',
+          description: 'Per-file decisions',
+          items: decisionItem,
+          minItems: 0,
         },
       },
     },
@@ -208,9 +201,7 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
 
 export function schemaForBatch(used, curators = []) {
   const files = used.map((f) => path.basename(f));
-  const clean = (n) => n.replace(/^and\s+/i, "").trim();
-  const speakers = Array.from(new Set([...curators.map(clean), "Jamie"]));
-  return buildGPT5Schema({ files, speakers });
+  return buildGPT5Schema({ files });
 }
 
 export function useResponses(model) {
@@ -625,12 +616,45 @@ export function parseReply(text, allFiles, meta = {}) {
   let unclassified = [];
 
   let parsed = false;
+try {
+  const obj = JSON.parse(body);
+  if (obj && Array.isArray(obj.decisions)) {
+    for (const item of obj.decisions) {
+      if (!item || typeof item !== 'object') continue;
+      const base = String(item.filename || '').trim();
+      if (!base) continue;
+      const f = allFiles.find((p) => path.basename(p) === base);
+      if (!f) continue;
+      const choice = String(item.decision || '').toLowerCase();
+      if (choice === 'keep') {
+        keep.add(f);
+      } else if (choice === 'aside') {
+        aside.add(f);
+      }
+      if (typeof item.reason === 'string' && item.reason.trim()) {
+        notes.set(f, item.reason.trim());
+      }
+    }
+    if (Array.isArray(obj.minutes)) {
+      for (const m of obj.minutes) {
+        if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
+          minutes.push(m.speaker + ': ' + m.text);
+        }
+      }
+    }
+    parsed = true;
+  }
+} catch {
+  // not JSON; fall through
+}
+
+if (!parsed) {
   try {
     const obj = JSON.parse(body);
     const extract = (node) => {
-      if (!node || typeof node !== "object") return null;
+      if (!node || typeof node !== 'object') return null;
       if (Array.isArray(node.minutes))
-        minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+        minutes.push(...node.minutes.map((m) => m.speaker + ': ' + m.text));
       if (node.keep && node.aside) return node;
       if (node.decision && node.decision.keep && node.decision.aside)
         return node.decision;
@@ -646,10 +670,10 @@ export function parseReply(text, allFiles, meta = {}) {
         const val = decision[group];
         if (Array.isArray(val)) {
           for (const item of val) {
-            if (typeof item === "string") {
+            if (typeof item === 'string') {
               const f = lookup(item);
               if (f) set.add(f);
-            } else if (item && typeof item === "object") {
+            } else if (item && typeof item === 'object') {
               const f = lookup(item.file);
               if (f) {
                 set.add(f);
@@ -657,7 +681,7 @@ export function parseReply(text, allFiles, meta = {}) {
               }
             }
           }
-        } else if (val && typeof val === "object") {
+        } else if (val && typeof val === 'object') {
           for (const [n, reason] of Object.entries(val)) {
             const f = lookup(n);
             if (f) {
@@ -667,8 +691,8 @@ export function parseReply(text, allFiles, meta = {}) {
           }
         }
       };
-      handle("keep", keep);
-      handle("aside", aside);
+      handle('keep', keep);
+      handle('aside', aside);
       if (Array.isArray(decision.unclassified)) {
         for (const n of decision.unclassified) {
           const f = lookup(n);
@@ -680,8 +704,9 @@ export function parseReply(text, allFiles, meta = {}) {
   } catch {
     // ignore JSON errors
   }
+}
 
-  if (!parsed) {
+if (!parsed) {
     const lines = body.split("\n");
     for (const raw of lines) {
       const line = raw.trim();
