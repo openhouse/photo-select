@@ -298,6 +298,9 @@ describe("chatCompletion", () => {
     expect(
       args.text.format.schema.properties.minutes.items.properties.speaker.enum
     ).toContain("Jamie");
+    expect(
+      args.text.format.schema.properties.keep.items.required
+    ).toEqual(["file", "reason"]);
     expect(result).toBe("ok");
   });
 

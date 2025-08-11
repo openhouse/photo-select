@@ -84,7 +84,11 @@ export const MAX_RESPONSE_TOKENS = 4096;
 export function buildGPT5Schema({ files = [], speakers = [] }) {
   const decisionItem = {
     type: 'object',
-    required: ['file'],
+    // OpenAI's response schema requires every property to be listed in
+    // `required`, even if semantically optional. Making `reason` required
+    // keeps the schema valid; callers can supply an empty string when no
+    // rationale is available.
+    required: ['file', 'reason'],
     additionalProperties: false,
     properties: {
       file: { type: 'string', enum: files },
