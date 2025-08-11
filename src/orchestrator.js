@@ -193,7 +193,8 @@ export async function triageDirectory({
 
                 const { keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
-                  batch
+                  batch,
+                  { model, verbosity, reasoningEffort }
                 );
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
@@ -303,7 +304,11 @@ export async function triageDirectory({
                 log(`${indent}🤖  ChatGPT reply:\n${reply}`);
                 log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
-                const { keep, aside, notes, minutes } = parseReply(reply, batch);
+                const { keep, aside, notes, minutes } = parseReply(
+                  reply,
+                  batch,
+                  { model, verbosity, reasoningEffort }
+                );
                 if (minutes.length) {
                   const uuid = crypto.randomUUID();
                   const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
