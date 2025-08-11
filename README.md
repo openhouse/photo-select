@@ -305,7 +305,7 @@ through that API, so no extra flags are needed.
 The OpenAI request uses `response_format: { type: "json_object" }` so the
 assistant replies with strict JSON. This avoids needing to strip Markdown
 fences and guarantees parseable output.
-The CLI allows up to 4096 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
+The CLI allows up to 8192 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
 `src/chatClient.js`) so the minutes and JSON decision block are returned in
 full.
 

@@ -92,11 +92,11 @@ describe("parseReply", () => {
 
   it("parses JSON responses with reasoning", () => {
     const json = JSON.stringify({
-      keep: [{ file: "DSCF1234.jpg", reason: "good light" }],
-      aside: [{ file: "DSCF5678.jpg", reason: "out of focus" }],
-      unclassified: [],
-      notes: [],
       minutes: [],
+      decision: {
+        keep: { "DSCF1234.jpg": "good light" },
+        aside: { "DSCF5678.jpg": "out of focus" },
+      },
     });
     const { keep, aside, notes } = parseReply(json, files);
     expect(keep).toContain(files[0]);
@@ -160,16 +160,29 @@ describe("parseReply", () => {
     const reply = JSON.stringify({
       minutes: [{ speaker: "Jamie", text: "looks good" }],
       decision: {
-        keep: [{ file: "DSCF1234.jpg" }],
-        aside: [{ file: "DSCF5678.jpg" }],
-        unclassified: [],
-        notes: [],
+        keep: { "DSCF1234.jpg": "" },
+        aside: { "DSCF5678.jpg": "" },
       },
     });
     const { keep, aside, minutes } = parseReply(reply, files);
     expect(minutes[0]).toMatch(/Jamie/);
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
+  });
+
+  it("writes failed replies to the debug directory", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "ps-fail-"));
+    process.env.PHOTO_SELECT_DEBUG_DIR = tmp;
+    parseReply("", files, {
+      model: "gpt-5",
+      verbosity: "high",
+      reasoningEffort: "high",
+    });
+    const debugPath = path.join(tmp, ".debug");
+    const entries = await fs.readdir(debugPath);
+    expect(entries.some((e) => e.startsWith("failed-reply-"))).toBe(true);
+    await fs.rm(tmp, { recursive: true, force: true });
+    delete process.env.PHOTO_SELECT_DEBUG_DIR;
   });
 });
 
@@ -432,31 +445,29 @@ describe("buildGPT5Schema", () => {
       files: ["a.jpg", "b.jpg"],
       speakers: ["Jamie", "Alexandra Munroe"],
     });
-    expect(
-      schema.schema.properties.keep.items.properties.file.enum
-    ).toEqual(["a.jpg", "b.jpg"]);
+    const keepProps = Object.keys(
+      schema.schema.properties.decision.properties.keep.properties
+    );
+    expect(keepProps).toEqual(["a.jpg", "b.jpg"]);
     expect(
       schema.schema.properties.minutes.items.properties.speaker.enum
     ).toEqual(["Jamie", "Alexandra Munroe"]);
-    expect(schema.schema.properties.keep.items.required).toEqual([
-      "file",
-      "reason",
-    ]);
-    expect(schema.schema.properties.keep.description).toBeTruthy();
+    expect(
+      schema.schema.properties.decision.properties.keep.additionalProperties
+    ).toBe(false);
   });
 
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
     const schema = schemaForBatch(used, ["Curator-1"]);
-    expect(
-      schema.schema.properties.keep.items.properties.file.enum
-    ).toEqual(["a.jpg", "b.jpg"]);
-    expect(
-      schema.schema.properties.minutes.items.properties.speaker.enum
-    ).toContain("Curator-1");
-    expect(
-      schema.schema.properties.minutes.items.properties.speaker.enum
-    ).toContain("Jamie");
+    const keepProps = Object.keys(
+      schema.schema.properties.decision.properties.keep.properties
+    );
+    expect(keepProps).toEqual(["a.jpg", "b.jpg"]);
+    const speakers =
+      schema.schema.properties.minutes.items.properties.speaker.enum;
+    expect(speakers).toContain("Curator-1");
+    expect(speakers).toContain("Jamie");
   });
 });
 

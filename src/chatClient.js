@@ -1,7 +1,7 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
 import { readFile, stat, mkdir, writeFile, appendFile } from "node:fs/promises";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
@@ -27,10 +27,16 @@ const peopleCache = new Map();
 
 const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
 
+function debugDir() {
+  const base = process.env.PHOTO_SELECT_DEBUG_DIR || process.cwd();
+  return path.join(base, '.debug');
+}
+
 async function logWarn(msg) {
   console.warn(msg);
-  await mkdir('.debug', { recursive: true });
-  await appendFile('.debug/warnings.log', `${msg}\n`);
+  const dir = debugDir();
+  await mkdir(dir, { recursive: true });
+  await appendFile(path.join(dir, 'warnings.log'), `${msg}\n`);
 }
 
 function extractPayload(rsp) {
@@ -59,8 +65,9 @@ async function extractTextWithLogging(rsp) {
   const { text, json } = extractPayload(rsp);
   const debug = process.env.PHOTO_SELECT_DEBUG;
   if (!text.trim() || debug) {
-    await mkdir('.debug', { recursive: true });
-    const f = `.debug/resp-${Date.now()}.json`;
+    const dir = debugDir();
+    await mkdir(dir, { recursive: true });
+    const f = path.join(dir, `resp-${Date.now()}.json`);
     let body = JSON.stringify(rsp, null, 2);
     if (Buffer.byteLength(body) > MAX_DEBUG_BYTES) {
       body = body.slice(0, MAX_DEBUG_BYTES);
@@ -71,7 +78,7 @@ async function extractTextWithLogging(rsp) {
       await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
     } else {
       console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
-      await appendFile('.debug/warnings.log', `Saved Responses payload to ${f}\n`);
+      await appendFile(path.join(dir, 'warnings.log'), `Saved Responses payload to ${f}\n`);
     }
   }
   if (debug) {
@@ -134,45 +141,17 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 8192;
 
 export function buildGPT5Schema({ files = [], speakers = [] }) {
-  const decisionItem = {
-    type: 'object',
-    required: ['file', 'reason'],
-    additionalProperties: false,
-    properties: {
-      file: { type: 'string', enum: files },
-      reason: { type: 'string' },
-    },
-  };
+  const fileProps = Object.fromEntries(files.map((f) => [f, { type: 'string' }]));
   return {
     name: 'photo_select_decision',
     schema: {
       type: 'object',
-      required: ['keep', 'aside', 'unclassified', 'notes', 'minutes'],
+      required: ['minutes', 'decision'],
       additionalProperties: false,
       properties: {
-        keep: {
-          type: 'array',
-          description: 'Files to keep in the gallery',
-          items: decisionItem,
-        },
-        aside: {
-          type: 'array',
-          description: 'Files set aside for later review',
-          items: decisionItem,
-        },
-        unclassified: {
-          type: 'array',
-          description: 'Files not classified in this batch',
-          items: { type: 'string', enum: files },
-        },
-        notes: {
-          type: 'array',
-          description: 'Batch-level commentary, not per-file reasons',
-          items: { type: 'string' },
-        },
         minutes: {
           type: 'array',
           description: 'Transcript of curator discussion ending with a question',
@@ -186,6 +165,25 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
             },
           },
         },
+        decision: {
+          type: 'object',
+          required: ['keep', 'aside'],
+          additionalProperties: false,
+          properties: {
+            keep: {
+              type: 'object',
+              description: 'Files to keep in the gallery',
+              properties: fileProps,
+              additionalProperties: false,
+            },
+            aside: {
+              type: 'object',
+              description: 'Files set aside for later review',
+              properties: fileProps,
+              additionalProperties: false,
+            },
+          },
+        },
       },
     },
   };
@@ -193,7 +191,8 @@ export function buildGPT5Schema({ files = [], speakers = [] }) {
 
 export function schemaForBatch(used, curators = []) {
   const files = used.map((f) => path.basename(f));
-  const speakers = Array.from(new Set([...curators, 'Jamie']));
+  const clean = (n) => n.replace(/^and\s+/i, '').trim();
+  const speakers = Array.from(new Set([...curators.map(clean), 'Jamie']));
   return buildGPT5Schema({ files, speakers });
 }
 
@@ -365,9 +364,11 @@ export async function chatCompletion({
     throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
   }
 
-  const extras = await curatorsFromTags(images);
-  const added = extras.filter((n) => !curators.includes(n));
-  const finalCurators = Array.from(new Set([...curators, ...extras]));
+  const clean = (n) => n.replace(/^and\s+/i, '').trim();
+  const extras = (await curatorsFromTags(images)).map(clean);
+  const baseCurators = curators.map(clean);
+  const added = extras.filter((n) => !baseCurators.includes(n));
+  const finalCurators = Array.from(new Set([...baseCurators, ...extras]));
   if (added.length) {
     const info = batchStore.getStore();
     const prefix = info?.batch ? `Batch ${info.batch} ` : "";
@@ -409,7 +410,7 @@ export async function chatCompletion({
         const schema = schemaForBatch(used, finalCurators);
         onProgress('request');
         onProgress('waiting');
-        const rsp = await openai.responses.create({
+        const baseOpts = {
           model,
           instructions,
           input,
@@ -424,8 +425,18 @@ export async function chatCompletion({
           },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
-        });
-        const { text } = await extractTextWithLogging(rsp);
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn('⚠️ Empty text; retrying with minimal reasoning…');
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: 'minimal' },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
         if (cache) await setCachedReply(key, text);
         onProgress('done');
         return text;
@@ -509,7 +520,7 @@ export async function chatCompletion({
         const schema = schemaForBatch(used, finalCurators);
         onProgress('request');
         onProgress('waiting');
-        const rsp = await openai.responses.create({
+        const baseOpts = {
           model,
           instructions,
           input,
@@ -524,8 +535,18 @@ export async function chatCompletion({
           },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
-        });
-        const { text } = await extractTextWithLogging(rsp);
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn('⚠️ Empty text; retrying with minimal reasoning…');
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: 'minimal' },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
         if (cache) await setCachedReply(key, text);
         onProgress('done');
         return text;
@@ -678,7 +699,7 @@ export function parseReply(text, allFiles, meta = {}) {
     minutes.length === 0 &&
     notes.size === 0
   ) {
-    const failFile = `failed-reply-${crypto.randomUUID()}.json`;
+    const failFile = path.join(debugDir(), `failed-reply-${crypto.randomUUID()}.json`);
     const payload = {
       model: meta.model,
       verbosity: meta.verbosity,
@@ -687,6 +708,7 @@ export function parseReply(text, allFiles, meta = {}) {
       reply: body,
     };
     try {
+      mkdirSync(path.dirname(failFile), { recursive: true });
       writeFileSync(failFile, JSON.stringify(payload, null, 2));
     } catch {
       // ignore file write errors
