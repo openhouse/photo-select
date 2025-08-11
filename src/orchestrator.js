@@ -172,6 +172,7 @@ export async function triageDirectory({
             await batchStore.run({ batch: idx }, async () => {
               try {
                 const start = Date.now();
+                process.env.PHOTO_SELECT_DEBUG_DIR = dir;
                 const reply = await provider.chat({
                   prompt,
                   images: batch,
@@ -293,6 +294,7 @@ export async function triageDirectory({
             await batchStore.run({ batch: idx + 1 }, async () => {
               try {
                 const start = Date.now();
+            process.env.PHOTO_SELECT_DEBUG_DIR = dir;
             const reply = await provider.chat({
               prompt,
               images: batch,

@@ -52,7 +52,7 @@ program
   .option(
     "--reasoning-effort <level>",
     "Reasoning effort (minimal|low|medium|high)",
-    process.env.PHOTO_SELECT_REASONING_EFFORT || "high"
+    process.env.PHOTO_SELECT_REASONING_EFFORT
   )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
@@ -92,6 +92,11 @@ if (!finalModel) {
   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
 }
 
+let finalReasoningEffort = reasoningEffort;
+if (!finalReasoningEffort) {
+  finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+}
+
 (async () => {
   try {
     if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
@@ -115,7 +120,7 @@ if (!finalModel) {
       parallel,
       workers,
       verbosity,
-      reasoningEffort,
+      reasoningEffort: finalReasoningEffort,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
