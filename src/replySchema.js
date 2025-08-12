@@ -1,4 +1,43 @@
-export function buildReplySchema({ instructions = false, fullNotes = false } = {}) {
+import path from 'node:path';
+
+export function buildReplySchema({ instructions = false, fullNotes = false, filenames } = {}) {
+  if (Array.isArray(filenames) && filenames.length) {
+    const names = filenames.map((f) => path.basename(f));
+    const schema = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['minutes', 'decisions'],
+      properties: {
+        minutes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['speaker', 'text'],
+            properties: {
+              speaker: { type: 'string' },
+              text: { type: 'string' },
+            },
+          },
+        },
+        decisions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['filename', 'decision', 'reason'],
+            properties: {
+              filename: { type: 'string', enum: names },
+              decision: { type: 'string', enum: ['keep', 'aside'] },
+              reason: { type: 'string' },
+            },
+          },
+        },
+      },
+    };
+    return schema;
+  }
+
   const schema = {
     type: 'object',
     additionalProperties: false,

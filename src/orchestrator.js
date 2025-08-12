@@ -100,6 +100,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  workers = 0,
   fieldNotes = false,
   verbose = false,
   depth = 0,
@@ -188,8 +189,9 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
+    // Step 1 – select up to concurrency × 10 images
+    const concurrency = workers > 0 ? workers : parallel;
+    const total = Math.min(images.length, concurrency * 10);
     const selection = pickRandom(images, total);
     console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
 
@@ -281,7 +283,17 @@ export async function triageDirectory({
               minutes,
               fieldNotesInstructions,
               fieldNotesMd,
+              unclassified = [],
             } = parsed;
+            if (workers > 0 && unclassified.length) {
+              batches.push(unclassified);
+              bars.push(
+                multibar.create(4, 0, {
+                  prefix: `Batch ${batches.length}`,
+                  stage: 'queued',
+                })
+              );
+            }
             if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
@@ -377,11 +389,9 @@ export async function triageDirectory({
       }
     }
 
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
+    const workerCount = Math.min(concurrency, batches.length);
+    const workersArr = Array.from({ length: workerCount }, () => worker());
+    await Promise.all(workersArr);
     multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
@@ -413,6 +423,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         parallel,
+        workers,
         fieldNotes,
         depth: depth + 1,
         gitRoot,

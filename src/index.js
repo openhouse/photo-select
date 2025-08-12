@@ -46,6 +46,7 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
+  .option("--workers <n>", "Number of worker slots", (v) => Math.max(0, parseInt(v, 10)), 0)
   .option("--field-notes", "Enable field notes workflow")
   .option("-v, --verbose", "Store prompts and responses for debugging")
   .parse(process.argv);
@@ -60,6 +61,7 @@ const {
   curators,
   context: contextPath,
   parallel,
+  workers,
   fieldNotes,
   verbose,
   ollamaBaseUrl,
@@ -103,6 +105,7 @@ if (!finalModel) {
       curators,
       contextPath,
       parallel,
+      workers,
       fieldNotes,
       verbose,
     });
