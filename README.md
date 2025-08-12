@@ -115,6 +115,7 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
+| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
 
@@ -126,12 +127,12 @@ notebook system works.
 
 ### Increasing memory
 
-The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
+The Node.js heap defaults to about 4 GB. Large runs with `--parallel` or `--workers` greater than 1
 may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
 
 ```bash
 PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
-  /path/to/photo-select/photo-select-here.sh --parallel 10 --api-key sk-...
+  /path/to/photo-select/photo-select-here.sh --workers 10 --api-key sk-...
 ```
 
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
@@ -142,7 +143,10 @@ available RAM.
 Running multiple batches at once hides API latency but can exhaust system resources. See
 [`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
 tuning this flag. In short, start around twice your physical core count and adjust
-until network waits dominate without hitting OpenAI rate limits.
+until network waits dominate without hitting OpenAI rate limits. Alternatively, use
+`--workers` to keep a steady stream of batches without waiting for entire groups to
+finish. Files omitted from a batch are requeued and picked up by the next available
+worker so each level fully resolves before recursion continues.
 
 ### Streaming responses
 

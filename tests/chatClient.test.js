@@ -25,11 +25,11 @@ vi.mock("openai", () => {
   };
 });
 
-let parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags;
+let parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags, buildGPT5Schema, schemaForBatch, useResponses;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
-  ({ parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags } = await import('../src/chatClient.js'));
+  ({ parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags, buildGPT5Schema, schemaForBatch, useResponses } = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -93,6 +93,22 @@ describe("parseReply", () => {
     const { keep, aside } = parseReply(fenced, files);
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
+  });
+
+  it("parses strict decisions array", () => {
+    const json = JSON.stringify({
+      minutes: [{ speaker: "Jamie", text: "ok" }],
+      decisions: [
+        { filename: "DSCF1234.jpg", decision: "keep", reason: "good light" },
+        { filename: "DSCF5678.jpg", decision: "aside", reason: "blurry" }
+      ]
+    });
+    const { keep, aside, notes, minutes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(notes.get(files[1])).toMatch(/blurry/);
+    expect(minutes[0]).toMatch(/Jamie/);
   });
 
   it("deduplicates files listed in both groups", () => {
@@ -271,5 +287,29 @@ describe("chatCompletion", () => {
     );
     logSpy.mockRestore();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("buildGPT5Schema", () => {
+  it("enumerates files", () => {
+    const schema = buildGPT5Schema({ files: ["a.jpg", "b.jpg"] });
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
+    expect(item.required).toEqual(["filename", "decision", "reason"]);
+  });
+
+  it("provides batch helper", () => {
+    const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
+    const schema = schemaForBatch(used, ["Curator-1"]);
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+  });
+});
+
+describe("useResponses", () => {
+  it("flags gpt-5 models", () => {
+    expect(useResponses("gpt-5-mini")).toBe(true);
+    expect(useResponses("gpt-4o")).toBe(false);
   });
 });

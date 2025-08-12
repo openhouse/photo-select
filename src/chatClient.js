@@ -78,7 +78,58 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 8192;
+
+export function buildGPT5Schema({ files = [] }) {
+  const decisionItem = {
+    type: 'object',
+    additionalProperties: false,
+    // require reason even if empty string
+    required: ['filename', 'decision', 'reason'],
+    properties: {
+      filename: { type: 'string', enum: files },
+      decision: { type: 'string', enum: ['keep', 'aside'] },
+      reason: { type: 'string' },
+    },
+  };
+  return {
+    name: 'photo_select_decision',
+    schema: {
+      type: 'object',
+      required: ['minutes', 'decisions'],
+      additionalProperties: false,
+      properties: {
+        minutes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['speaker', 'text'],
+            additionalProperties: false,
+            properties: {
+              speaker: { type: 'string' },
+              text: { type: 'string' },
+            },
+          },
+        },
+        decisions: {
+          type: 'array',
+          description: 'Per-file decisions',
+          items: decisionItem,
+          minItems: 0,
+        },
+      },
+    },
+  };
+}
+
+export function schemaForBatch(used, curators = []) {
+  const files = used.map((f) => path.basename(f));
+  return buildGPT5Schema({ files });
+}
+
+export function useResponses(model) {
+  return /^gpt-5/i.test(model);
+}
 
 function ensureJsonMention(text) {
   return /\bjson\b/i.test(text)
@@ -238,11 +289,45 @@ export async function chatCompletion({
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
+  const isResponsesModel = useResponses(model);
 
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      if (isResponsesModel) {
+        onProgress('encoding');
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+        });
+        if (cache) {
+          const hit = await getCachedReply(key);
+          if (hit) return hit;
+        }
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress('request');
+        onProgress('waiting');
+        const rsp = await openai.responses.create({
+          model,
+          instructions,
+          input,
+          text: { format: { type: 'json_schema', json_schema: schema } },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        });
+        const text = rsp.output_text;
+        if (cache) await setCachedReply(key, text);
+        onProgress('done');
+        return text;
+      }
+
       onProgress('encoding');
       const { messages, used } = await buildMessages(
         finalPrompt,
@@ -355,39 +440,59 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles, opts = {}) {
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
+  let body = text;
+  const fenced = body.trim();
   if (fenced.startsWith('```')) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
+    if (match) body = match[1];
   }
   const map = new Map();
   for (const f of allFiles) {
     map.set(path.basename(f).toLowerCase(), f);
   }
-
   const lookup = (name) => {
     const lc = String(name).toLowerCase();
     let f = map.get(lc);
     if (!f) {
-      const idx = lc.indexOf("dscf");
+      const idx = lc.indexOf('dscf');
       if (idx !== -1) f = map.get(lc.slice(idx));
     }
     return f;
   };
-
   const keep = new Set();
   const aside = new Set();
   const notes = new Map();
   const minutes = [];
-
   let fieldNotesDiff;
   let fieldNotesMd;
   let fieldNotesInstructions;
   let commitMessage;
-  // Try JSON first
+  let parsed = false;
   try {
-    const obj = JSON.parse(text);
+    const obj = JSON.parse(body);
+    if (Array.isArray(obj.decisions)) {
+      for (const item of obj.decisions) {
+        if (!item || typeof item !== 'object') continue;
+        const base = String(item.filename || '').trim();
+        if (!base) continue;
+        const f = allFiles.find((p) => path.basename(p) === base);
+        if (!f) continue;
+        const choice = String(item.decision || '').toLowerCase();
+        if (choice === 'keep') keep.add(f);
+        else if (choice === 'aside') aside.add(f);
+        if (typeof item.reason === 'string' && item.reason.trim()) {
+          notes.set(f, item.reason.trim());
+        }
+      }
+      if (Array.isArray(obj.minutes)) {
+        for (const m of obj.minutes) {
+          if (m && typeof m === 'object' && m.speaker && m.text) {
+            minutes.push(`${m.speaker}: ${m.text}`);
+          }
+        }
+      }
+      parsed = true;
+    }
     if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === 'string') {
       fieldNotesDiff = obj.field_notes_diff;
     }
@@ -403,86 +508,78 @@ export function parseReply(text, allFiles, opts = {}) {
     if (typeof obj.commit_message === 'string') {
       commitMessage = obj.commit_message.trim();
     }
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
+    if (!parsed) {
+      const extract = (node) => {
+        if (!node || typeof node !== 'object') return null;
+        if (Array.isArray(node.minutes))
+          minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+        if (node.keep && node.aside) return node;
+        if (node.decision && node.decision.keep && node.decision.aside) {
+          if (Array.isArray(node.minutes))
+            minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+          return node.decision;
+        }
+        for (const val of Object.values(node)) {
+          const found = extract(val);
+          if (found) return found;
+        }
+        return null;
+      };
+      const decision = extract(obj);
+      if (decision) {
+        const handle = (group, set) => {
+          const val = decision[group];
+          if (Array.isArray(val)) {
+            for (const n of val) {
+              const f = lookup(n);
+              if (f) set.add(f);
+            }
+          } else if (val && typeof val === 'object') {
+            for (const [n, reason] of Object.entries(val)) {
+              const f = lookup(n);
+              if (f) {
+                set.add(f);
+                if (reason) notes.set(f, String(reason));
+              }
             }
           }
-        }
-      };
-
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
+        };
+        handle('keep', keep);
+        handle('aside', aside);
+        parsed = true;
+      }
     }
   } catch {
-    // fall through to plain text handling
+    // ignore JSON errors
   }
-
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
-
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
-
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
+  if (!parsed) {
+    const lines = body.split('\n');
+    for (const raw of lines) {
+      const line = raw.trim();
+      const lower = line.toLowerCase();
+      const tm = line.match(/^([^:]+):\s*(.+)$/);
+      if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      for (const [name, f] of map) {
+        let short = name;
+        const idx = name.indexOf('dscf');
+        if (idx !== -1) short = name.slice(idx);
+        if (lower.includes(name) || (short !== name && lower.includes(short))) {
+          let decision;
+          if (lower.includes('keep')) decision = 'keep';
+          if (lower.includes('aside')) decision = 'aside';
+          if (decision === 'keep') keep.add(f);
+          if (decision === 'aside') aside.add(f);
+          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+          if (m && m[1]) notes.set(f, m[1].trim());
+        }
       }
     }
   }
-
-  // Leave any files unmentioned in the reply unmoved so they can be triaged
-  // in a later batch. Only files explicitly marked keep or aside are returned.
-
-  // Prefer keeping when a file appears in both groups
   for (const f of keep) {
     aside.delete(f);
   }
-
   const decided = new Set([...keep, ...aside]);
   const unclassified = allFiles.filter((f) => !decided.has(f));
-
   return {
     keep: [...keep],
     aside: [...aside],
