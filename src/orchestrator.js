@@ -13,6 +13,71 @@ import { MultiBar, Presets } from "cli-progress";
 
 const exec = promisify(execFile);
 
+function extractJsonBlock(body) {
+  if (!body) return null;
+  let s = String(body).trim();
+  const fenced = s.match(/^```\w*\n([\s\S]*?)\n```$/);
+  if (fenced) s = fenced[1];
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== "1";
+}
+function color(s, code) {
+  return useColor() ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+const dim = (s) => color(s, 2);
+const green = (s) => color(s, 32);
+const yellow = (s) => color(s, 33);
+
+function prettyLLMReply(raw) {
+  const json = extractJsonBlock(raw);
+  if (!json) {
+    try {
+      return JSON.stringify(JSON.parse(String(raw)), null, 2);
+    } catch {
+      return String(raw);
+    }
+  }
+  const maxMinutes = Number(process.env.PHOTO_SELECT_PRETTY_MINUTES || 20);
+  let out = "";
+  if (Array.isArray(json.minutes)) {
+    out += `${dim("— Minutes —")}\n`;
+    const shown = json.minutes.slice(0, maxMinutes);
+    for (const m of shown) {
+      if (m && typeof m === "object") {
+        const who = (m.speaker ?? "Curator").toString();
+        const txt = (m.text ?? "").toString();
+        out += `  • ${who}: ${txt}\n`;
+      }
+    }
+    if (json.minutes.length > shown.length) {
+      out += dim(`  … +${json.minutes.length - shown.length} more\n`);
+    }
+  }
+  if (Array.isArray(json.decisions)) {
+    const keeps = json.decisions.filter((d) => d && d.decision === "keep");
+    const asides = json.decisions.filter((d) => d && d.decision === "aside");
+    out += `${dim("— Decisions —")} ${keeps.length} keep / ${asides.length} aside\n`;
+    for (const d of keeps)
+      out += `  ${green("KEEP")}  ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ""
+      }\n`;
+    for (const d of asides)
+      out += `  ${yellow("ASIDE")} ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ""
+      }\n`;
+  } else {
+    out += JSON.stringify(json, null, 2) + "\n";
+  }
+  return out.trimEnd();
+}
+
 async function ensureGitRepo(dir) {
   try {
     await stat(path.join(dir, ".git"));
@@ -102,6 +167,9 @@ export async function triageDirectory({
   parallel = 1,
   fieldNotes = false,
   verbose = false,
+  workers,
+  verbosity,
+  reasoningEffort,
   depth = 0,
   gitRoot,
 }) {
@@ -187,7 +255,140 @@ export async function triageDirectory({
     }
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+    if (workers && workers > 0) {
+      const queue = pickRandom(images, images.length);
+      console.log(
+        `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+      );
 
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      try {
+        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+        const getBar = (idx) =>
+          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+        const log = (msg) => {
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
+        };
+        let batchIdx = 0;
+        let completed = 0;
+        const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
+
+        async function workerFn() {
+          while (true) {
+            const batch = nextBatch();
+            if (!batch) break;
+            const idx = ++batchIdx;
+            const bar = getBar(idx);
+            await batchStore.run({ batch: idx }, async () => {
+              try {
+                const start = Date.now();
+                const prompt = await buildPrompt(promptPath, {
+                  curators,
+                  contextPath,
+                  images: batch,
+                  hasFieldNotes: false,
+                  isSecondPass: false,
+                });
+                const reply = await provider.chat({
+                  prompt,
+                  images: batch,
+                  model,
+                  curators,
+                  verbosity,
+                  reasoningEffort,
+                  onProgress: (stage) => {
+                    bar.update(stageMap[stage] || 0, { stage });
+                  },
+                  stream: true,
+                });
+                const ms = Date.now() - start;
+                bar.update(4, { stage: "done" });
+                bar.stop();
+                multibar.remove(bar);
+                if (process.env.PHOTO_SELECT_PRETTY !== "0") {
+                  log(
+                    `${indent}🤖  ChatGPT reply (pretty):\n` +
+                      prettyLLMReply(reply)
+                  );
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                }
+                log(
+                  `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
+                );
+
+                const { keep, aside, unclassified, notes, minutes } = parseReply(
+                  reply,
+                  batch,
+                  { model, verbosity, reasoningEffort }
+                );
+                if (minutes.length) {
+                  const uuid = crypto.randomUUID();
+                  const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                  await writeFile(minutesFile, minutes.join("\n"), "utf8");
+                  log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+                }
+                const keepDir = path.join(dir, "_keep");
+                const asideDir = path.join(dir, "_aside");
+                await Promise.all([
+                  moveFiles(keep, keepDir, notes),
+                  moveFiles(aside, asideDir, notes),
+                ]);
+                if (unclassified.length) {
+                  queue.push(...unclassified);
+                }
+                log(
+                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                );
+
+                completed += keep.length + aside.length;
+                if (completed) {
+                  const remaining = totalImages - completed;
+                  const elapsed = Date.now() - levelStart;
+                  const etaMs = (elapsed / completed) * remaining;
+                  log(
+                    `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                  );
+                }
+              } catch (err) {
+                bar.update(4, { stage: "error" });
+                bar.stop();
+                multibar.remove(bar);
+                log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+              }
+            });
+          }
+        }
+
+        const pool = Array.from(
+          { length: Math.min(workers, Math.max(queue.length, 1)) },
+          () => workerFn()
+        );
+        await Promise.all(pool);
+      } finally {
+        multibar.stop();
+      }
+      const remaining = (await listImages(dir)).length;
+      const processed = totalImages - remaining;
+      if (processed) {
+        const elapsed = Date.now() - levelStart;
+        const etaMs = (elapsed / processed) * remaining;
+        console.log(
+          `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+        );
+      }
+      continue;
+    } else {
     // Step 1 – select up to parallel × 10 images
     const total = Math.min(images.length, parallel * 10);
     const selection = pickRandom(images, total);
@@ -254,6 +455,8 @@ export async function triageDirectory({
               images: batch,
               model,
               curators,
+              verbosity,
+              reasoningEffort,
               expectFieldNotesInstructions: !!notesWriter,
               savePayload,
               onProgress: (stage) => {
@@ -273,6 +476,9 @@ export async function triageDirectory({
 
             let parsed = parseReply(reply, batch, {
               expectFieldNotesInstructions: !!notesWriter,
+              model,
+              verbosity,
+              reasoningEffort,
             });
             const {
               keep,
@@ -286,7 +492,11 @@ export async function triageDirectory({
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
                 if (parsed.commitMessage) {
-                  await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+                  await commitFile(
+                    gitRoot,
+                    path.relative(gitRoot, notesWriter.file),
+                    parsed.commitMessage
+                  );
                 }
               } else if (fieldNotesInstructions) {
                 const [prev1 = "", prev2 = ""] = await getRevisionHistory(
@@ -331,6 +541,8 @@ export async function triageDirectory({
                   images: batch,
                   model,
                   curators,
+                  verbosity,
+                  reasoningEffort,
                   expectFieldNotesMd: true,
                   savePayload: secondSavePayload,
                   stream: true,
@@ -342,11 +554,17 @@ export async function triageDirectory({
                   const sr = path.join(levelDir, '_responses', `batch-${idx + 1}-${secondId}-second.txt`);
                   await writeFile(sr, second, 'utf8');
                 }
-                parsed = parseReply(second, batch, { expectFieldNotesMd: true });
+                parsed = parseReply(second, batch, {
+                  expectFieldNotesMd: true,
+                });
                 if (parsed.fieldNotesMd) {
                   await notesWriter.writeFull(parsed.fieldNotesMd);
                   if (parsed.commitMessage) {
-                    await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+                    await commitFile(
+                      gitRoot,
+                      path.relative(gitRoot, notesWriter.file),
+                      parsed.commitMessage
+                    );
                   }
                 }
               }
@@ -391,6 +609,7 @@ export async function triageDirectory({
       console.log(`${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`);
     }
   }
+}
 
   // Step 5 – recurse into keepDir if both keep and aside exist
   if (recurse) {
