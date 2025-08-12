@@ -115,6 +115,7 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
+| `--workers` | `0` | Number of worker threads (dynamic queue) |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
 
@@ -137,12 +138,11 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
-### Choosing `--parallel`
+### Workers vs Parallel
 
-Running multiple batches at once hides API latency but can exhaust system resources. See
-[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
-tuning this flag. In short, start around twice your physical core count and adjust
-until network waits dominate without hitting OpenAI rate limits.
+`--workers` spins up a dynamic queue where each worker grabs the next batch as soon as it finishes. This mode prints an ETA for the level and automatically requeues any images the model leaves unclassified.
+
+`--parallel` processes a fixed number of batches at once without requeue or ETA tracking. It can be simpler on small sets but may waste time when some batches finish early. See [`docs/parallel-playbook.md`](docs/parallel-playbook.md) for tuning tips.
 
 ### Streaming responses
 
@@ -361,6 +361,8 @@ through that API, so no extra flags are needed.
 OpenAI requests now include a JSON schema so the API returns typed responses.
 Set `PHOTO_SELECT_OPENAI_FORMAT` to override this or provide an empty string to
 skip the `response_format` parameter entirely.
+
+GPT‑5 models require the new Responses API and a stricter schema that enumerates the filenames in each batch and constrains the `decision` field to `keep` or `aside`. The provider switches automatically when such a model is selected.
 
 ```bash
 export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'

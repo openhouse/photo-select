@@ -100,6 +100,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  workers = 0,
   fieldNotes = false,
   verbose = false,
   depth = 0,
@@ -188,8 +189,9 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
+    // Step 1 – select up to workers|parallel × 10 images
+    const slots = workers || parallel;
+    const total = Math.min(images.length, slots * 10);
     const selection = pickRandom(images, total);
     console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
 
@@ -214,6 +216,7 @@ export async function triageDirectory({
     );
 
     let nextIndex = 0;
+    const useWorkers = workers > 0;
     async function worker() {
       while (true) {
         const idx = nextIndex++;
@@ -368,6 +371,15 @@ export async function triageDirectory({
             console.log(
               `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
             );
+            if (useWorkers && parsed.unclassified?.length) {
+              batches.push(parsed.unclassified);
+              bars.push(
+                multibar.create(4, 0, {
+                  prefix: `Batch ${batches.length}`,
+                  stage: "queued",
+                })
+              );
+            }
           } catch (err) {
             bar.update(4, { stage: "error" });
             bar.stop();
@@ -377,11 +389,9 @@ export async function triageDirectory({
       }
     }
 
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
+    const poolSize = Math.min(useWorkers ? workers : parallel, batches.length);
+    const workerTasks = Array.from({ length: poolSize }, () => worker());
+    await Promise.all(workerTasks);
     multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
@@ -413,6 +423,7 @@ export async function triageDirectory({
         curators,
         contextPath,
         parallel,
+        workers,
         fieldNotes,
         depth: depth + 1,
         gitRoot,
