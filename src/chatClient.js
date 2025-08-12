@@ -1,6 +1,7 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, appendFile } from "node:fs/promises";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
@@ -9,7 +10,8 @@ import { delay } from "./config.js";
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  timeout: Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
+  timeout:
+    Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
 });
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
@@ -23,6 +25,79 @@ const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
+
+const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
+
+function debugDir() {
+  const base = process.env.PHOTO_SELECT_DEBUG_DIR || process.cwd();
+  return path.join(base, ".debug");
+}
+
+async function logWarn(msg) {
+  console.warn(msg);
+  const dir = debugDir();
+  await mkdir(dir, { recursive: true });
+  await appendFile(path.join(dir, "warnings.log"), `${msg}\n`);
+}
+
+function extractPayload(rsp) {
+  if (typeof rsp.output_text === "string" && rsp.output_text.trim()) {
+    return { text: rsp.output_text, json: null };
+  }
+  const msg = rsp.output?.find((o) => o.type === "message");
+  const jsonPart = msg?.content?.find(
+    (c) => c.type === "output_json" && c.json
+  );
+  if (jsonPart) {
+    return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
+  }
+  const textPart = msg?.content?.find(
+    (c) => c.type === "output_text" && c.text?.trim()
+  );
+  if (textPart) return { text: textPart.text, json: null };
+  return { text: "", json: null };
+}
+
+async function extractTextWithLogging(rsp) {
+  const types =
+    rsp.output?.flatMap((o) =>
+      o.type === "message" ? (o.content || []).map((c) => c.type) : [o.type]
+    ) || [];
+  console.log(
+    `\uD83D\uDD0E responses.create content types: ${types.join(", ")}`
+  );
+  console.log(
+    `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
+  );
+  const { text, json } = extractPayload(rsp);
+  const debug = process.env.PHOTO_SELECT_DEBUG;
+  if (!text.trim() || debug) {
+    const dir = debugDir();
+    await mkdir(dir, { recursive: true });
+    const f = path.join(dir, `resp-${Date.now()}.json`);
+    let body = JSON.stringify(rsp, null, 2);
+    if (Buffer.byteLength(body) > MAX_DEBUG_BYTES) {
+      body = body.slice(0, MAX_DEBUG_BYTES);
+      await logWarn(
+        `⚠️  Responses payload truncated to ${MAX_DEBUG_BYTES} bytes at ${f}`
+      );
+    }
+    await writeFile(f, body);
+    if (!text.trim()) {
+      await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
+    } else {
+      console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
+      await appendFile(
+        path.join(dir, "warnings.log"),
+        `Saved Responses payload to ${f}\n`
+      );
+    }
+  }
+  if (debug) {
+    console.log(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
+  }
+  return { text, json };
+}
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
   try {
@@ -45,7 +120,9 @@ async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
-    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
+    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
+      filename
+    )}/persons`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -53,7 +130,7 @@ async function getPeople(filename) {
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
-    const msg = err?.message || err?.code || 'unknown error';
+    const msg = err?.message || err?.code || "unknown error";
     console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
     return [];
@@ -78,19 +155,70 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 8192;
 
-function ensureJsonMention(text) {
-  return /\bjson\b/i.test(text)
-    ? text
-    : `${text}\nRespond in json format.`;
+export function buildGPT5Schema({ files = [] }) {
+  const decisionItem = {
+    type: 'object',
+    additionalProperties: false,
+    // Strict JSON schema requires required[] to include every key in properties.
+    required: ['filename', 'decision', 'reason'],
+    properties: {
+      filename: { type: 'string', enum: files },
+      decision: { type: 'string', enum: ['keep', 'aside'] },
+      reason: { type: 'string' } // allow empty string when no rationale
+    },
+  };
+  return {
+    name: 'photo_select_decision',
+    schema: {
+      type: 'object',
+      required: ['minutes', 'decisions'],
+      additionalProperties: false,
+      properties: {
+        minutes: {
+          type: 'array',
+          description: 'Transcript of curator discussion',
+          items: {
+            type: 'object',
+            required: ['speaker', 'text'],
+            additionalProperties: false,
+            properties: {
+              speaker: { type: 'string' },
+              text: { type: 'string' },
+            },
+          },
+        },
+        decisions: {
+          type: 'array',
+          description: 'Per-file decisions',
+          items: decisionItem,
+          minItems: 0,
+        },
+      },
+    },
+  };
 }
 
-const CACHE_DIR = path.resolve('.cache');
+export function schemaForBatch(used, curators = []) {
+  const files = used.map((f) => path.basename(f));
+  return buildGPT5Schema({ files });
+}
+
+export function useResponses(model) {
+  return /^gpt-5/.test(model);
+}
+
+function ensureJsonMention(text) {
+  return /\bjson\b/i.test(text) ? text : `${text}\nRespond in json format.`;
+}
+
+const CACHE_DIR = path.resolve(".cache");
+const CACHE_KEY_PREFIX = "v4";
 
 async function getCachedReply(key) {
   try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
+    return await readFile(path.join(CACHE_DIR, `${key}.txt`), "utf8");
   } catch {
     return null;
   }
@@ -98,21 +226,31 @@ async function getCachedReply(key) {
 
 async function setCachedReply(key, text) {
   await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
+  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, "utf8");
 }
 
-export async function cacheKey({ prompt, images, model, curators = [] }) {
-  const hash = crypto.createHash('sha256');
+export async function cacheKey({
+  prompt,
+  images,
+  model,
+  curators = [],
+  verbosity,
+  reasoningEffort,
+}) {
+  const hash = crypto.createHash("sha256");
+  hash.update(CACHE_KEY_PREFIX);
   hash.update(model);
   hash.update(prompt);
-  if (curators.length) hash.update(curators.join(','));
+  if (curators.length) hash.update(curators.join(","));
+  if (verbosity) hash.update(verbosity);
+  if (reasoningEffort) hash.update(reasoningEffort);
   for (const file of images) {
     const info = await stat(file);
     hash.update(file);
     hash.update(String(info.mtimeMs));
     hash.update(String(info.size));
   }
-  return hash.digest('hex');
+  return hash.digest("hex");
 }
 
 /**
@@ -122,7 +260,7 @@ export async function cacheKey({ prompt, images, model, curators = [] }) {
 export async function buildMessages(prompt, images, curators = []) {
   let content = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     content = content.replace(/\{\{curators\}\}/g, names);
   }
   const system = { role: "system", content };
@@ -138,7 +276,9 @@ export async function buildMessages(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     userImageParts.push(
       { type: "text", text: JSON.stringify(info) },
       {
@@ -150,7 +290,6 @@ export async function buildMessages(prompt, images, curators = []) {
       }
     );
   }
-
 
   const userText = {
     role: "user",
@@ -167,7 +306,7 @@ export async function buildMessages(prompt, images, curators = []) {
 export async function buildInput(prompt, images, curators = []) {
   let instructions = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     instructions = instructions.replace(/\{\{curators\}\}/g, names);
   }
   const used = [];
@@ -181,7 +320,9 @@ export async function buildInput(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     imageParts.push(
       { type: "input_text", text: JSON.stringify(info) },
       {
@@ -192,14 +333,16 @@ export async function buildInput(prompt, images, curators = []) {
     );
   }
 
-
   return {
     instructions,
     input: [
       {
         role: "user",
         content: [
-          { type: "input_text", text: ensureJsonMention("Here are the images:") },
+          {
+            type: "input_text",
+            text: ensureJsonMention("Here are the images:"),
+          },
           ...imageParts,
         ],
       },
@@ -216,6 +359,8 @@ export async function chatCompletion({
   prompt,
   images,
   model = "gpt-4o",
+  verbosity = "low",
+  reasoningEffort = "minimal",
   maxRetries = 3,
   cache = true,
   curators = [],
@@ -223,27 +368,95 @@ export async function chatCompletion({
   onProgress = () => {},
   responseFormat,
 }) {
-  const extras = await curatorsFromTags(images);
-  const added = extras.filter((n) => !curators.includes(n));
-  const finalCurators = Array.from(new Set([...curators, ...extras]));
+  const allowedVerbosity = ["low", "medium", "high"];
+  const allowedEffort = ["minimal", "low", "medium", "high"];
+  if (!allowedVerbosity.includes(verbosity)) {
+    throw new Error(`invalid verbosity: ${verbosity}`);
+  }
+  if (!allowedEffort.includes(reasoningEffort)) {
+    throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
+  }
+
+  const clean = (n) => n.replace(/^and\s+/i, "").trim();
+  const extras = (await curatorsFromTags(images)).map(clean);
+  const baseCurators = curators.map(clean);
+  const added = extras.filter((n) => !baseCurators.includes(n));
+  const finalCurators = Array.from(new Set([...baseCurators, ...extras]));
   if (added.length) {
     const info = batchStore.getStore();
     const prefix = info?.batch ? `Batch ${info.batch} ` : "";
-    console.log(`👥  ${prefix}additional curators from tags: ${added.join(', ')}`);
+    console.log(
+      `👥  ${prefix}additional curators from tags: ${added.join(", ")}`
+    );
   }
   let finalPrompt = prompt;
   if (finalCurators.length) {
-    const names = finalCurators.join(', ');
+    const names = finalCurators.join(", ");
     finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
+  finalPrompt += "\nOnly include these filenames; do not invent new ones.";
 
+  const isGpt5 = useResponses(model);
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      onProgress('encoding');
+      onProgress("encoding");
+      if (isGpt5) {
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+          verbosity,
+          reasoningEffort,
+        });
+        if (cache) {
+          const hit = await getCachedReply(key);
+          if (hit) return hit;
+        }
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress("request");
+        onProgress("waiting");
+        const baseOpts = {
+          model,
+          instructions,
+          input,
+          text: {
+            verbosity,
+            format: {
+              type: "json_schema",
+              name: schema.name,
+              schema: schema.schema,
+              strict: true,
+            },
+          },
+          reasoning: { effort: reasoningEffort },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: "minimal" },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
+        if (cache) await setCachedReply(key, text);
+        onProgress("done");
+        return text;
+      }
+
       const { messages, used } = await buildMessages(
         finalPrompt,
         images,
@@ -261,34 +474,36 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
-      onProgress('request');
+      onProgress("request");
       const baseParams = {
         model,
         messages,
       };
       if (responseFormat === undefined) {
-        baseParams.response_format = { type: 'json_object' };
+        baseParams.response_format = { type: "json_object" };
       } else if (responseFormat !== null) {
         baseParams.response_format = responseFormat;
       }
-      if (/^o\d/.test(model)) {
+      // allow ample space for the JSON decision block and minutes
+      const needsCompletionTokens = /^o\d/.test(model) || /^gpt-5/.test(model);
+      if (needsCompletionTokens) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
-      onProgress('waiting');
+      onProgress("waiting");
       let text;
       if (stream) {
         const streamResp = await openai.chat.completions.create({
           ...baseParams,
           stream: true,
         });
+        onProgress("stream");
         text = "";
         for await (const chunk of streamResp) {
           const delta = chunk.choices?.[0]?.delta?.content;
           if (delta) {
             text += delta;
-            onProgress('stream');
           }
         }
       } else {
@@ -296,16 +511,20 @@ export async function chatCompletion({
         text = choices[0].message.content;
       }
       if (cache) await setCachedReply(key, text);
-      onProgress('done');
+      onProgress("done");
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
       const code = err?.code || err?.cause?.code;
-      const isNetwork = err?.name === "APIConnectionError" ||
+      const isNetwork =
+        err?.name === "APIConnectionError" ||
         ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
+        !isGpt5 &&
         (err instanceof NotFoundError || err.status === 404) &&
-        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
+        (/v1\/responses/.test(msg) ||
+          /v1\/completions/.test(msg) ||
+          /not a chat model/i.test(msg))
       ) {
         const { instructions, input, used } = await buildInput(
           finalPrompt,
@@ -317,21 +536,41 @@ export async function chatCompletion({
           images: used,
           model,
           curators: finalCurators,
+          verbosity,
+          reasoningEffort,
         });
-        const rsp = await openai.responses.create({
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress("request");
+        onProgress("waiting");
+        const baseOpts = {
           model,
           instructions,
           input,
-          text:
-            responseFormat === undefined
-              ? { format: { type: 'json_object' } }
-              : responseFormat === null
-                ? undefined
-                : { format: responseFormat },
+          text: {
+            format: {
+              type: "json_schema",
+              name: schema.name,
+              schema: schema.schema,
+              strict: true,
+            },
+            verbosity,
+          },
+          reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
-        });
-        const text = rsp.output_text;
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: "minimal" },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
         if (cache) await setCachedReply(key, text);
+        onProgress("done");
         return text;
       }
 
@@ -355,11 +594,11 @@ export async function chatCompletion({
  *  • “Set aside: DSCF5678”
  */
 export function parseReply(text, allFiles, opts = {}) {
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
-  if (fenced.startsWith('```')) {
+  let body = text;
+  const fenced = body.trim();
+  if (fenced.startsWith("```")) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
+    if (match) body = match[1];
   }
   const map = new Map();
   for (const f of allFiles) {
@@ -380,54 +619,93 @@ export function parseReply(text, allFiles, opts = {}) {
   const aside = new Set();
   const notes = new Map();
   const minutes = [];
+  let unclassified = [];
 
   let fieldNotesDiff;
   let fieldNotesMd;
   let fieldNotesInstructions;
   let commitMessage;
-  // Try JSON first
+  let parsed = false;
+
   try {
-    const obj = JSON.parse(text);
-    if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === 'string') {
+    const obj = JSON.parse(body);
+    if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
       fieldNotesDiff = obj.field_notes_diff;
     }
-    if (opts.expectFieldNotesMd && typeof obj.field_notes_md === 'string') {
+    if (opts.expectFieldNotesMd && typeof obj.field_notes_md === "string") {
       fieldNotesMd = obj.field_notes_md;
     }
     if (
       opts.expectFieldNotesInstructions &&
-      typeof obj.field_notes_instructions === 'string'
+      typeof obj.field_notes_instructions === "string"
     ) {
       fieldNotesInstructions = obj.field_notes_instructions;
     }
-    if (typeof obj.commit_message === 'string') {
+    if (typeof obj.commit_message === "string") {
       commitMessage = obj.commit_message.trim();
     }
+    if (obj && Array.isArray(obj.decisions)) {
+    for (const item of obj.decisions) {
+      if (!item || typeof item !== 'object') continue;
+      const base = String(item.filename || '').trim();
+      if (!base) continue;
+      const f = allFiles.find((p) => path.basename(p) === base);
+      if (!f) continue;
+      const choice = String(item.decision || '').toLowerCase();
+      if (choice === 'keep') {
+        keep.add(f);
+      } else if (choice === 'aside') {
+        aside.add(f);
+      }
+      if (typeof item.reason === 'string' && item.reason.trim()) {
+        notes.set(f, item.reason.trim());
+      }
+    }
+    if (Array.isArray(obj.minutes)) {
+      for (const m of obj.minutes) {
+        if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
+          minutes.push(m.speaker + ': ' + m.text);
+        }
+      }
+    }
+      parsed = true;
+    }
+  } catch {
+    // not JSON; fall through
+  }
 
+  if (!parsed) {
+    try {
+    const obj = JSON.parse(body);
     const extract = (node) => {
       if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
+      if (Array.isArray(node.minutes))
+        minutes.push(...node.minutes.map((m) => m.speaker + ': ' + m.text));
       if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+      if (node.decision && node.decision.keep && node.decision.aside)
         return node.decision;
-      }
       for (const val of Object.values(node)) {
         const found = extract(val);
         if (found) return found;
       }
       return null;
     };
-
     const decision = extract(obj);
     if (decision) {
       const handle = (group, set) => {
         const val = decision[group];
         if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
+          for (const item of val) {
+            if (typeof item === 'string') {
+              const f = lookup(item);
+              if (f) set.add(f);
+            } else if (item && typeof item === 'object') {
+              const f = lookup(item.file);
+              if (f) {
+                set.add(f);
+                if (item.reason) notes.set(f, String(item.reason));
+              }
+            }
           }
         } else if (val && typeof val === 'object') {
           for (const [n, reason] of Object.entries(val)) {
@@ -439,35 +717,43 @@ export function parseReply(text, allFiles, opts = {}) {
           }
         }
       };
-
       handle('keep', keep);
       handle('aside', aside);
-      // continue to normalization below
+      if (Array.isArray(decision.unclassified)) {
+        for (const n of decision.unclassified) {
+          const f = lookup(n);
+          if (f) unclassified.push(f);
+        }
+      }
+      parsed = true;
     }
   } catch {
-    // fall through to plain text handling
+    // ignore JSON errors
   }
+}
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+if (!parsed) {
+    const lines = body.split("\n");
+    for (const raw of lines) {
+      const line = raw.trim();
+      const lower = line.toLowerCase();
+      const tm = line.match(/^([^:]+):\s*(.+)$/);
+      if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      for (const [name, f] of map) {
+        let short = name;
+        const idx = name.indexOf("dscf");
+        if (idx !== -1) short = name.slice(idx);
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
+        if (lower.includes(name) || (short !== name && lower.includes(short))) {
+          let decision;
+          if (lower.includes("keep")) decision = "keep";
+          if (lower.includes("aside")) decision = "aside";
+          if (decision === "keep") keep.add(f);
+          if (decision === "aside") aside.add(f);
 
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
+          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+          if (m && m[1]) notes.set(f, m[1].trim());
+        }
       }
     }
   }
@@ -476,12 +762,40 @@ export function parseReply(text, allFiles, opts = {}) {
   // in a later batch. Only files explicitly marked keep or aside are returned.
 
   // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
+  for (const f of keep) aside.delete(f);
 
   const decided = new Set([...keep, ...aside]);
-  const unclassified = allFiles.filter((f) => !decided.has(f));
+  if (!unclassified.length) {
+    unclassified = allFiles.filter((f) => !decided.has(f));
+  } else {
+    unclassified = unclassified.filter((f) => !decided.has(f));
+  }
+
+  if (
+    keep.size === 0 &&
+    aside.size === 0 &&
+    minutes.length === 0 &&
+    notes.size === 0
+  ) {
+    const failFile = path.join(
+      debugDir(),
+      `failed-reply-${crypto.randomUUID()}.json`
+    );
+    const payload = {
+      model: opts.model,
+      verbosity: opts.verbosity,
+      reasoningEffort: opts.reasoningEffort,
+      files: allFiles.map((f) => path.basename(f)),
+      reply: body,
+    };
+    try {
+      mkdirSync(path.dirname(failFile), { recursive: true });
+      writeFileSync(failFile, JSON.stringify(payload, null, 2));
+    } catch {
+      // ignore file write errors
+    }
+    console.warn(`⚠️  empty reply saved to ${failFile}`);
+  }
 
   return {
     keep: [...keep],

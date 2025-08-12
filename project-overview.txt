@@ -1303,9 +1303,11 @@ export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'
 export PHOTO_SELECT_OPENAI_FORMAT=""  # disable the parameter
 ```
 
-The CLI allows up to 4096 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
-`src/chatClient.js`) so the minutes and JSON decision block are returned in
-full.
+The OpenAI request uses `response_format: { type: "json_object" }` so the
+assistant replies with strict JSON. This avoids needing to strip Markdown
+fences and guarantees parseable output. The CLI allows up to 8192 tokens in
+each reply (see `MAX_RESPONSE_TOKENS` in `src/chatClient.js`) so the minutes
+and JSON decision block are returned in full.
 
 ## Caching
 
@@ -1349,7 +1351,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
 ```
 {
   "name": "photo-select",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI tool to recursively triage fine‑art photos with ChatGPT 4.5",
   "type": "module",
   "bin": {
@@ -2479,7 +2481,7 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 8192;
 
 function ensureJsonMention(text) {
   return /\bjson\b/i.test(text)

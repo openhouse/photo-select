@@ -44,10 +44,25 @@ program
     "-x, --context <file>",
     "Text file with exhibition context for the curators"
   )
+  .option(
+    "--verbosity <level>",
+    "LLM verbosity (low|medium|high)",
+    process.env.PHOTO_SELECT_VERBOSITY || "high"
+  )
+  .option(
+    "--reasoning-effort <level>",
+    "Reasoning effort (minimal|low|medium|high)",
+    process.env.PHOTO_SELECT_REASONING_EFFORT
+  )
   .option("--no-recurse", "Process a single directory only")
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
-  .option("--field-notes", "Enable field notes workflow")
-  .option("-v, --verbose", "Store prompts and responses for debugging")
+    .option("--field-notes", "Enable field notes workflow")
+    .option("-v, --verbose", "Store prompts and responses for debugging")
+    .option(
+      "--workers <n>",
+      "Number of worker processes (each runs batches sequentially)",
+      (v) => Math.max(1, parseInt(v, 10))
+    )
   .parse(process.argv);
 
 const {
@@ -60,8 +75,11 @@ const {
   curators,
   context: contextPath,
   parallel,
-  fieldNotes,
-  verbose,
+    fieldNotes,
+    verbose,
+    workers,
+    verbosity,
+    reasoningEffort,
   ollamaBaseUrl,
 } = program.opts();
 
@@ -80,6 +98,11 @@ const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+}
+
+let finalReasoningEffort = reasoningEffort;
+if (!finalReasoningEffort) {
+  finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
 }
 
 (async () => {
@@ -103,8 +126,11 @@ if (!finalModel) {
       curators,
       contextPath,
       parallel,
-      fieldNotes,
-      verbose,
+        fieldNotes,
+        verbose,
+        workers,
+        verbosity,
+        reasoningEffort: finalReasoningEffort,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

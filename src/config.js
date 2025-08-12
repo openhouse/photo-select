@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 /** Centralised config & helpers (Ember‑style “config owner”). */
 export const SUPPORTED_EXTENSIONS = [
   ".jpg",
@@ -14,3 +16,4 @@ export const SUPPORTED_EXTENSIONS = [
 
 /** Sleep helper for rate‑limit back‑off. */
 export const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+export const readPrompt = async (file) => readFile(file, "utf8");
