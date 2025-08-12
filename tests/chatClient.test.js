@@ -85,6 +85,22 @@ describe("parseReply", () => {
     expect(aside).not.toContain(files[2]);
   });
 
+  it("parses strict decisions array", () => {
+    const json = JSON.stringify({
+      minutes: [{ speaker: "Jamie", text: "ok" }],
+      decisions: [
+        { filename: "DSCF1234.jpg", decision: "keep", reason: "good light" },
+        { filename: "DSCF5678.jpg", decision: "aside", reason: "blurry" },
+      ],
+    });
+    const { keep, aside, notes, minutes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(notes.get(files[1])).toMatch(/blurry/);
+    expect(minutes[0]).toMatch(/Jamie/);
+  });
+
   it("handles JSON wrapped in Markdown fences", () => {
     const fenced =
       '```json\n' +
@@ -243,6 +259,25 @@ describe("chatCompletion", () => {
     expect(responsesSpy).toHaveBeenCalled();
     const args = responsesSpy.mock.calls[0][0];
     expect(args.max_output_tokens).toBeTruthy();
+    expect(result).toBe("ok");
+  });
+
+  it("uses strict schema for gpt-5 models", async () => {
+    chatSpy.mockReset();
+    responsesSpy.mockReset();
+    const errMsg =
+      "This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?";
+    chatSpy.mockRejectedValueOnce(new MockNotFoundError(errMsg));
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const result = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+    });
+    expect(responsesSpy).toHaveBeenCalled();
+    const args = responsesSpy.mock.calls[responsesSpy.mock.calls.length - 1][0];
+    expect(args.text.format.json_schema.name).toBe("photo_select_decision");
     expect(result).toBe("ok");
   });
 

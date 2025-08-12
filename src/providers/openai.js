@@ -8,8 +8,17 @@ export default class OpenAIProvider {
   async chat({
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,
+    model = 'gpt-4o',
     ...opts
   } = {}) {
+    if (/^gpt-5/.test(model)) {
+      return chatCompletion({
+        ...opts,
+        model,
+        expectFieldNotesInstructions,
+        expectFieldNotesMd,
+      });
+    }
     let format = OPENAI_FORMAT_OVERRIDE;
     if (format === undefined) {
       format = {
@@ -25,6 +34,11 @@ export default class OpenAIProvider {
     if (format !== null) {
       opts.responseFormat = format;
     }
-    return chatCompletion(opts);
+    return chatCompletion({
+      ...opts,
+      model,
+      expectFieldNotesInstructions,
+      expectFieldNotesMd,
+    });
   }
 }

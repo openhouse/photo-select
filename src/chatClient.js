@@ -78,7 +78,54 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 8192;
+
+function buildGPT5Schema({ files = [], instructions = false, fullNotes = false }) {
+  const decisionItem = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['filename', 'decision', 'reason'],
+    properties: {
+      filename: { type: 'string', enum: files.map((f) => path.basename(f)) },
+      decision: { type: 'string', enum: ['keep', 'aside'] },
+      reason: { type: 'string' },
+    },
+  };
+  const schema = {
+    name: 'photo_select_decision',
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['minutes', 'decisions'],
+      properties: {
+        minutes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['speaker', 'text'],
+            properties: {
+              speaker: { type: 'string' },
+              text: { type: 'string' },
+            },
+          },
+        },
+        decisions: {
+          type: 'array',
+          items: decisionItem,
+        },
+      },
+    },
+  };
+  if (instructions) {
+    schema.schema.properties.field_notes_instructions = { type: 'string' };
+  }
+  if (fullNotes) {
+    schema.schema.properties.field_notes_md = { type: 'string' };
+    schema.schema.properties.commit_message = { type: 'string' };
+  }
+  return schema;
+}
 
 function ensureJsonMention(text) {
   return /\bjson\b/i.test(text)
@@ -222,6 +269,8 @@ export async function chatCompletion({
   stream = false,
   onProgress = () => {},
   responseFormat,
+  expectFieldNotesInstructions = false,
+  expectFieldNotesMd = false,
 }) {
   const extras = await curatorsFromTags(images);
   const added = extras.filter((n) => !curators.includes(n));
@@ -242,6 +291,7 @@ export async function chatCompletion({
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    let format;
     try {
       onProgress('encoding');
       const { messages, used } = await buildMessages(
@@ -260,16 +310,29 @@ export async function chatCompletion({
         const hit = await getCachedReply(key);
         if (hit) return hit;
       }
+      format = responseFormat;
+      if (format === undefined) {
+        if (/^gpt-5/.test(model)) {
+          format = {
+            type: 'json_schema',
+            json_schema: buildGPT5Schema({
+              files: used,
+              instructions: expectFieldNotesInstructions,
+              fullNotes: expectFieldNotesMd,
+            }),
+          };
+        } else {
+          format = { type: 'json_object' };
+        }
+      }
 
       onProgress('request');
       const baseParams = {
         model,
         messages,
       };
-      if (responseFormat === undefined) {
-        baseParams.response_format = { type: 'json_object' };
-      } else if (responseFormat !== null) {
-        baseParams.response_format = responseFormat;
+      if (format !== null) {
+        baseParams.response_format = format;
       }
       if (/^o\d/.test(model)) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
@@ -318,16 +381,12 @@ export async function chatCompletion({
           model,
           curators: finalCurators,
         });
+        const fmt = format === undefined ? { type: 'json_object' } : format;
         const rsp = await openai.responses.create({
           model,
           instructions,
           input,
-          text:
-            responseFormat === undefined
-              ? { format: { type: 'json_object' } }
-              : responseFormat === null
-                ? undefined
-                : { format: responseFormat },
+          text: fmt === null ? undefined : { format: fmt },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         });
         const text = rsp.output_text;
@@ -386,6 +445,7 @@ export function parseReply(text, allFiles, opts = {}) {
   let fieldNotesInstructions;
   let commitMessage;
   // Try JSON first
+  let parsed = false;
   try {
     const obj = JSON.parse(text);
     if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === 'string') {
@@ -404,70 +464,106 @@ export function parseReply(text, allFiles, opts = {}) {
       commitMessage = obj.commit_message.trim();
     }
 
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
+    if (obj && Array.isArray(obj.decisions)) {
+      for (const item of obj.decisions) {
+        if (!item || typeof item !== 'object') continue;
+        const base = String(item.filename || '').trim();
+        if (!base) continue;
+        const f = allFiles.find((p) => path.basename(p) === base);
+        if (!f) continue;
+        const choice = String(item.decision || '').toLowerCase();
+        if (choice === 'keep') {
+          keep.add(f);
+        } else if (choice === 'aside') {
+          aside.add(f);
+        }
+        if (typeof item.reason === 'string' && item.reason.trim()) {
+          notes.set(f, item.reason.trim());
+        }
       }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
+      if (Array.isArray(obj.minutes)) {
+        for (const m of obj.minutes) {
+          if (
+            m &&
+            typeof m === 'object' &&
+            typeof m.speaker === 'string' &&
+            typeof m.text === 'string'
+          ) {
+            minutes.push(m.speaker + ': ' + m.text);
           }
         }
+      }
+      parsed = true;
+    } else {
+      const extract = (node) => {
+        if (!node || typeof node !== 'object') return null;
+        if (Array.isArray(node.minutes))
+          minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+
+        if (node.keep && node.aside) return node;
+        if (node.decision && node.decision.keep && node.decision.aside) {
+          if (Array.isArray(node.minutes))
+            minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+          return node.decision;
+        }
+        for (const val of Object.values(node)) {
+          const found = extract(val);
+          if (found) return found;
+        }
+        return null;
       };
 
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
+      const decision = extract(obj);
+      if (decision) {
+        const handle = (group, set) => {
+          const val = decision[group];
+          if (Array.isArray(val)) {
+            for (const n of val) {
+              const f = lookup(n);
+              if (f) set.add(f);
+            }
+          } else if (val && typeof val === 'object') {
+            for (const [n, reason] of Object.entries(val)) {
+              const f = lookup(n);
+              if (f) {
+                set.add(f);
+                if (reason) notes.set(f, String(reason));
+              }
+            }
+          }
+        };
+
+        handle('keep', keep);
+        handle('aside', aside);
+        parsed = true;
+      }
     }
   } catch {
     // fall through to plain text handling
   }
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+  if (!parsed) {
+    const lines = text.split("\n");
+    for (const raw of lines) {
+      const line = raw.trim();
+      const lower = line.toLowerCase();
+      const tm = line.match(/^([^:]+):\s*(.+)$/);
+      if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      for (const [name, f] of map) {
+        let short = name;
+        const idx = name.indexOf("dscf");
+        if (idx !== -1) short = name.slice(idx);
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
+        if (lower.includes(name) || (short !== name && lower.includes(short))) {
+          let decision;
+          if (lower.includes("keep")) decision = "keep";
+          if (lower.includes("aside")) decision = "aside";
+          if (decision === "keep") keep.add(f);
+          if (decision === "aside") aside.add(f);
 
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
+          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+          if (m && m[1]) notes.set(f, m[1].trim());
+        }
       }
     }
   }
