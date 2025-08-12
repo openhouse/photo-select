@@ -87,7 +87,8 @@ function formatDuration(ms) {
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
- * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
+ * @param {number} [options.parallel=1]      Number of API requests to run simultaneously (legacy)
+ * @param {number} [options.workers]         Worker count for dynamic queue
  * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
  * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
@@ -100,6 +101,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  workers = 0,
   fieldNotes = false,
   verbose = false,
   depth = 0,
@@ -111,6 +113,8 @@ export async function triageDirectory({
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
+
+  const workerCount = workers || parallel;
 
   if (!gitRoot) gitRoot = dir;
   if (fieldNotes && depth === 0) {
@@ -188,8 +192,8 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
+    // Step 1 – select up to workers × 10 images
+    const total = Math.min(images.length, workerCount * 10);
     const selection = pickRandom(images, total);
     console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
 
@@ -281,7 +285,19 @@ export async function triageDirectory({
               minutes,
               fieldNotesInstructions,
               fieldNotesMd,
+              unclassified = [],
             } = parsed;
+            if (unclassified.length) {
+              batches.push(unclassified);
+              const nb = multibar.create(4, 0, {
+                prefix: `Batch ${batches.length}`,
+                stage: 'queued',
+              });
+              bars.push(nb);
+              console.log(
+                `${indent}\uD83D\uDD01  Requeued ${unclassified.length} unclassified image(s)`
+              );
+            }
             if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
               if (fieldNotesMd) {
                 await notesWriter.writeFull(fieldNotesMd);
@@ -377,11 +393,11 @@ export async function triageDirectory({
       }
     }
 
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
+    const workerTasks = Array.from(
+      { length: Math.min(workerCount, batches.length) },
       () => worker()
     );
-    await Promise.all(workers);
+    await Promise.all(workerTasks);
     multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
@@ -412,7 +428,8 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
-        parallel,
+        parallel: workerCount,
+        workers: workerCount,
         fieldNotes,
         depth: depth + 1,
         gitRoot,

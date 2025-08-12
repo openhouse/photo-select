@@ -114,7 +114,8 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--parallel` | `1` | Number of batches to process simultaneously |
+| `--workers` | *(unset)* | Dynamic queue worker count |
+| `--parallel` | `1` | Legacy parallel mode |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
 
@@ -137,11 +138,13 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
-### Choosing `--parallel`
+### Workers vs Parallel
 
-Running multiple batches at once hides API latency but can exhaust system resources. See
-[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
-tuning this flag. In short, start around twice your physical core count and adjust
+`--workers N` runs a dynamic queue and prints an ETA as each level finishes.
+Any images the model skips are requeued for another pass. The older
+`--parallel` flag still processes multiple batches concurrently but lacks the
+requeue safety net. See [`docs/parallel-playbook.md`](docs/parallel-playbook.md)
+for tuning guidance; start around twice your physical core count and adjust
 until network waits dominate without hitting OpenAI rate limits.
 
 ### Streaming responses
@@ -157,7 +160,8 @@ Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
 The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
 or `OLLAMA_HTTP_TIMEOUT` to override this value if your environment
 needs a different window. `OLLAMA_HTTP_TIMEOUT` mirrors the official
-Ollama SDK and is respected when using the bundled provider.
+Ollama SDK and is respected when using the bundled provider. All OpenAI
+requests reuse a single HTTP keep‑alive agent.
 
 ### Structured outputs and JSON mode
 
@@ -166,7 +170,9 @@ typed responses. The environment variables `PHOTO_SELECT_OLLAMA_FORMAT` and
 `PHOTO_SELECT_OPENAI_FORMAT` can override this behaviour and are parsed as JSON
 when the value begins with `{`. Use an empty string to omit the parameter. The
 legacy `"json"` flag is still available for Ollama but is unreliable with
-images; schema-based structured outputs work with vision models.
+images; schema-based structured outputs work with vision models. For GPT‑5
+models the schema enumerates the batch’s filenames and restricts `decision` to
+`keep` or `aside`.
 
 ```bash
 export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object","properties":{...}}'

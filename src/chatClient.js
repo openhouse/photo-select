@@ -238,12 +238,50 @@ export async function chatCompletion({
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
+  const useResponses =
+    /gpt-5/i.test(model) ||
+    (responseFormat && responseFormat.type === 'json_schema');
 
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       onProgress('encoding');
+      if (useResponses) {
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+        });
+        if (cache) {
+          const hit = await getCachedReply(key);
+          if (hit) return hit;
+        }
+        onProgress('request');
+        const rsp = await openai.responses.create({
+          model,
+          instructions,
+          input,
+          text:
+            responseFormat === undefined
+              ? { format: { type: 'json_object' } }
+              : responseFormat === null
+                ? undefined
+                : { format: responseFormat },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        });
+        const text = rsp.output_text;
+        if (cache) await setCachedReply(key, text);
+        onProgress('done');
+        return text;
+      }
+
       const { messages, used } = await buildMessages(
         finalPrompt,
         images,
@@ -403,46 +441,58 @@ export function parseReply(text, allFiles, opts = {}) {
     if (typeof obj.commit_message === 'string') {
       commitMessage = obj.commit_message.trim();
     }
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
+    if (Array.isArray(obj.decisions)) {
+      if (Array.isArray(obj.minutes)) {
+        minutes.push(...obj.minutes.map((m) => `${m.speaker}: ${m.text}`));
+      }
+      for (const d of obj.decisions) {
+        const f = lookup(d.filename);
+        if (!f) continue;
+        if (d.decision === 'keep') keep.add(f);
+        if (d.decision === 'aside') aside.add(f);
+        if (d.reason) notes.set(f, String(d.reason));
+      }
+    } else {
+      const extract = (node) => {
+        if (!node || typeof node !== 'object') return null;
         if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
 
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
+        if (node.keep && node.aside) return node;
+        if (node.decision && node.decision.keep && node.decision.aside) {
+          if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+          return node.decision;
         }
+        for (const val of Object.values(node)) {
+          const found = extract(val);
+          if (found) return found;
+        }
+        return null;
       };
 
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
+      const decision = extract(obj);
+      if (decision) {
+        const handle = (group, set) => {
+          const val = decision[group];
+          if (Array.isArray(val)) {
+            for (const n of val) {
+              const f = lookup(n);
+              if (f) set.add(f);
+            }
+          } else if (val && typeof val === 'object') {
+            for (const [n, reason] of Object.entries(val)) {
+              const f = lookup(n);
+              if (f) {
+                set.add(f);
+                if (reason) notes.set(f, String(reason));
+              }
+            }
+          }
+        };
+
+        handle('keep', keep);
+        handle('aside', aside);
+        // continue to normalization below
+      }
     }
   } catch {
     // fall through to plain text handling
