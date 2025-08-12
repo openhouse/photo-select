@@ -151,6 +151,11 @@ from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
 
+### HTTP keep‑alive
+
+OpenAI calls reuse a persistent agent so TLS handshakes happen once per run.
+This improves stability during long streams and high concurrency.
+
 ### Custom timeout
 
 Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
@@ -180,6 +185,13 @@ By default it roughly matches the 4,096-token output limit of many OpenAI models
 `PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
 from either provider. The default is 20 minutes. Pass `--verbose` or set
 `PHOTO_SELECT_VERBOSE=1` to print additional debugging output when requests fail.
+
+### Workers vs. parallel
+
+`--parallel` caps how many requests are in flight at once. `--workers` creates
+that many long‑lived workers which pull from a shared queue, re‑queueing any
+unclassified images until every file receives a decision. Each batch logs an
+ETA to show how long the level may take to finish.
 
 ### People metadata (optional)
 

@@ -100,6 +100,7 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
+  workers,
   fieldNotes = false,
   verbose = false,
   depth = 0,
@@ -187,6 +188,243 @@ export async function triageDirectory({
     }
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+
+    if (workers && workers > 0) {
+      const queue = pickRandom(images, images.length);
+      console.log(
+        `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+      );
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+      const getBar = (idx) =>
+        multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+      let batchIdx = 0;
+      let completed = 0;
+
+      async function workerFn() {
+        while (true) {
+          if (!queue.length) break;
+          const batch = queue.splice(0, 10);
+          const idx = ++batchIdx;
+          const bar = getBar(idx);
+          await batchStore.run({ batch: idx }, async () => {
+            try {
+              const notesText = notesWriter
+                ? await notesWriter.read()
+                : undefined;
+              const basePrompt = await buildPrompt(promptPath, {
+                curators,
+                contextPath,
+                images: batch,
+                fieldNotes: notesText,
+                hasFieldNotes: !!notesWriter,
+                isSecondPass: false,
+              });
+              let prompt = basePrompt;
+              const start = Date.now();
+              const promptId = crypto.randomUUID();
+              if (verbose) {
+                const pFile = path.join(
+                  levelDir,
+                  '_prompts',
+                  `batch-${idx}-${promptId}.txt`
+                );
+                await writeFile(pFile, prompt, 'utf8');
+              }
+              const savePayload = verbose
+                ? async (obj) => {
+                    const dir = path.join(levelDir, '_payloads');
+                    await mkdir(dir, { recursive: true });
+                    const file = path.join(
+                      dir,
+                      `batch-${idx}-${promptId}.json`
+                    );
+                    await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                  }
+                : undefined;
+              const reply = await provider.chat({
+                prompt,
+                images: batch,
+                model,
+                curators,
+                expectFieldNotesInstructions: !!notesWriter,
+                savePayload,
+                onProgress: (stage) => {
+                  bar.update(stageMap[stage] || 0, { stage });
+                },
+                stream: true,
+              });
+              if (verbose) {
+                const rFile = path.join(
+                  levelDir,
+                  '_responses',
+                  `batch-${idx}-${promptId}.txt`
+                );
+                await writeFile(rFile, reply, 'utf8');
+              }
+              const ms = Date.now() - start;
+              bar.update(4, { stage: "done" });
+              bar.stop();
+              console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+              console.log(
+                `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
+              );
+
+              let parsed = parseReply(reply, batch, {
+                expectFieldNotesInstructions: !!notesWriter,
+              });
+              const {
+                keep,
+                aside,
+                notes,
+                minutes,
+                fieldNotesInstructions,
+                fieldNotesMd,
+                commitMessage,
+                unclassified,
+              } = parsed;
+              if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
+                if (fieldNotesMd) {
+                  await notesWriter.writeFull(fieldNotesMd);
+                  if (commitMessage) {
+                    await commitFile(
+                      gitRoot,
+                      path.relative(gitRoot, notesWriter.file),
+                      commitMessage
+                    );
+                  }
+                } else if (fieldNotesInstructions) {
+                  const [prev1 = '', prev2 = ''] = await getRevisionHistory(
+                    gitRoot,
+                    notesWriter.file,
+                    2
+                  );
+                  const commitMsgs = await getCommitMessages(
+                    gitRoot,
+                    notesWriter.file
+                  );
+                  let secondPrompt = await buildPrompt(promptPath, {
+                    curators,
+                    contextPath,
+                    images: batch,
+                    fieldNotes: notesText,
+                    fieldNotesPrev: prev1,
+                    fieldNotesPrev2: prev2,
+                    commitMessages: commitMsgs,
+                    hasFieldNotes: !!notesWriter,
+                    isSecondPass: true,
+                  });
+                  secondPrompt += `\nUpdate instructions:\n${fieldNotesInstructions}\n`;
+                  const secondId = crypto.randomUUID();
+                  if (verbose) {
+                    const sp = path.join(
+                      levelDir,
+                      '_prompts',
+                      `batch-${idx}-${secondId}-second.txt`
+                    );
+                    await writeFile(sp, secondPrompt, 'utf8');
+                  }
+                  const secondSavePayload = verbose
+                    ? async (obj) => {
+                        const dir = path.join(levelDir, '_payloads');
+                        await mkdir(dir, { recursive: true });
+                        const file = path.join(
+                          dir,
+                          `batch-${idx}-${secondId}-second.json`
+                        );
+                        await writeFile(
+                          file,
+                          JSON.stringify(obj, null, 2),
+                          'utf8'
+                        );
+                      }
+                    : undefined;
+                  const second = await provider.chat({
+                    prompt: secondPrompt,
+                    images: batch,
+                    model,
+                    curators,
+                    expectFieldNotesMd: true,
+                    savePayload: secondSavePayload,
+                    stream: true,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                  });
+                  if (verbose) {
+                    const sr = path.join(
+                      levelDir,
+                      '_responses',
+                      `batch-${idx}-${secondId}-second.txt`
+                    );
+                    await writeFile(sr, second, 'utf8');
+                  }
+                  parsed = parseReply(second, batch, { expectFieldNotesMd: true });
+                  if (parsed.fieldNotesMd) {
+                    await notesWriter.writeFull(parsed.fieldNotesMd);
+                    if (parsed.commitMessage) {
+                      await commitFile(
+                        gitRoot,
+                        path.relative(gitRoot, notesWriter.file),
+                        parsed.commitMessage
+                      );
+                    }
+                  }
+                }
+              }
+              if (minutes.length) {
+                const uuid = crypto.randomUUID();
+                const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                await writeFile(minutesFile, minutes.join('\n'), 'utf8');
+                console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
+              }
+              const keepDir = path.join(dir, "_keep");
+              const asideDir = path.join(dir, "_aside");
+              await Promise.all([
+                moveFiles(keep, keepDir, notes),
+                moveFiles(aside, asideDir, notes),
+              ]);
+              if (unclassified && unclassified.length) {
+                queue.push(...unclassified);
+              }
+              console.log(
+                `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+              );
+              completed += keep.length + aside.length;
+              if (completed) {
+                const remaining = totalImages - completed;
+                const elapsed = Date.now() - levelStart;
+                const etaMs = (elapsed / completed) * remaining;
+                console.log(
+                  `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                );
+              }
+            } catch (err) {
+              bar.update(4, { stage: "error" });
+              bar.stop();
+              console.warn(
+                `${indent}⚠️  Batch ${idx} failed: ${err.message}`
+              );
+            }
+          });
+        }
+      }
+
+      const pool = Array.from(
+        { length: Math.min(workers, Math.max(queue.length, 1)) },
+        () => workerFn()
+      );
+      await Promise.all(pool);
+      multibar.stop();
+      continue;
+    }
 
     // Step 1 – select up to parallel × 10 images
     const total = Math.min(images.length, parallel * 10);
@@ -377,11 +615,11 @@ export async function triageDirectory({
       }
     }
 
-    const workers = Array.from(
+    const pool = Array.from(
       { length: Math.min(parallel, batches.length) },
       () => worker()
     );
-    await Promise.all(workers);
+    await Promise.all(pool);
     multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;

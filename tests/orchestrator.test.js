@@ -107,6 +107,50 @@ describe("triageDirectory", () => {
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
 
+  it("processes batches with workers", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+      .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 2,
+    });
+    const etaLogs = logSpy.mock.calls.filter(([m]) =>
+      m.includes("ETA to finish level")
+    );
+    expect(etaLogs.length).toBeGreaterThanOrEqual(2);
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+    const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+    await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+    await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+    logSpy.mockRestore();
+  });
+
+  it("requeues unclassified images with workers", async () => {
+    await fs.writeFile(path.join(tmpDir, "3.jpg"), "c");
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: [], aside: ["2.jpg", "3.jpg"] })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 2,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "3.jpg"))).resolves.toBeTruthy();
+  });
+
   it("retries after chat errors", async () => {
     chatCompletion
       .mockRejectedValueOnce(new Error("timeout"))
