@@ -1,68 +1,83 @@
 import path from "node:path";
 import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
-import { delay } from "./config.js";
+import { readPrompt, delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply } from "./chatClient.js";
-import { buildPrompt } from "./templates.js";
-import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 
-const exec = promisify(execFile);
-
-async function ensureGitRepo(dir) {
+function extractJsonBlock(body) {
+  if (!body) return null;
+  let s = String(body).trim();
+  const fenced = s.match(/^```\w*\n([\s\S]*?)\n```$/);
+  if (fenced) s = fenced[1];
   try {
-    await stat(path.join(dir, ".git"));
+    return JSON.parse(s);
   } catch {
-    await exec("git", ["init"], { cwd: dir });
+    return null;
   }
 }
 
-async function commitFile(repoDir, file, message) {
-  await exec("git", ["add", file], { cwd: repoDir });
-  await exec("git", ["commit", "-m", message], { cwd: repoDir });
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== '1';
 }
+function color(s, code) {
+  return useColor() ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+const dim = (s) => color(s, 2),
+  green = (s) => color(s, 32),
+  yellow = (s) => color(s, 33);
 
-async function getRevisionHistory(repoDir, file, count = 2) {
-  try {
-    const rel = path.relative(repoDir, file);
-    const { stdout } = await exec(
-      "git",
-      ["log", "--format=%H", "--follow", "--", rel],
-      { cwd: repoDir }
-    );
-    const hashes = stdout.trim().split("\n").filter(Boolean);
-    const versions = [];
-    for (let i = 1; i <= count && i < hashes.length; i++) {
-      const sha = hashes[i];
-      const { stdout: content } = await exec(
-        "git",
-        ["show", `${sha}:${rel}`],
-        { cwd: repoDir }
-      );
-      versions.push(content.trim());
+function prettyLLMReply(raw, opts = {}) {
+  const json = extractJsonBlock(raw);
+  if (!json) {
+    try {
+      return JSON.stringify(JSON.parse(String(raw)), null, 2);
+    } catch {
+      return String(raw);
     }
-    return versions;
-  } catch {
-    return [];
   }
-}
+  const maxMinutes = Number(
+    process.env.PHOTO_SELECT_PRETTY_MINUTES || 20
+  );
+  let out = '';
 
-async function getCommitMessages(repoDir, file) {
-  try {
-    const rel = path.relative(repoDir, file);
-    const { stdout } = await exec(
-      "git",
-      ["log", "--format=%s", "--follow", "--", rel],
-      { cwd: repoDir }
-    );
-    return stdout.trim().split("\n").filter(Boolean);
-  } catch {
-    return [];
+  if (Array.isArray(json.minutes)) {
+    out += `${dim('— Minutes —')}\n`;
+    const shown = json.minutes.slice(0, maxMinutes);
+    for (const m of shown) {
+      if (m && typeof m === 'object') {
+        const who = (m.speaker ?? 'Curator').toString();
+        const txt = (m.text ?? '').toString();
+        out += `  • ${who}: ${txt}\n`;
+      }
+    }
+    if (json.minutes.length > shown.length) {
+      out += dim(`  … +${json.minutes.length - shown.length} more\n`);
+    }
   }
+
+  if (Array.isArray(json.decisions)) {
+    const keeps = json.decisions.filter(
+      (d) => d && d.decision === 'keep'
+    );
+    const asides = json.decisions.filter(
+      (d) => d && d.decision === 'aside'
+    );
+    out += `${dim('— Decisions —')} ${keeps.length} keep / ${asides.length} aside\n`;
+    for (const d of keeps)
+      out += `  ${green('KEEP')}  ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ''
+      }\n`;
+    for (const d of asides)
+      out += `  ${yellow('ASIDE')} ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ''
+      }\n`;
+  } else {
+    out += JSON.stringify(json, null, 2) + '\n';
+  }
+  return out.trimEnd();
 }
 
 function formatDuration(ms) {
@@ -88,7 +103,9 @@ function formatDuration(ms) {
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
  * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
- * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
+ * @param {number} [options.workers]         Number of worker processes for dynamic batches
+ * @param {string} [options.verbosity]       Verbosity level for GPT-5 models
+ * @param {string} [options.reasoningEffort] Reasoning effort for GPT-5 models
  * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
 export async function triageDirectory({
@@ -100,21 +117,24 @@ export async function triageDirectory({
   curators = [],
   contextPath,
   parallel = 1,
-  fieldNotes = false,
-  verbose = false,
+  workers,
+  verbosity,
+  reasoningEffort,
   depth = 0,
-  gitRoot,
 }) {
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
   const indent = "  ".repeat(depth);
-  let notesWriter;
-
-  if (!gitRoot) gitRoot = dir;
-  if (fieldNotes && depth === 0) {
-    await ensureGitRepo(gitRoot);
+  let prompt = await readPrompt(promptPath);
+  if (contextPath) {
+    try {
+      const context = await readFile(contextPath, 'utf8');
+      prompt += `\n\nCurator FYI:\n${context}`;
+    } catch (err) {
+      console.warn(`Could not read context file ${contextPath}: ${err.message}`);
+    }
   }
 
   console.log(`${indent}📁  Scanning ${dir}`);
@@ -124,59 +144,58 @@ export async function triageDirectory({
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
-  await mkdir(levelDir, { recursive: true });
-  if (verbose) {
-    await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
-    await mkdir(path.join(levelDir, '_responses'), { recursive: true });
-    await mkdir(path.join(levelDir, '_payloads'), { recursive: true });
-  }
-  const failedArchives = [];
-  const copyFileSafe = async (
-    src,
-    dest,
-    attempt = 0,
-    maxAttempts = 3
-  ) => {
-    try {
-      await copyFile(src, dest);
-    } catch (err) {
-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+  try {
+    await stat(levelDir);
+  } catch {
+    if (initImages.length) {
+      await mkdir(levelDir, { recursive: true });
+      const failedArchives = [];
+      const copyFileSafe = async (
+        src,
+        dest,
+        attempt = 0,
+        maxAttempts = 3
+      ) => {
         try {
-          await stat(src);
-        } catch {
-          // ignore
+          await copyFile(src, dest);
+        } catch (err) {
+          if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+            const wait = (attempt + 1) * 1000;
+            console.warn(
+              `${indent}⏳  Waiting for network file ${src} (${wait}ms)…`
+            );
+            try {
+              await stat(src);
+            } catch {
+              // ignore
+            }
+            await delay(wait);
+            return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+          }
+          throw err;
         }
-        await delay(wait);
-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+      };
+      await Promise.all(
+        initImages.map(async (file) => {
+          const dest = path.join(levelDir, path.basename(file));
+          try {
+            await copyFileSafe(file, dest);
+          } catch (err) {
+            failedArchives.push(file);
+            console.warn(
+              `${indent}⚠️  Failed to archive ${file}: ${err.message}`
+            );
+          }
+        })
+      );
+      if (failedArchives.length) {
+        const listPath = path.join(levelDir, "failed-archives.txt");
+        await writeFile(listPath, failedArchives.join("\n"), "utf8");
+        console.warn(
+          `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+        );
       }
-      throw err;
     }
-  };
-  await Promise.all(
-    initImages.map(async (file) => {
-      const dest = path.join(levelDir, path.basename(file));
-      try {
-        await copyFileSafe(file, dest);
-      } catch (err) {
-        failedArchives.push(file);
-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
-      }
-    })
-  );
-  if (failedArchives.length) {
-    const listPath = path.join(levelDir, "failed-archives.txt");
-    await writeFile(listPath, failedArchives.join("\n"), "utf8");
-    console.warn(
-      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
-    );
-  }
-
-  if (fieldNotes) {
-    const lvl = String(depth + 1).padStart(3, '0');
-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
-    await notesWriter.init();
   }
 
   while (true) {
@@ -188,201 +207,309 @@ export async function triageDirectory({
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
 
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
-    const selection = pickRandom(images, total);
-    console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
+    if (workers && workers > 0) {
+      const queue = pickRandom(images, images.length);
+      console.log(
+        `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+      );
 
-    const batches = [];
-    for (let i = 0; i < selection.length; i += 10) {
-      batches.push(selection.slice(i, i + 10));
-    }
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      try {
+        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+        const getBar = (idx) =>
+          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+        const log = (msg) => {
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
+        };
 
-    console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
+        let batchIdx = 0;
+        let completed = 0;
+        const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
 
-    const multibar = new MultiBar(
-      {
-        clearOnComplete: false,
-        hideCursor: true,
-        format: `${indent}{prefix} |{bar}| {stage}`,
-      },
-      Presets.shades_classic
-    );
-    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
-    const bars = batches.map((_, i) =>
-      multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
-    );
-
-    let nextIndex = 0;
-    async function worker() {
-      while (true) {
-        const idx = nextIndex++;
-        if (idx >= batches.length) break;
-        const batch = batches[idx];
-        const bar = bars[idx];
-        await batchStore.run({ batch: idx + 1 }, async () => {
-          try {
-            const notesText = notesWriter ? await notesWriter.read() : undefined;
-            const basePrompt = await buildPrompt(promptPath, {
-              curators,
-              contextPath,
-              images: batch,
-              fieldNotes: notesText,
-              hasFieldNotes: !!notesWriter,
-              isSecondPass: false,
-            });
-            let prompt = basePrompt;
-            const start = Date.now();
-            const promptId = crypto.randomUUID();
-            if (verbose) {
-              const pFile = path.join(levelDir, '_prompts', `batch-${idx + 1}-${promptId}.txt`);
-              await writeFile(pFile, prompt, 'utf8');
-            }
-            const savePayload = verbose
-              ? async (obj) => {
-                  const dir = path.join(levelDir, '_payloads');
-                  await mkdir(dir, { recursive: true });
-                  const file = path.join(
-                    dir,
-                    `batch-${idx + 1}-${promptId}.json`
+        async function workerFn() {
+          while (true) {
+            const batch = nextBatch();
+            if (!batch) break;
+            const idx = ++batchIdx;
+            const bar = getBar(idx);
+            await batchStore.run({ batch: idx }, async () => {
+              try {
+                const start = Date.now();
+                process.env.PHOTO_SELECT_DEBUG_DIR = dir;
+                const reply = await provider.chat({
+                  prompt,
+                  images: batch,
+                  model,
+                  curators,
+                  verbosity,
+                  reasoningEffort,
+                  onProgress: (stage) => {
+                    bar.update(stageMap[stage] || 0, { stage });
+                  },
+                  stream: true,
+                });
+                const ms = Date.now() - start;
+                bar.update(4, { stage: "done" });
+                bar.stop();
+                multibar.remove(bar);
+                if (process.env.PHOTO_SELECT_PRETTY !== '0') {
+                  log(
+                    `${indent}🤖  ChatGPT reply (pretty):\n` +
+                      prettyLLMReply(reply)
                   );
-                  await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
                 }
-              : undefined;
+                log(`${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`);
+
+                const { keep, aside, unclassified, notes, minutes } = parseReply(
+                  reply,
+                  batch,
+                  { model, verbosity, reasoningEffort }
+                );
+                if (process.env.PHOTO_SELECT_DEBUG) {
+                  log(
+                    `${indent}\uD83D\uDC1B  Counts: keep=${keep.length}, aside=${aside.length}, unclassified=${unclassified.length}, notes=${notes.size}`
+                  );
+                  for (const [f, note] of notes) {
+                    log(`${indent}\uD83D\uDCDD  ${path.basename(f)} → ${note}`);
+                  }
+                }
+                if (minutes.length) {
+                  const uuid = crypto.randomUUID();
+                  const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                  let minutesText = minutes.join('\n');
+                  const jsonForMinutes = extractJsonBlock(reply);
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON !== '0'
+                  ) {
+                    const pretty = JSON.stringify(jsonForMinutes, null, 2);
+                    minutesText +=
+                      '\n\n=== LLM JSON (full) ===\n```json\n' +
+                      pretty +
+                      '\n```\n';
+                  }
+                  await writeFile(minutesFile, minutesText, 'utf8');
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON_SIDECAR === '1'
+                  ) {
+                    const jsonSidecar = minutesFile.replace(/\.txt$/i, '.json');
+                    await writeFile(
+                      jsonSidecar,
+                      JSON.stringify(jsonForMinutes, null, 2),
+                      'utf8'
+                    );
+                  }
+
+                  log(
+                    `${indent}📝  Saved meeting minutes${
+                      jsonForMinutes ? ' (w/ decisions JSON)' : ''
+                    } to ${minutesFile}`
+                  );
+                }
+
+                const keepDir = path.join(dir, "_keep");
+                const asideDir = path.join(dir, "_aside");
+                await Promise.all([
+                  moveFiles(keep, keepDir, notes),
+                  moveFiles(aside, asideDir, notes),
+                ]);
+
+                if (unclassified.length) {
+                  queue.push(...unclassified);
+                }
+
+                log(
+                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                );
+
+                completed += keep.length + aside.length;
+                if (completed) {
+                  const remaining = totalImages - completed;
+                  const elapsed = Date.now() - levelStart;
+                  const etaMs = (elapsed / completed) * remaining;
+                  log(
+                    `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                  );
+                }
+              } catch (err) {
+                bar.update(4, { stage: "error" });
+                bar.stop();
+                multibar.remove(bar);
+                log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+              }
+            });
+          }
+        }
+
+        const pool = Array.from(
+          { length: Math.min(workers, Math.max(queue.length, 1)) },
+          () => workerFn()
+        );
+        await Promise.all(pool);
+      } finally {
+        multibar.stop();
+      }
+    } else {
+      const total = Math.min(images.length, parallel * 10);
+      const selection = pickRandom(images, total);
+      console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
+      const batches = [];
+      for (let i = 0; i < selection.length; i += 10) {
+        batches.push(selection.slice(i, i + 10));
+      }
+      console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
+
+      const multibar = new MultiBar(
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      try {
+        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+        const bars = batches.map((_, i) =>
+          multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
+        );
+        const log = (msg) => {
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
+        };
+
+        let nextIndex = 0;
+        async function workerFn() {
+          while (true) {
+            const idx = nextIndex++;
+            if (idx >= batches.length) break;
+            const batch = batches[idx];
+            const bar = bars[idx];
+            await batchStore.run({ batch: idx + 1 }, async () => {
+              try {
+                const start = Date.now();
+            process.env.PHOTO_SELECT_DEBUG_DIR = dir;
             const reply = await provider.chat({
               prompt,
               images: batch,
               model,
               curators,
-              expectFieldNotesInstructions: !!notesWriter,
-              savePayload,
+              verbosity,
+              reasoningEffort,
               onProgress: (stage) => {
                 bar.update(stageMap[stage] || 0, { stage });
               },
               stream: true,
             });
-            if (verbose) {
-              const rFile = path.join(levelDir, '_responses', `batch-${idx + 1}-${promptId}.txt`);
-              await writeFile(rFile, reply, 'utf8');
-            }
-            const ms = Date.now() - start;
-            bar.update(4, { stage: "done" });
-            bar.stop();
-            console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-            console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
+                const ms = Date.now() - start;
+                bar.update(4, { stage: "done" });
+                bar.stop();
+                multibar.remove(bar);
+                if (process.env.PHOTO_SELECT_PRETTY !== '0') {
+                  log(
+                    `${indent}🤖  ChatGPT reply (pretty):\n` +
+                      prettyLLMReply(reply)
+                  );
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                }
+                log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
 
-            let parsed = parseReply(reply, batch, {
-              expectFieldNotesInstructions: !!notesWriter,
-            });
-            const {
-              keep,
-              aside,
-              notes,
-              minutes,
-              fieldNotesInstructions,
-              fieldNotesMd,
-            } = parsed;
-            if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
-              if (fieldNotesMd) {
-                await notesWriter.writeFull(fieldNotesMd);
-                if (parsed.commitMessage) {
-                  await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
-                }
-              } else if (fieldNotesInstructions) {
-                const [prev1 = "", prev2 = ""] = await getRevisionHistory(
-                  gitRoot,
-                  notesWriter.file,
-                  2
+                const { keep, aside, unclassified = [], notes, minutes } = parseReply(
+                  reply,
+                  batch,
+                  { model, verbosity, reasoningEffort }
                 );
-                const commitMsgs = await getCommitMessages(
-                  gitRoot,
-                  notesWriter.file
-                );
-                let secondPrompt = await buildPrompt(promptPath, {
-                  curators,
-                  contextPath,
-                  images: batch,
-                  fieldNotes: notesText,
-                  fieldNotesPrev: prev1,
-                  fieldNotesPrev2: prev2,
-                  commitMessages: commitMsgs,
-                  hasFieldNotes: !!notesWriter,
-                  isSecondPass: true,
-                });
-                secondPrompt += `\nUpdate instructions:\n${fieldNotesInstructions}\n`;
-                const secondId = crypto.randomUUID();
-                if (verbose) {
-                  const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
-                  await writeFile(sp, secondPrompt, 'utf8');
-                }
-                const secondSavePayload = verbose
-                  ? async (obj) => {
-                      const dir = path.join(levelDir, '_payloads');
-                      await mkdir(dir, { recursive: true });
-                      const file = path.join(
-                        dir,
-                        `batch-${idx + 1}-${secondId}-second.json`
-                      );
-                      await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
-                    }
-                  : undefined;
-                const second = await provider.chat({
-                  prompt: secondPrompt,
-                  images: batch,
-                  model,
-                  curators,
-                  expectFieldNotesMd: true,
-                  savePayload: secondSavePayload,
-                  stream: true,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                });
-                if (verbose) {
-                  const sr = path.join(levelDir, '_responses', `batch-${idx + 1}-${secondId}-second.txt`);
-                  await writeFile(sr, second, 'utf8');
-                }
-                parsed = parseReply(second, batch, { expectFieldNotesMd: true });
-                if (parsed.fieldNotesMd) {
-                  await notesWriter.writeFull(parsed.fieldNotesMd);
-                  if (parsed.commitMessage) {
-                    await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+                if (process.env.PHOTO_SELECT_DEBUG) {
+                  log(
+                    `${indent}\uD83D\uDC1B  Counts: keep=${keep.length}, aside=${aside.length}, unclassified=${unclassified.length}, notes=${notes.size}`
+                  );
+                  for (const [f, note] of notes) {
+                    log(`${indent}\uD83D\uDCDD  ${path.basename(f)} \u2192 ${note}`);
                   }
                 }
+                if (minutes.length) {
+                  const uuid = crypto.randomUUID();
+                  const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
+                  let minutesText = minutes.join('\n');
+                  const jsonForMinutes = extractJsonBlock(reply);
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON !== '0'
+                  ) {
+                    const pretty = JSON.stringify(jsonForMinutes, null, 2);
+                    minutesText +=
+                      '\n\n=== LLM JSON (full) ===\n```json\n' +
+                      pretty +
+                      '\n```\n';
+                  }
+                  await writeFile(minutesFile, minutesText, 'utf8');
+
+                  if (
+                    jsonForMinutes &&
+                    process.env.PHOTO_SELECT_MINUTES_JSON_SIDECAR === '1'
+                  ) {
+                    const jsonSidecar = minutesFile.replace(/\.txt$/i, '.json');
+                    await writeFile(
+                      jsonSidecar,
+                      JSON.stringify(jsonForMinutes, null, 2),
+                      'utf8'
+                    );
+                  }
+
+                  log(
+                    `${indent}📝  Saved meeting minutes${
+                      jsonForMinutes ? ' (w/ decisions JSON)' : ''
+                    } to ${minutesFile}`
+                  );
+                }
+
+                const keepDir = path.join(dir, "_keep");
+                const asideDir = path.join(dir, "_aside");
+                await Promise.all([
+                  moveFiles(keep, keepDir, notes),
+                  moveFiles(aside, asideDir, notes),
+                ]);
+
+                log(
+                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                );
+              } catch (err) {
+                bar.update(4, { stage: "error" });
+                bar.stop();
+                multibar.remove(bar);
+                log(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
               }
-            }
-            if (minutes.length) {
-              const uuid = crypto.randomUUID();
-              const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-              await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-              console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
-            }
-
-            const keepDir = path.join(dir, "_keep");
-            const asideDir = path.join(dir, "_aside");
-            await Promise.all([
-              moveFiles(keep, keepDir, notes),
-              moveFiles(aside, asideDir, notes),
-            ]);
-
-            console.log(
-              `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-            );
-          } catch (err) {
-            bar.update(4, { stage: "error" });
-            bar.stop();
-            console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
+            });
           }
-        });
+        }
+
+        const pool = Array.from(
+          { length: Math.min(parallel, batches.length) },
+          () => workerFn()
+        );
+        await Promise.all(pool);
+      } finally {
+        multibar.stop();
       }
     }
-
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
-    multibar.stop();
     const remaining = (await listImages(dir)).length;
     const processed = totalImages - remaining;
     if (processed) {
@@ -413,9 +540,10 @@ export async function triageDirectory({
         curators,
         contextPath,
         parallel,
-        fieldNotes,
+        workers,
+        verbosity,
+        reasoningEffort,
         depth: depth + 1,
-        gitRoot,
       });
     } else {
       let keepCount = 0;

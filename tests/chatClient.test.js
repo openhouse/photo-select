@@ -25,11 +25,29 @@ vi.mock("openai", () => {
   };
 });
 
-let parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags;
+let parseReply,
+  buildMessages,
+  buildInput,
+  chatCompletion,
+  curatorsFromTags,
+  cacheKey,
+  buildGPT5Schema,
+  schemaForBatch,
+  useResponses;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
-  ({ parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags } = await import('../src/chatClient.js'));
+  ({
+    parseReply,
+    buildMessages,
+    buildInput,
+    chatCompletion,
+    curatorsFromTags,
+    cacheKey,
+    buildGPT5Schema,
+    schemaForBatch,
+    useResponses,
+  } = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -74,8 +92,11 @@ describe("parseReply", () => {
 
   it("parses JSON responses with reasoning", () => {
     const json = JSON.stringify({
-      keep: { "DSCF1234.jpg": "good light" },
-      aside: { "DSCF5678.jpg": "out of focus" },
+      minutes: [],
+      decision: {
+        keep: { "DSCF1234.jpg": "good light" },
+        aside: { "DSCF5678.jpg": "out of focus" },
+      },
     });
     const { keep, aside, notes } = parseReply(json, files);
     expect(keep).toContain(files[0]);
@@ -85,10 +106,53 @@ describe("parseReply", () => {
     expect(aside).not.toContain(files[2]);
   });
 
+  it("parses strict decisions array", () => {
+    const json = JSON.stringify({
+      minutes: [{ speaker: "Jamie", text: "ok" }],
+      decisions: [
+        { filename: "DSCF1234.jpg", decision: "keep", reason: "good light" },
+        { filename: "DSCF5678.jpg", decision: "aside", reason: "blurry" }
+      ]
+    });
+    const { keep, aside, notes, minutes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(notes.get(files[1])).toMatch(/blurry/);
+    expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("parses mixed object and string entries", () => {
+    const json = JSON.stringify({
+      keep: [
+        "DSCF1234.jpg",
+        { file: "DSCF5678.jpg", reason: "great action" },
+      ],
+      aside: [
+        { file: "DSCF9012.jpg", reason: "blurry" },
+      ],
+      unclassified: [],
+      notes: [],
+      minutes: [],
+    });
+    const { keep, aside, notes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(keep).toContain(files[1]);
+    expect(notes.get(files[1])).toMatch(/great action/);
+    expect(aside).toContain(files[2]);
+    expect(notes.get(files[2])).toMatch(/blurry/);
+  });
+
   it("handles JSON wrapped in Markdown fences", () => {
     const fenced =
       '```json\n' +
-      JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] }) +
+      JSON.stringify({
+        keep: [{ file: "DSCF1234.jpg" }],
+        aside: [{ file: "DSCF5678.jpg" }],
+        unclassified: [],
+        notes: [],
+        minutes: [],
+      }) +
       '\n```';
     const { keep, aside } = parseReply(fenced, files);
     expect(keep).toContain(files[0]);
@@ -96,7 +160,13 @@ describe("parseReply", () => {
   });
 
   it("deduplicates files listed in both groups", () => {
-    const reply = JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] });
+    const reply = JSON.stringify({
+      keep: [{ file: "DSCF1234.jpg" }],
+      aside: [{ file: "DSCF1234.jpg" }],
+      unclassified: [],
+      notes: [],
+      minutes: [],
+    });
     const { keep, aside } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
     expect(aside).not.toContain(files[0]);
@@ -104,11 +174,14 @@ describe("parseReply", () => {
 
   it("parses minutes and nested decision", () => {
     const reply = JSON.stringify({
-      minutes: [{ speaker: "Curator", text: "looks good" }],
-      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] },
+      minutes: [{ speaker: "Jamie", text: "looks good" }],
+      decision: {
+        keep: { "DSCF1234.jpg": "" },
+        aside: { "DSCF5678.jpg": "" },
+      },
     });
     const { keep, aside, minutes } = parseReply(reply, files);
-    expect(minutes[0]).toMatch(/Curator/);
+    expect(minutes[0]).toMatch(/Jamie/);
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
   });
@@ -138,6 +211,21 @@ describe("parseReply", () => {
       expectFieldNotesMd: true,
     });
     expect(commitMessage).toBe("Add note");
+  });
+
+  it("writes failed replies to the debug directory", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "ps-fail-"));
+    process.env.PHOTO_SELECT_DEBUG_DIR = tmp;
+    parseReply("", files, {
+      model: "gpt-5",
+      verbosity: "high",
+      reasoningEffort: "high",
+    });
+    const debugPath = path.join(tmp, ".debug");
+    const entries = await fs.readdir(debugPath);
+    expect(entries.some((e) => e.startsWith("failed-reply-"))).toBe(true);
+    await fs.rm(tmp, { recursive: true, force: true });
+    delete process.env.PHOTO_SELECT_DEBUG_DIR;
   });
 });
 
@@ -246,6 +334,103 @@ describe("chatCompletion", () => {
     expect(result).toBe("ok");
   });
 
+  it("uses responses API with verbosity and reasoning for gpt-5 models", async () => {
+    responsesSpy.mockClear();
+    chatSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const result = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5-mini",
+      cache: false,
+    });
+    expect(responsesSpy).toHaveBeenCalled();
+    expect(chatSpy).not.toHaveBeenCalled();
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("low");
+    expect(args.reasoning.effort).toBe("minimal");
+    expect(args.text.format.type).toBe("json_schema");
+    expect(args.text.format.name).toBe("photo_select_decision");
+    expect(args.text.format.strict).toBe(true);
+    expect(
+      args.text.format.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+    expect(result).toBe("ok");
+  });
+
+  it("extracts JSON from output_json when output_text is empty", async () => {
+    responsesSpy.mockClear();
+    const payload = {
+      output_text: "",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_json",
+              json: {
+                keep: [{ file: "DSCF1234.jpg", reason: "sharp" }],
+                aside: [{ file: "DSCF5678.jpg", reason: "blurry" }],
+                unclassified: [],
+                notes: [],
+                minutes: [],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    responsesSpy.mockResolvedValueOnce(payload);
+    const reply = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+    });
+    const testFiles = ["/tmp/DSCF1234.jpg", "/tmp/DSCF5678.jpg"];
+    const { keep, aside } = parseReply(reply, testFiles);
+    expect(keep).toContain(testFiles[0]);
+    expect(aside).toContain(testFiles[1]);
+    await fs.rm('.debug', { recursive: true, force: true });
+  });
+
+  it("allows overriding verbosity and reasoning effort", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+      verbosity: "high",
+      reasoningEffort: "high",
+    });
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("high");
+    expect(args.reasoning.effort).toBe("high");
+  });
+
+  it("rejects invalid flags", async () => {
+    await expect(
+      chatCompletion({
+        prompt: "p",
+        images: [],
+        model: "gpt-5",
+        cache: false,
+        verbosity: "loud",
+      })
+    ).rejects.toThrow(/verbosity/);
+    await expect(
+      chatCompletion({
+        prompt: "p",
+        images: [],
+        model: "gpt-5",
+        cache: false,
+        reasoningEffort: "extreme",
+      })
+    ).rejects.toThrow(/reasoningEffort/);
+  });
+
   it("logs additional curators from tags", async () => {
     vi.resetModules();
     const { chatCompletion } = await import("../src/chatClient.js");
@@ -271,5 +456,54 @@ describe("chatCompletion", () => {
     );
     logSpy.mockRestore();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("cacheKey", () => {
+  it("changes when verbosity differs", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cache-"));
+    const img = path.join(dir, "a.jpg");
+    await fs.writeFile(img, "a");
+    const k1 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", verbosity: "low" });
+    const k2 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", verbosity: "high" });
+    expect(k1).not.toBe(k2);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("changes when reasoning effort differs", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cache-"));
+    const img = path.join(dir, "a.jpg");
+    await fs.writeFile(img, "a");
+    const k1 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", reasoningEffort: "minimal" });
+    const k2 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", reasoningEffort: "high" });
+    expect(k1).not.toBe(k2);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("buildGPT5Schema", () => {
+  it("enumerates files", () => {
+    const schema = buildGPT5Schema({
+      files: ["a.jpg", "b.jpg"],
+    });
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
+    expect(item.required).toEqual(["filename", "decision", "reason"]);
+    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+  });
+
+  it("provides batch helper", () => {
+    const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
+    const schema = schemaForBatch(used, ["Curator-1"]);
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+  });
+});
+
+describe("useResponses", () => {
+  it("detects gpt-5 models", () => {
+    expect(useResponses("gpt-5-mini")).toBe(true);
+    expect(useResponses("gpt-4o")).toBe(false);
   });
 });
