@@ -45,6 +45,7 @@ program
     "Text file with exhibition context for the curators"
   )
   .option("--no-recurse", "Process a single directory only")
+  .option("--workers <n>", "Number of worker threads", (v) => Math.max(1, parseInt(v, 10)))
   .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
   .option("--field-notes", "Enable field notes workflow")
   .option("-v, --verbose", "Store prompts and responses for debugging")
@@ -60,6 +61,7 @@ const {
   curators,
   context: contextPath,
   parallel,
+  workers,
   fieldNotes,
   verbose,
   ollamaBaseUrl,
@@ -102,7 +104,8 @@ if (!finalModel) {
       recurse,
       curators,
       contextPath,
-      parallel,
+      workers: workers || parallel,
+      parallel: workers || parallel,
       fieldNotes,
       verbose,
     });
