@@ -16,16 +16,10 @@ Never invent filenames or keys.
     { "speaker": "Name", "text": "what was said" },
     ...
   ],
-  "decision": {
-    "keep": {
-      "filename1.jpg": "why it stays",
-      ...
-    },
-    "aside": {
-      "filename2.jpg": "why it is set aside",
-      ...
-    }
-  }
+  "decisions": [
+    { "filename": "file1.jpg", "decision": "keep", "reason": "why it stays" },
+    { "filename": "file2.jpg", "decision": "aside", "reason": "why it is set aside" }
+  ]
 }
 
 Include only those filenames for which you reach a clear decision.

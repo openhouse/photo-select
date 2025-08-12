@@ -404,45 +404,59 @@ export function parseReply(text, allFiles, opts = {}) {
       commitMessage = obj.commit_message.trim();
     }
 
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+    if (Array.isArray(obj.minutes)) {
+      minutes.push(...obj.minutes.map((m) => `${m.speaker}: ${m.text}`));
+    }
 
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
+    if (Array.isArray(obj.decisions)) {
+      for (const item of obj.decisions) {
+        const f = lookup(item.filename);
+        if (!f) continue;
+        if (item.decision === 'keep') keep.add(f);
+        if (item.decision === 'aside') aside.add(f);
+        if (item.reason) notes.set(f, String(item.reason));
+      }
+    } else {
+      const extract = (node) => {
+        if (!node || typeof node !== 'object') return null;
         if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
-      }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
 
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
+        if (node.keep && node.aside) return node;
+        if (node.decision && node.decision.keep && node.decision.aside) {
+          if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
+          return node.decision;
         }
+        for (const val of Object.values(node)) {
+          const found = extract(val);
+          if (found) return found;
+        }
+        return null;
       };
 
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
+      const decision = extract(obj);
+      if (decision) {
+        const handle = (group, set) => {
+          const val = decision[group];
+          if (Array.isArray(val)) {
+            for (const n of val) {
+              const f = lookup(n);
+              if (f) set.add(f);
+            }
+          } else if (val && typeof val === 'object') {
+            for (const [n, reason] of Object.entries(val)) {
+              const f = lookup(n);
+              if (f) {
+                set.add(f);
+                if (reason) notes.set(f, String(reason));
+              }
+            }
+          }
+        };
+
+        handle('keep', keep);
+        handle('aside', aside);
+        // continue to normalization below
+      }
     }
   } catch {
     // fall through to plain text handling

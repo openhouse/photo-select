@@ -115,8 +115,21 @@ through to the script unchanged.
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | `1` | Number of batches to process simultaneously |
+| `--workers` | `0` | Dynamic worker queue with requeue and ETA |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
+
+The OpenAI and Ollama providers keep connections alive and stream tokens to
+update progress bars. Each request allows up to 20 minutes before timing out
+(`PHOTO_SELECT_TIMEOUT_MS` overrides). Models that require the OpenAI
+Responses API—such as GPT‑5—are automatically routed to that endpoint and use
+JSON Schema for structured outputs.
+
+#### Workers vs Parallel
+
+`--parallel` fires a fixed number of batches at once. `--workers` maintains a
+dynamic queue, logs an ETA for the level, and requeues any images the model
+left unclassified.
 
 When enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message.
 During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.

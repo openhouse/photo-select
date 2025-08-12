@@ -107,6 +107,36 @@ describe("triageDirectory", () => {
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
 
+  it("processes batches with workers", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+      .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 2,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it("requeues unclassified images", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: [] }))
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 1,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+  });
+
   it("retries after chat errors", async () => {
     chatCompletion
       .mockRejectedValueOnce(new Error("timeout"))
