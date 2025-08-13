@@ -25,6 +25,10 @@ vi.mock("openai", () => {
   };
 });
 
+vi.mock("../src/config.js", () => ({
+  delay: vi.fn(() => Promise.resolve()),
+}));
+
 let parseReply,
   buildMessages,
   buildInput,
@@ -33,7 +37,8 @@ let parseReply,
   cacheKey,
   buildGPT5Schema,
   schemaForBatch,
-  useResponses;
+  useResponses,
+  buildReplySchema;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
@@ -43,11 +48,12 @@ beforeAll(async () => {
     buildInput,
     chatCompletion,
     curatorsFromTags,
-    cacheKey,
-    buildGPT5Schema,
-    schemaForBatch,
-    useResponses,
-  } = await import('../src/chatClient.js'));
+  cacheKey,
+  buildGPT5Schema,
+  schemaForBatch,
+  useResponses,
+} = await import('../src/chatClient.js'));
+  ({ buildReplySchema } = await import('../src/replySchema.js'));
 });
 
 afterAll(() => {
@@ -120,6 +126,21 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("extracts decisions from DECISIONS_JSON block", () => {
+    const reply = `prelude\n=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"good"}]}\n=== END ===`;
+    const { keep, notes } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toBe("good");
+  });
+
+  it("salvages uppercase minutes lines", () => {
+    const reply = `KEEP DSCF1234.jpg — sharp\nASIDE DSCF5678.jpg — blur`;
+    const { keep, aside, notes } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toBe("sharp");
   });
 
   it("parses mixed object and string entries", () => {
@@ -457,6 +478,22 @@ describe("chatCompletion", () => {
     logSpy.mockRestore();
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it("retries transient errors with backoff", async () => {
+    const { delay } = await import("../src/config.js");
+    responsesSpy.mockReset();
+    responsesSpy
+      .mockRejectedValueOnce({ status: 502 })
+      .mockRejectedValueOnce({ cause: { code: "EPIPE" } })
+      .mockResolvedValueOnce({ output_text: JSON.stringify({ minutes: [], decisions: [] }) });
+    const origRandom = Math.random;
+    Math.random = () => 0; // deterministic jitter
+    await chatCompletion({ prompt: "p", images: [], model: "gpt-5", cache: false });
+    Math.random = origRandom;
+    expect(responsesSpy).toHaveBeenCalledTimes(3);
+    expect(delay.mock.calls.length).toBe(2);
+    expect(delay.mock.calls[0][0]).toBeLessThan(delay.mock.calls[1][0]);
+  });
 });
 
 describe("cacheKey", () => {
@@ -485,19 +522,34 @@ describe("buildGPT5Schema", () => {
   it("enumerates files", () => {
     const schema = buildGPT5Schema({
       files: ["a.jpg", "b.jpg"],
+      minutesMin: 2,
+      minutesMax: 4,
     });
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
     expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
     expect(item.required).toEqual(["filename", "decision", "reason"]);
-    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+    const minutesSchema = schema.schema.properties.minutes;
+    expect(minutesSchema.minItems).toBe(2);
+    expect(minutesSchema.maxItems).toBe(4);
+    expect(minutesSchema.items.properties.speaker.type).toBe("string");
   });
 
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
-    const schema = schemaForBatch(used, ["Curator-1"]);
+    const schema = schemaForBatch(used, ["Curator-1"], 1, 3);
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(schema.schema.properties.minutes.minItems).toBe(1);
+    expect(schema.schema.properties.minutes.maxItems).toBe(3);
+  });
+});
+
+describe("buildReplySchema", () => {
+  it("includes minutes bounds", () => {
+    const schema = buildReplySchema({ minutesMin: 2, minutesMax: 5 });
+    expect(schema.properties.minutes.minItems).toBe(2);
+    expect(schema.properties.minutes.maxItems).toBe(5);
   });
 });
 

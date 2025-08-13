@@ -58,7 +58,13 @@ function color(s, code) {
 const dim = (s) => color(s, 2);
 const green = (s) => color(s, 32);
 const yellow = (s) => color(s, 33);
-const MAX_ZERO_DECISION_STREAK = 2;
+const SMALL = Number(process.env.PHOTO_SELECT_SMALL_BATCH_THRESHOLD || 10);
+const MAX_SMALL = Number(
+  process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_SMALL || 1
+);
+const MAX_LARGE = Number(
+  process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_LARGE || 2
+);
 
 function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   const json = extractJsonBlock(raw);
@@ -320,69 +326,101 @@ export async function triageDirectory({
               try {
                 const batchStart = Date.now();
                 const remaining = batch.length + queue.length;
-                const isSmall = remaining <= 10;
-                let zeroStreak = 0;
-                let finalize = false;
+                const isSmall = remaining <= SMALL;
+                const maxStreak = isSmall ? MAX_SMALL : MAX_LARGE;
+                let attempts = 0;
                 let reply;
                 let keep = [];
                 let aside = [];
                 let unclassified = [];
                 let notes = new Map();
                 let minutes = [];
-                for (let attempt = 1; attempt <= MAX_ZERO_DECISION_STREAK; attempt++) {
-                  let prompt = await buildPrompt(promptPath, {
+
+                const { prompt: basePrompt, minutesMin, minutesMax } = await buildPrompt(
+                  promptPath,
+                  {
                     curators,
                     contextPath,
                     images: batch,
                     hasFieldNotes: false,
                     isSecondPass: false,
-                  });
-                  if (finalize) {
-                    prompt +=
-                      "\nFINALIZE MODE:\n- You must assign every image to \"keep\" or \"aside\".\n- Returning zero decisions is invalid.";
                   }
-                  reply = await provider.chat({
-                    prompt,
-                    images: batch,
-                    model,
-                    curators,
-                    verbosity,
-                    reasoningEffort,
-                    onProgress: (stage) => {
-                      bar.update(stageMap[stage] || 0, { stage });
-                    },
-                    stream: true,
-                  });
-                  ({ keep, aside, unclassified, notes, minutes } = parseReply(
-                    reply,
-                    batch,
-                    { model, verbosity, reasoningEffort }
-                  ));
-                  if (keep.length + aside.length > 0) break;
-                  zeroStreak++;
-                  if (isSmall && zeroStreak < MAX_ZERO_DECISION_STREAK) {
-                    finalize = true;
-                    console.log(
-                      dim("No decisions; not cached; retrying in finalize mode.")
+                );
+                reply = await provider.chat({
+                  prompt: basePrompt,
+                  images: batch,
+                  model,
+                  curators,
+                  verbosity,
+                  reasoningEffort,
+                  minutesMin,
+                  minutesMax,
+                  onProgress: (stage) => {
+                    bar.update(stageMap[stage] || 0, { stage });
+                  },
+                  stream: true,
+                });
+                ({ keep, aside, unclassified, notes, minutes } = parseReply(
+                  reply,
+                  batch,
+                  { model, verbosity, reasoningEffort }
+                ));
+
+                if (keep.length + aside.length === 0) {
+                  attempts++;
+                  if (attempts <= maxStreak) {
+                    const context = contextPath
+                      ? await readFile(contextPath, "utf8").catch(() => "")
+                      : "";
+                    const repair = [
+                      `role play as ${curators.join(", ")}:\n - inidicate who is speaking\n - say what you think`,
+                      "You are continuing the same curatorial session.",
+                    ];
+                    if (context) {
+                      repair.push("Context for today:", context);
+                    }
+                    repair.push(
+                      "Return only the block below. No minutes, no commentary.",
+                      "",
+                      "=== DECISIONS_JSON ===",
+                      '{"decisions":[{"filename":"<from list>","decision":"keep|aside","reason":""}]}',
+                      "=== END ===",
+                      "",
+                      "Files (use each exactly once):",
+                      ...batch.map((f) => `- ${path.basename(f)}`)
                     );
-                    continue;
+                    reply = await provider.chat({
+                      prompt: repair.join("\n"),
+                      images: batch,
+                      model,
+                      curators,
+                      verbosity: "low",
+                      reasoningEffort: "low",
+                      onProgress: (stage) => {
+                        bar.update(stageMap[stage] || 0, { stage });
+                      },
+                      stream: true,
+                    });
+                    ({ keep, aside, unclassified, notes, minutes } = parseReply(
+                      reply,
+                      batch,
+                      { model, verbosity: "low", reasoningEffort: "low" }
+                    ));
                   }
-                  if (zeroStreak >= MAX_ZERO_DECISION_STREAK) {
-                    console.log(
-                      dim(
-                        `⚠️  No decisions after ${zeroStreak} attempt(s); marking NEEDS_REVIEW and continuing.`
-                      )
-                    );
-                    const marker = path.join(dir, "NEEDS_REVIEW");
-                    const list = batch
-                      .map((f) => path.basename(f))
-                      .join("\n");
-                    try {
-                      const prev = await readFile(marker, "utf8").catch(() => "");
-                      await writeFile(marker, `${prev}${list}\n`, "utf8");
-                    } catch {}
-                    break;
-                  }
+                }
+
+                if (keep.length + aside.length === 0) {
+                  console.log(
+                    dim(
+                      `⚠️  No decisions after ${attempts} attempt(s); marking NEEDS_REVIEW and continuing.`
+                    )
+                  );
+                  const marker = path.join(dir, "NEEDS_REVIEW");
+                  const list = batch.map((f) => path.basename(f)).join("\n");
+                  try {
+                    const prev = await readFile(marker, "utf8").catch(() => "");
+                    await writeFile(marker, `${prev}${list}\n`, "utf8");
+                  } catch {}
                 }
                 const ms = Date.now() - batchStart;
                 bar.update(4, { stage: "done" });
