@@ -308,6 +308,9 @@ export async function triageDirectory({
         let batchIdx = 0;
         let completed = 0;
         const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
+        const zeroDecisionStreak = new Map();
+        const finalizeNext = new Set();
+        const MAX_ZERO_DECISION_STREAK = 2;
 
         async function workerFn() {
           while (true) {
@@ -318,13 +321,22 @@ export async function triageDirectory({
             await batchStore.run({ batch: idx }, async () => {
               try {
                 const start = Date.now();
-                const prompt = await buildPrompt(promptPath, {
+                const sig = batch
+                  .map((f) => path.basename(f))
+                  .sort()
+                  .join(",");
+                const finalize = finalizeNext.has(sig);
+                const basePrompt = await buildPrompt(promptPath, {
                   curators,
                   contextPath,
                   images: batch,
                   hasFieldNotes: false,
                   isSecondPass: false,
                 });
+                const extra = finalize
+                  ? "\nYou must label every image as keep or aside. Zero decisions is invalid."
+                  : "";
+                const prompt = basePrompt + extra;
                 const reply = await provider.chat({
                   prompt,
                   images: batch,
@@ -397,6 +409,32 @@ export async function triageDirectory({
                   await writeFile(txtPath, out, "utf8");
                   log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
                 }
+                if (keep.length + aside.length === 0) {
+                  const streak = (zeroDecisionStreak.get(sig) || 0) + 1;
+                  zeroDecisionStreak.set(sig, streak);
+                  if (streak >= MAX_ZERO_DECISION_STREAK) {
+                    console.log(
+                      dim(
+                        `⚠️  No decisions after ${streak} attempt(s); marking NEEDS_REVIEW and continuing.`
+                      )
+                    );
+                    try {
+                      await writeFile(path.join(dir, "NEEDS_REVIEW"), "");
+                    } catch {}
+                    finalizeNext.delete(sig);
+                  } else {
+                    if (batch.length <= 10) {
+                      finalizeNext.add(sig);
+                      console.log(
+                        dim("No decisions; retrying in finalize mode.")
+                      );
+                    }
+                    queue.push(...unclassified);
+                  }
+                  return;
+                }
+                zeroDecisionStreak.delete(sig);
+                finalizeNext.delete(sig);
                 const keepDir = path.join(dir, "_keep");
                 const asideDir = path.join(dir, "_aside");
                 await Promise.all([
