@@ -8,15 +8,20 @@ export default class OpenAIProvider {
   async chat({
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,
+    minutesMin,
+    minutesMax,
+    responseFormat,
     ...opts
   } = {}) {
-    let format = OPENAI_FORMAT_OVERRIDE;
+    let format = responseFormat ?? OPENAI_FORMAT_OVERRIDE;
     if (format === undefined) {
       format = {
         type: 'json_object',
         schema: buildReplySchema({
           instructions: expectFieldNotesInstructions,
           fullNotes: expectFieldNotesMd,
+          minutesMin,
+          minutesMax,
         }),
       };
     } else if (typeof format === 'string') {
@@ -25,6 +30,6 @@ export default class OpenAIProvider {
     if (format !== null) {
       opts.responseFormat = format;
     }
-    return chatCompletion(opts);
+    return chatCompletion({ minutesMin, minutesMax, ...opts });
   }
 }
