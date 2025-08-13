@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
+import { readCache as getCachedReply, writeCache as setCachedReply } from "./chatCache.js";
 
 const DEFAULT_TIMEOUT = 20 * 60 * 1000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
@@ -213,21 +214,7 @@ function ensureJsonMention(text) {
   return /\bjson\b/i.test(text) ? text : `${text}\nRespond in json format.`;
 }
 
-const CACHE_DIR = path.resolve(".cache");
 const CACHE_KEY_PREFIX = "v4";
-
-async function getCachedReply(key) {
-  try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), "utf8");
-  } catch {
-    return null;
-  }
-}
-
-async function setCachedReply(key, text) {
-  await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, "utf8");
-}
 
 export async function cacheKey({
   prompt,
