@@ -24,6 +24,8 @@ export default class OllamaProvider {
     model,
     curators = [],
     maxRetries = 3,
+    minutesMin,
+    minutesMax,
     onProgress = () => {},
     savePayload,
     expectFieldNotesInstructions = false,
@@ -72,6 +74,8 @@ export default class OllamaProvider {
           format = buildReplySchema({
             instructions: expectFieldNotesInstructions,
             fullNotes: expectFieldNotesMd,
+            minutesMin,
+            minutesMax,
           });
         }
         if (format !== null) {
