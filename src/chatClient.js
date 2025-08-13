@@ -1,6 +1,6 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
-import { readFile, stat, mkdir, writeFile, appendFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, appendFile, rm } from "node:fs/promises";
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -214,17 +214,36 @@ function ensureJsonMention(text) {
 }
 
 const CACHE_DIR = path.resolve(".cache");
-const CACHE_KEY_PREFIX = "v4";
+const CACHE_KEY_PREFIX = "v5";
 
-async function getCachedReply(key) {
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== "1";
+}
+const dim = (s) => (useColor() ? `\x1b[2m${s}\x1b[0m` : s);
+
+async function getCachedReply(key, used = []) {
   try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), "utf8");
+    const file = path.join(CACHE_DIR, `${key}.txt`);
+    const text = await readFile(file, "utf8");
+    const { keep, aside } = parseReply(text, used);
+    if (keep.length + aside.length === 0) {
+      try {
+        await rm(file);
+      } catch {}
+      return null;
+    }
+    return text;
   } catch {
     return null;
   }
 }
 
-async function setCachedReply(key, text) {
+async function setCachedReply(key, text, used = []) {
+  const { keep, aside } = parseReply(text, used);
+  if (keep.length + aside.length === 0) {
+    console.log(dim(`cache: skip (0 decisions)`));
+    return;
+  }
   await mkdir(CACHE_DIR, { recursive: true });
   await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, "utf8");
 }
@@ -419,7 +438,7 @@ export async function chatCompletion({
           reasoningEffort,
         });
         if (cache) {
-          const hit = await getCachedReply(key);
+          const hit = await getCachedReply(key, used);
           if (hit) return hit;
         }
         const schema = schemaForBatch(used, finalCurators);
@@ -452,7 +471,7 @@ export async function chatCompletion({
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
-        if (cache) await setCachedReply(key, text);
+        if (cache) await setCachedReply(key, text, used);
         onProgress("done");
         return text;
       }
@@ -470,7 +489,7 @@ export async function chatCompletion({
         curators: finalCurators,
       });
       if (cache) {
-        const hit = await getCachedReply(key);
+        const hit = await getCachedReply(key, used);
         if (hit) return hit;
       }
 
@@ -509,7 +528,7 @@ export async function chatCompletion({
         const { choices } = await openai.chat.completions.create(baseParams);
         text = choices[0].message.content;
       }
-      if (cache) await setCachedReply(key, text);
+      if (cache) await setCachedReply(key, text, used);
       onProgress("done");
       return text;
     } catch (err) {
@@ -568,7 +587,7 @@ export async function chatCompletion({
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
-        if (cache) await setCachedReply(key, text);
+        if (cache) await setCachedReply(key, text, used);
         onProgress("done");
         return text;
       }
