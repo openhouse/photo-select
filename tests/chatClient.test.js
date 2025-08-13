@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as config from "../src/config.js";
 
 let chatSpy;
 let responsesSpy;
@@ -226,6 +227,22 @@ describe("parseReply", () => {
     expect(entries.some((e) => e.startsWith("failed-reply-"))).toBe(true);
     await fs.rm(tmp, { recursive: true, force: true });
     delete process.env.PHOTO_SELECT_DEBUG_DIR;
+  });
+
+  it("parses DECISIONS_JSON block", () => {
+    const text =
+      '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"sharp"}]}\n=== END ===';
+    const { keep, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/sharp/);
+  });
+
+  it("salvages decisions from minutes lines", () => {
+    const text = 'KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur';
+    const { keep, aside, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/anchor/);
+    expect(aside).toContain(files[1]);
   });
 });
 
@@ -485,17 +502,23 @@ describe("buildGPT5Schema", () => {
   it("enumerates files", () => {
     const schema = buildGPT5Schema({
       files: ["a.jpg", "b.jpg"],
+      minutesMin: 2,
+      minutesMax: 4,
     });
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
     expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
     expect(item.required).toEqual(["filename", "decision", "reason"]);
-    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+    expect(schema.schema.properties.minutes.minItems).toBe(2);
+    expect(schema.schema.properties.minutes.maxItems).toBe(4);
+    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe(
+      "string"
+    );
   });
 
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
-    const schema = schemaForBatch(used, ["Curator-1"]);
+    const schema = schemaForBatch(used, 3, 12);
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
   });
@@ -545,5 +568,30 @@ describe("cache guards", () => {
     });
     expect(out).toBe('fresh');
     expect(responsesSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retry policy", () => {
+  it("backs off with jitter on transient errors", async () => {
+    const delaySpy = vi
+      .spyOn(config, 'delay')
+      .mockResolvedValue(undefined);
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    chatSpy
+      .mockRejectedValueOnce({ status: 502 })
+      .mockRejectedValueOnce({ code: 'EPIPE' })
+      .mockResolvedValueOnce({ choices: [{ message: { content: 'ok' } }] });
+    const out = await chatCompletion({
+      prompt: 'p',
+      images: [],
+      model: 'gpt-4o',
+      cache: false,
+    });
+    expect(out).toBe('ok');
+    expect(delaySpy).toHaveBeenCalledTimes(2);
+    expect(delaySpy.mock.calls[0][0]).toBe(1400);
+    expect(delaySpy.mock.calls[1][0]).toBe(2800);
+    Math.random.mockRestore();
+    delaySpy.mockRestore();
   });
 });
