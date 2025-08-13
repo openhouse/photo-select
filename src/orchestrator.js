@@ -36,6 +36,7 @@ function parsePrettyMinutes() {
   return isTTY && !isCI ? Infinity : 20;
 }
 const MAX_MINUTES = parsePrettyMinutes();
+const MAX_ZERO_DECISION_STREAK = 2;
 
 function extractJsonBlock(body) {
   if (!body) return null;
@@ -314,116 +315,145 @@ export async function triageDirectory({
             const batch = nextBatch();
             if (!batch) break;
             const idx = ++batchIdx;
-            const bar = getBar(idx);
             await batchStore.run({ batch: idx }, async () => {
-              try {
-                const start = Date.now();
-                const prompt = await buildPrompt(promptPath, {
-                  curators,
-                  contextPath,
-                  images: batch,
-                  hasFieldNotes: false,
-                  isSecondPass: false,
-                });
-                const reply = await provider.chat({
-                  prompt,
-                  images: batch,
-                  model,
-                  curators,
-                  verbosity,
-                  reasoningEffort,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                  stream: true,
-                });
-                const ms = Date.now() - start;
-                bar.update(4, { stage: "done" });
-                bar.stop();
-                multibar.remove(bar);
-                if (PRETTY) {
-                  log(`${indent}🤖  ChatGPT reply (pretty):\n` + prettyLLMReply(reply));
-                } else {
-                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-                }
-                log(
-                  `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
-                );
-
-                const { keep, aside, unclassified, notes, minutes } = parseReply(
-                  reply,
-                  batch,
-                  { model, verbosity, reasoningEffort }
-                );
-                // Write primary minutes JSON and optional transcript
-                const uuid = crypto.randomUUID();
-                const jsonPath = path.join(dir, `minutes-${uuid}.json`);
-                const j =
-                  extractJsonBlock(reply) || (() => {
-                    const mk = (arr, tag) =>
-                      arr.map((f) => ({
-                        filename: path.basename(f),
-                        decision: tag,
-                        reason: (notes.get(f) || "").toString(),
-                      }));
-                    const decisions = [
-                      ...mk(keep, "keep"),
-                      ...mk(aside, "aside"),
-                    ];
-                    const minutesObjs = minutes.map((line) => {
-                      const m = line.match(/^([^:]+):\s*(.*)$/);
-                      return m
-                        ? { speaker: m[1], text: m[2] }
-                        : { speaker: "Curator", text: line };
-                    });
-                    return { minutes: minutesObjs, decisions };
-                  })();
-                await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
-                log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
-                if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
-                  const txtPath = path.join(dir, `minutes-${uuid}.txt`);
-                  let out = j.minutes
-                    .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
-                    .join("\n");
-                  if (Array.isArray(j.decisions)) {
-                    const keeps = j.decisions.filter((d) => d.decision === "keep");
-                    const asides = j.decisions.filter((d) => d.decision === "aside");
-                    out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
-                    for (const d of keeps)
-                      out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
-                    for (const d of asides)
-                      out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+              let zeroStreak = 0;
+              let finalize = queue.length === 0 && batch.length <= 10;
+              while (true) {
+                const bar = getBar(idx);
+                try {
+                  const start = Date.now();
+                  let prompt = await buildPrompt(promptPath, {
+                    curators,
+                    contextPath,
+                    images: batch,
+                    hasFieldNotes: false,
+                    isSecondPass: false,
+                  });
+                  if (finalize) {
+                    prompt +=
+                      '\n\nFinalize mode:\nYou MUST assign every image to "keep" or "aside". Returning zero decisions is invalid.';
                   }
-                  await writeFile(txtPath, out, "utf8");
-                  log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
-                }
-                const keepDir = path.join(dir, "_keep");
-                const asideDir = path.join(dir, "_aside");
-                await Promise.all([
-                  moveFiles(keep, keepDir, notes),
-                  moveFiles(aside, asideDir, notes),
-                ]);
-                if (unclassified.length) {
-                  queue.push(...unclassified);
-                }
-                log(
-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-                );
-
-                completed += keep.length + aside.length;
-                if (completed) {
-                  const remaining = totalImages - completed;
-                  const elapsed = Date.now() - levelStart;
-                  const etaMs = (elapsed / completed) * remaining;
+                  const reply = await provider.chat({
+                    prompt,
+                    images: batch,
+                    model,
+                    curators,
+                    verbosity,
+                    reasoningEffort,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                    stream: true,
+                  });
+                  const ms = Date.now() - start;
+                  bar.update(4, { stage: "done" });
+                  bar.stop();
+                  multibar.remove(bar);
+                  if (PRETTY) {
+                    log(`${indent}🤖  ChatGPT reply (pretty):\n` + prettyLLMReply(reply));
+                  } else {
+                    log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                  }
                   log(
-                    `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                    `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
                   );
+
+                  const { keep, aside, unclassified, notes, minutes } = parseReply(
+                    reply,
+                    batch,
+                    { model, verbosity, reasoningEffort }
+                  );
+                  // Write primary minutes JSON and optional transcript
+                  const uuid = crypto.randomUUID();
+                  const jsonPath = path.join(dir, `minutes-${uuid}.json`);
+                  const j =
+                    extractJsonBlock(reply) || (() => {
+                      const mk = (arr, tag) =>
+                        arr.map((f) => ({
+                          filename: path.basename(f),
+                          decision: tag,
+                          reason: (notes.get(f) || "").toString(),
+                        }));
+                      const decisions = [
+                        ...mk(keep, "keep"),
+                        ...mk(aside, "aside"),
+                      ];
+                      const minutesObjs = minutes.map((line) => {
+                        const m = line.match(/^([^:]+):\s*(.*)$/);
+                        return m
+                          ? { speaker: m[1], text: m[2] }
+                          : { speaker: "Curator", text: line };
+                      });
+                      return { minutes: minutesObjs, decisions };
+                    })();
+                  await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
+                  log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
+                  if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
+                    const txtPath = path.join(dir, `minutes-${uuid}.txt`);
+                    let out = j.minutes
+                      .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
+                      .join("\n");
+                    if (Array.isArray(j.decisions)) {
+                      const keeps = j.decisions.filter((d) => d.decision === "keep");
+                      const asides = j.decisions.filter((d) => d.decision === "aside");
+                      out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
+                      for (const d of keeps)
+                        out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                      for (const d of asides)
+                        out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                    }
+                    await writeFile(txtPath, out, "utf8");
+                    log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
+                  }
+                  const keepDir = path.join(dir, "_keep");
+                  const asideDir = path.join(dir, "_aside");
+                  await Promise.all([
+                    moveFiles(keep, keepDir, notes),
+                    moveFiles(aside, asideDir, notes),
+                  ]);
+                  if (keep.length + aside.length > 0) {
+                    if (unclassified.length) {
+                      queue.push(...unclassified);
+                    }
+                    log(
+                      `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                    );
+
+                    completed += keep.length + aside.length;
+                    if (completed) {
+                      const remaining = totalImages - completed;
+                      const elapsed = Date.now() - levelStart;
+                      const etaMs = (elapsed / completed) * remaining;
+                      log(
+                        `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                      );
+                    }
+                    break;
+                  }
+                  zeroStreak += 1;
+                  if (zeroStreak >= MAX_ZERO_DECISION_STREAK) {
+                    log(
+                      dim(
+                        `⚠️  No decisions after ${zeroStreak} attempt(s); marking NEEDS_REVIEW and continuing.`
+                      )
+                    );
+                    const reviewPath = path.join(dir, "NEEDS_REVIEW");
+                    await writeFile(
+                      reviewPath,
+                      batch.map((f) => path.basename(f)).join("\n") + "\n",
+                      { flag: "a" }
+                    );
+                    break;
+                  }
+                  log(dim("No decisions; not cached; retrying in finalize mode."));
+                  finalize = true;
+                } catch (err) {
+                  bar.update(4, { stage: "error" });
+                  bar.stop();
+                  multibar.remove(bar);
+                  log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                  break;
                 }
-              } catch (err) {
-                bar.update(4, { stage: "error" });
-                bar.stop();
-                multibar.remove(bar);
-                log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
               }
             });
           }
