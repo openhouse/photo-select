@@ -55,7 +55,7 @@ program
     process.env.PHOTO_SELECT_REASONING_EFFORT
   )
   .option("--no-recurse", "Process a single directory only")
-  .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
+  .option("-P, --parallel <n>", "[deprecated] Use --workers instead", (v) => Math.max(1, parseInt(v, 10)))
   .option("--field-notes", "Enable field notes workflow")
   .option("-v, --verbose", "Store prompts and responses for debugging")
   .option(
@@ -94,6 +94,17 @@ if (ollamaBaseUrl) {
   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
 }
 
+let finalWorkers = workers;
+if (parallel != null) {
+  const n = Number(parallel) || 1;
+  if (!finalWorkers) finalWorkers = n;
+  console.warn(
+    '[DEPRECATION] --parallel is deprecated; using --workers=%d\n',
+    finalWorkers
+  );
+}
+if (!finalWorkers) finalWorkers = 1;
+
 const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
@@ -125,10 +136,9 @@ if (!finalReasoningEffort) {
       recurse,
       curators,
       contextPath,
-      parallel,
       fieldNotes,
       verbose,
-      workers,
+      workers: finalWorkers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
     });
