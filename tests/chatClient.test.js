@@ -44,10 +44,10 @@ beforeAll(async () => {
     chatCompletion,
     curatorsFromTags,
     cacheKey,
-    buildGPT5Schema,
-    schemaForBatch,
-    useResponses,
-  } = await import('../src/chatClient.js'));
+  buildGPT5Schema,
+  schemaForBatch,
+  useResponses,
+} = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -120,6 +120,21 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("extracts decisions from DECISIONS_JSON block", () => {
+    const text = `preamble\n=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"good"}]}\n=== END ===`;
+    const { keep, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/good/);
+  });
+
+  it("salvages decisions from minutes lines", () => {
+    const text = "KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur";
+    const { keep, aside, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toBe("anchor");
   });
 
   it("parses mixed object and string entries", () => {
@@ -343,6 +358,8 @@ describe("chatCompletion", () => {
       images: [],
       model: "gpt-5-mini",
       cache: false,
+      minutesMin: 1,
+      minutesMax: 2,
     });
     expect(responsesSpy).toHaveBeenCalled();
     expect(chatSpy).not.toHaveBeenCalled();
@@ -499,12 +516,57 @@ describe("buildGPT5Schema", () => {
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
   });
+
+  it("sets minutes bounds", () => {
+    const schema = buildGPT5Schema({
+      files: [],
+      minutesMin: 5,
+      minutesMax: 8,
+    });
+    expect(schema.schema.properties.minutes.minItems).toBe(5);
+    expect(schema.schema.properties.minutes.maxItems).toBe(8);
+  });
 });
 
 describe("useResponses", () => {
   it("detects gpt-5 models", () => {
     expect(useResponses("gpt-5-mini")).toBe(true);
     expect(useResponses("gpt-4o")).toBe(false);
+  });
+});
+
+describe("retry policy", () => {
+  it("backs off with jitter on retriable errors", async () => {
+    vi.resetModules();
+    const delayMock = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../src/config.js", () => ({ delay: delayMock }));
+    const chatLocal = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("bad"), { status: 502 }))
+      .mockRejectedValueOnce(Object.assign(new Error("e"), { code: "EPIPE" }))
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ minutes: [], decisions: [] }),
+            },
+          },
+        ],
+      });
+    vi.doMock("openai", () => ({
+      OpenAI: vi.fn(() => ({
+        chat: { completions: { create: chatLocal } },
+        responses: { create: vi.fn() },
+      })),
+      NotFoundError: class extends Error {},
+    }));
+    const { chatCompletion } = await import("../src/chatClient.js");
+    const rand = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    await chatCompletion({ prompt: "p", images: [], model: "gpt-4o" });
+    expect(delayMock).toHaveBeenCalledTimes(2);
+    expect(delayMock.mock.calls[0][0]).toBe(2000);
+    expect(delayMock.mock.calls[1][0]).toBe(4000);
+    rand.mockRestore();
   });
 });
 
