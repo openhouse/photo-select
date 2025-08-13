@@ -5,6 +5,7 @@ import os from "node:os";
 
 vi.hoisted(() => {
   process.env.OPENAI_API_KEY = "test";
+  process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_SMALL = '2';
 });
 
 vi.mock("../src/chatClient.js", async () => {
@@ -30,7 +31,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -174,23 +175,27 @@ describe("triageDirectory", () => {
   });
 
   it(
-    "retries zero-decision batch in finalize mode",
+    "repairs zero-decision batch with DECISIONS_JSON",
     async () => {
-    chatCompletion
-      .mockResolvedValueOnce(JSON.stringify({ decisions: [] }))
-      .mockResolvedValueOnce(
-        JSON.stringify({ decisions: [{ filename: "1.jpg", decision: "keep", reason: "" }] })
-      );
-    await fs.unlink(path.join(tmpDir, "2.jpg"));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-    });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const secondPrompt = chatCompletion.mock.calls[1][0].prompt;
-    expect(secondPrompt).toMatch(/FINALIZE MODE/);
+      chatCompletion
+        .mockResolvedValueOnce("no decisions")
+        .mockResolvedValueOnce(
+          '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
+        );
+      await fs.unlink(path.join(tmpDir, "2.jpg"));
+      await triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+      });
+      expect(chatCompletion).toHaveBeenCalledTimes(2);
+      const opts = chatCompletion.mock.calls.find(
+        ([o]) => o.verbosity === "low"
+      )[0];
+      expect(opts.prompt).toMatch(/DECISIONS_JSON/);
+      expect(opts.reasoningEffort).toBe("low");
+      expect(opts.responseFormat).toBeUndefined();
       await expect(
         fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
       ).resolves.toBeTruthy();

@@ -2,9 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { buildReplySchema } from "../src/replySchema.js";
 
 let chatSpy;
 let responsesSpy;
+let delaySpy;
 
 class MockNotFoundError extends Error {
   constructor(msg) {
@@ -23,6 +25,12 @@ vi.mock("openai", () => {
     })),
     NotFoundError: MockNotFoundError,
   };
+});
+
+vi.mock("../src/config.js", async () => {
+  const actual = await vi.importActual("../src/config.js");
+  delaySpy = vi.fn(() => Promise.resolve());
+  return { ...actual, delay: delaySpy };
 });
 
 let parseReply,
@@ -120,6 +128,25 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("extracts decisions from DECISIONS_JSON block", () => {
+    const text =
+      "foo\n=== DECISIONS_JSON ===\n{" +
+      '"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"good"}]}' +
+      "\n=== END ===";
+    const { keep, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/good/);
+  });
+
+  it("salvages decisions from minutes lines", () => {
+    const text =
+      "KEEP DSCF1234.jpg — sharp\nASIDE DSCF5678.jpg — blur";
+    const { keep, aside, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/sharp/);
   });
 
   it("parses mixed object and string entries", () => {
@@ -493,6 +520,19 @@ describe("buildGPT5Schema", () => {
     expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
   });
 
+  it("respects minutes bounds", () => {
+    const schema = buildGPT5Schema({
+      files: ["x.jpg"],
+      minutesMin: 2,
+      minutesMax: 4,
+    });
+    expect(schema.schema.properties.minutes.minItems).toBe(2);
+    expect(schema.schema.properties.minutes.maxItems).toBe(4);
+    const r = buildReplySchema({ minutesMin: 1, minutesMax: 3 });
+    expect(r.properties.minutes.minItems).toBe(1);
+    expect(r.properties.minutes.maxItems).toBe(3);
+  });
+
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
     const schema = schemaForBatch(used, ["Curator-1"]);
@@ -545,5 +585,20 @@ describe("cache guards", () => {
     });
     expect(out).toBe('fresh');
     expect(responsesSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retry policy", () => {
+  it("backs off with jitter on retriable errors", async () => {
+    responsesSpy
+      .mockRejectedValueOnce({ status: 503 })
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValueOnce({ output_text: '{"decisions":[],"minutes":[]}' });
+    const orig = Math.random;
+    Math.random = () => 0;
+    await chatCompletion({ prompt: 'p', images: [], model: 'gpt-5' });
+    Math.random = orig;
+    expect(delaySpy).toHaveBeenNthCalledWith(1, 1400);
+    expect(delaySpy).toHaveBeenNthCalledWith(2, 2800);
   });
 });
