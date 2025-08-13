@@ -173,13 +173,11 @@ describe("triageDirectory", () => {
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
 
-  it(
-    "retries zero-decision batch in finalize mode",
-    async () => {
+  it("repairs zero-decision batch with decisions-only prompt", async () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ decisions: [] }))
       .mockResolvedValueOnce(
-        JSON.stringify({ decisions: [{ filename: "1.jpg", decision: "keep", reason: "" }] })
+        '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
       );
     await fs.unlink(path.join(tmpDir, "2.jpg"));
     await triageDirectory({
@@ -187,15 +185,17 @@ describe("triageDirectory", () => {
       promptPath: promptFile,
       model: "test-model",
       recurse: false,
+      curators: ["Curator-A"],
     });
     expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const secondPrompt = chatCompletion.mock.calls[1][0].prompt;
-    expect(secondPrompt).toMatch(/FINALIZE MODE/);
-      await expect(
-        fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
-      ).resolves.toBeTruthy();
-    },
-    30000
-  );
+    const secondCall = chatCompletion.mock.calls[1][0];
+    expect(secondCall.prompt).toMatch(/Return only the block/);
+    expect(secondCall.prompt).toMatch(/role play as/);
+    expect(secondCall.reasoningEffort).toBe("low");
+    expect(secondCall.verbosity).toBe("low");
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
+    ).resolves.toBeTruthy();
+  });
 
 });
