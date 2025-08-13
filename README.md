@@ -116,10 +116,10 @@ through to the script unchanged.
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--parallel` | `1` | Number of batches to process simultaneously |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
-| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
+| `--workers` | `1` | Max number of worker processes; each starts a new batch as soon as it finishes |
+| `--parallel` | *(deprecated)* | Legacy alias for `--workers` |
 
 When `--field-notes` is enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message. During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
 
@@ -127,7 +127,7 @@ See [docs/field-notes.md](docs/field-notes.md) for a description of how the note
 
 ### Increasing memory
 
-The Node.js heap defaults to about 4 GB. Large runs with `--parallel` or `--workers` greater than 1
+The Node.js heap defaults to about 4 GB. Large runs with `--workers` greater than 1
 may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
 
 ```bash
@@ -138,16 +138,10 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
-### Choosing `--parallel`
+### Concurrency: `--workers` (recommended)
 
-Running multiple batches at once hides API latency but can exhaust system resources. See
-[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
-tuning this flag. In short, start around twice your physical core count and adjust
-until network waits dominate without hitting OpenAI rate limits. Alternatively, use
-`--workers` to keep a steady stream of batches without waiting for entire groups to
-finish. Files omitted from a batch are requeued and picked up by the next available
-worker so each level fully resolves before recursion continues.
-Each completed batch updates the console with an ETA to finish the current level.
+Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is
+automatically mapped to `--workers`. A deprecation warning is printed if you use it.
 
 ### Streaming responses
 
@@ -156,17 +150,25 @@ from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
 
-### Pretty output & minutes JSON
+### Console summary & minutes files
 
-The CLI prettifies model replies and embeds the full decisions JSON in the
-saved minutes by default. Control this behaviour with environment variables:
+The CLI now saves the **canonical record** as a JSON file:
+
+- **`minutes-<uuid>.json`** – primary artifact containing:
+  ```json
+  { "minutes": [{ "speaker": "...", "text": "..." }],
+    "decisions": [{ "filename": "...", "decision": "keep|aside", "reason": "..." }] }
+  ```
+
+Console remains prettified by default. You can also write a human-readable transcript:
 
 | variable | default | effect |
 | --- | --- | --- |
-| `PHOTO_SELECT_PRETTY` | `1` | Show a colourised summary of minutes and decisions. Set to `0` for raw text. |
-| `PHOTO_SELECT_PRETTY_MINUTES` | `20` | Number of minute lines to display in the summary. |
-| `PHOTO_SELECT_MINUTES_JSON` | `1` | Append fenced JSON to minutes files. Set to `0` to skip. |
-| `PHOTO_SELECT_MINUTES_JSON_SIDECAR` | `0` | Write a separate `minutes-*.json` alongside the text file when `1`. |
+| `PHOTO_SELECT_PRETTY` | `1` | Show a colourised summary of minutes & decisions in the console. Set to `0` for raw model text. |
+| `PHOTO_SELECT_PRETTY_MINUTES` | `all (TTY) / 20 (CI)` | `all`/`0` for no cap, or a number to limit lines. |
+| `PHOTO_SELECT_TRANSCRIPT_TXT` | `0` | When `1`, also write `minutes-<uuid>.txt` (formatted transcript + decisions outline). |
+
+> Note: previous behaviour that **embedded JSON inside `.txt` minutes** is removed. The JSON file is now the primary source of truth.
 
 ### Custom timeout
 
