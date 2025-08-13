@@ -17,6 +17,8 @@ export default class OpenAIProvider {
         schema: buildReplySchema({
           instructions: expectFieldNotesInstructions,
           fullNotes: expectFieldNotesMd,
+          minutesMin: opts.minutesMin,
+          minutesMax: opts.minutesMax,
         }),
       };
     } else if (typeof format === 'string') {

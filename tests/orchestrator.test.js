@@ -174,23 +174,25 @@ describe("triageDirectory", () => {
   });
 
   it(
-    "retries zero-decision batch in finalize mode",
+    "repairs missing ledger with DECISIONS_JSON block",
     async () => {
-    chatCompletion
-      .mockResolvedValueOnce(JSON.stringify({ decisions: [] }))
-      .mockResolvedValueOnce(
-        JSON.stringify({ decisions: [{ filename: "1.jpg", decision: "keep", reason: "" }] })
-      );
-    await fs.unlink(path.join(tmpDir, "2.jpg"));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-    });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const secondPrompt = chatCompletion.mock.calls[1][0].prompt;
-    expect(secondPrompt).toMatch(/FINALIZE MODE/);
+      chatCompletion
+        .mockResolvedValueOnce(JSON.stringify({ minutes: [], decisions: [] }))
+        .mockResolvedValueOnce(
+          '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
+        );
+      await fs.unlink(path.join(tmpDir, "2.jpg"));
+      await triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+      });
+      expect(chatCompletion).toHaveBeenCalledTimes(2);
+      const second = chatCompletion.mock.calls[1][0];
+      expect(second.verbosity).toBe("low");
+      expect(second.reasoningEffort).toBe("low");
+      expect(second.prompt).toMatch(/DECISIONS_JSON/);
       await expect(
         fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
       ).resolves.toBeTruthy();
