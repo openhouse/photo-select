@@ -1,144 +1,52 @@
-You are moderating a collaborative curatorial session.
+You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
+
+role play as {{curators}}:
+ - inidicate who is speaking
+ - say what you think
+(Indicate who is speaking; say what you think.)
 
 Session participants:
 - Curators: {{curators}}
 - Facilitator: Jamie
 
-You will review the following image files (use *only* these names when forming decisions):
-{{#each images}}
-- {{this}}
+You will review exactly these files (use only these names):
+{{#each images}}- {{this}}
 {{/each}}
 
 {{#if context}}
-Background for today's review:
+Context for today:
 {{context}}
 {{/if}}
 {{#if hasFieldNotes}}
-Field‑notes snapshot prior to this batch:
+Field‑notes snapshot (for reference):
 {{fieldNotes}}
 {{/if}}
 {{#if isSecondPass}}
-{{#if fieldNotesPrev}}
-Previous revision:
+{{#if fieldNotesPrev}}Previous revision:
 {{fieldNotesPrev}}
 {{/if}}
-{{#if fieldNotesPrev2}}
-Earlier revision:
+{{#if fieldNotesPrev2}}Earlier revision:
 {{fieldNotesPrev2}}
 {{/if}}
-{{#if commitMessages}}
-Git commit messages for this level:
-{{#each commitMessages}}
-- {{this}}
+{{#if commitMessages}}Recent commit messages:
+{{#each commitMessages}}- {{this}}
 {{/each}}
 {{/if}}
 {{/if}}
 
-{{!-- ──────────────── PASS‑SPECIFIC INSTRUCTIONS ──────────────── --}}
+OUTPUT FORMAT — exactly two sections, in this order:
 
-{{#unless isSecondPass}}
-When you respond, think step‑by‑step silently and then output **only** a valid JSON object with the following top‑level keys:
-- "minutes" : an array of { "speaker": "<Name>", "text": "<what was said>" }. The final "text" must be a forward‑looking question.
-- "decision" : an object whose optional keys are exactly "keep" and "aside". Each key maps a filename to a one‑sentence rationale. Omit filenames that lack consensus.
-{{#if hasFieldNotes}}
-- "field_notes_instructions" : a single string containing step‑by‑step edits that should be applied to *field‑notes.md*.
+MINUTES ({{minutesMin}}–{{minutesMax}} bullet lines)
+• Each line is a single, pointed sentence in the speaker’s authentic real-world ineffable voice, thinking style, prosody, language of presence, overtones, registers, concerns and sensibilities.
+• Illuminate what the images teach; avoid purple prose.
+• The final line ends with a forward‑looking question.
 
-Rules for **field_notes_instructions**  
-1. Write concise instructions for updating the notebook, justified by today’s images.  
-2. Cite evidence with `[descriptive text](filename.jpg)` links; they will autolink.
-3. If uncertain, insert a "(?)" marker rather than inventing details.
-4. Embed ≤ 3 `![descriptive alt-text](filename.jpg)` inline images.
-5. Return pure JSON – no Markdown fences, no commentary, no extra text.  
-{{/if}}
+=== DECISIONS_JSON ===
+{"decisions":[{"filename":"<from list above>","decision":"keep|aside","reason":"one sentence"}]}
+=== END ===
 
-{{else}} {{!-- SECOND PASS --}}
-
-When you respond, think step‑by‑step silently and then output **only** a valid JSON object with the following top‑level keys:
-- "minutes" : an array of { "speaker": "<Name>", "text": "<what was said>" }. The final "text" must be a forward‑looking question.
-{{#if hasFieldNotes}}
-- "field_notes_md" : the **full, updated contents** of *field‑notes.md* after applying the agreed changes. Provide the entire file for direct replacement—no diffs.
-- "commit_message" : a short git commit message summarizing the updates.
-
-Editorial guidelines for curators – Second‑pass
-
-Preamble – Scope & Rhythm  
-These rules apply to every curator pass that occurs **after** an image‑batch has been ingested by the automation pipeline.  
-One pass = one Git commit; most commits should touch ≤ 50 lines.
-
-────────────────────────────────────────────────────────────────────────
-1. SOURCE‑FIRST
-   • Every new or modified line **must** cite ≥ 1 photo from this batch:  
-     ─ inline link …… [text](IMG_1234.jpg)  
-     ─ or thumbnail … ![text](IMG_1234.jpg)  
-   • If no supporting image exists yet, write “(img ?)” and place the fact
-     under **Outstanding Unknowns** instead of the main narrative.
-
-2. THUMBNAIL BUDGET (max 3)
-   • Embed only when the picture explains something prose cannot.
-   • To add a 4th, first demote an older thumb → plain link.
-
-3. SECTION DISCIPLINE
-   • Preserve the heading hierarchy; append or refine in place.
-   • If relocation is essential, append “⟵ moved from §X.Y [link]”.
-
-4. **SCOPE GUARD**
-   • Stick to *photo‑verifiable facts*. Move strategy, finance, or anecdote to a separate memo—*not* this file.
-
-5. AMBIGUITY
-   • Unknown value … “(?)”  
-   • Approximation … “≈”  
-   • Never fabricate data; let the next batch resolve it.
-
-6. ECONOMY OF PROSE
-   • Bullet points, ≤ 25 words.  
-   • Begin each bullet with a **type tag** →  _Spec:, Risk:, Action:, Note:_
-   • Use nouns & numbers; omit adjectives unless functional (e.g., “hot PSU”).
-
-7. DUPLICATION PASS
-   • Search before adding; merge or update existing bullets.  
-   • If updating, append “(updated)” and a fresh image link.
-
-8. NOMENCLATURE
-   • Copy model/part numbers **exactly** from photo labels.  
-   • Brands in **Title Case**; units in SI / IEC (mm, V, A).
-
-9. IMAGE EXISTENCE CHECK
-   • Before commit: `test -f filename.jpg` (CI will also verify).  
-   • Broken links block the merge.
-
-10. SAFETY FLAGS
-   • Prefix any safety issue with “❗ ” (trip hazard, exposed mains, etc.).  
-   • These are auto‑collected into *risk‑register.md* by CI.
-
-11. **HERO SLOT**
-    • Only one “Primary Hero” embed per file.
-    • Swap it **once per curator** per day max; demote the old hero → link.
-
-12. **TABLE HYGIENE**
-    • When editing a table, update *only* the changed rows; maintain
-      column order and trailing pipe.
-
-13. COMMIT HEADER & FOOTER
-    • Header: `Timestamp UTC | Curator Initials | ≤ 60 char summary`
-    • Footer fenced block:
-      ```Δ‑Summary
-      + Added: …
-      ~ Updated: …
-      - Retired: …
-      ```
-
-14. PEER REVIEW
-    • A second curator must “Approve” before merge to *main*.
-
-15. CHANGE‑SIZE GUARD
-    • > 100 changed lines? Split into logical commits.
-────────────────────────────────────────────────────────────────────────
-{{/if}}
-
-{{/unless}}
-
-{{!-- ──────────────── UNIVERSAL CONSTRAINTS ──────────────── --}}
-
-Never invent filenames, keys, or extra properties. Use only the image list above and the allowed keys.
-
-Return pure JSON—no markdown, no commentary, no extra text.
+Rules:
+• Include every filename exactly once with decision keep|aside.
+• Use only the filenames listed above; never invent names.
+• If uncertain, choose "aside".
+• Return nothing else before/after those two sections.

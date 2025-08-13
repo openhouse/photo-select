@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+vi.mock("../src/config.js", () => ({ delay: vi.fn(() => Promise.resolve()) }));
+import { delay } from "../src/config.js";
+
 let chatSpy;
 let responsesSpy;
 
@@ -36,6 +39,8 @@ let parseReply,
   useResponses;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
+  process.env.PHOTO_SELECT_RETRY_BASE_MS = '1000';
+  process.env.PHOTO_SELECT_MAX_RETRIES = '6';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
   ({
     parseReply,
@@ -120,6 +125,23 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("parses DECISIONS_JSON block", () => {
+    const txt =
+      '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"nice"}]}\n=== END ===';
+    const { keep, notes } = parseReply(txt, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toBe('nice');
+  });
+
+  it("salvages from minutes lines", () => {
+    const txt = 'KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur';
+    const { keep, aside, notes } = parseReply(txt, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/anchor/);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[1])).toMatch(/blur/);
   });
 
   it("parses mixed object and string entries", () => {
@@ -493,6 +515,16 @@ describe("buildGPT5Schema", () => {
     expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
   });
 
+  it("applies minutes bounds", () => {
+    const schema = buildGPT5Schema({
+      files: ["a.jpg"],
+      minutesMin: 2,
+      minutesMax: 5,
+    });
+    expect(schema.schema.properties.minutes.minItems).toBe(2);
+    expect(schema.schema.properties.minutes.maxItems).toBe(5);
+  });
+
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
     const schema = schemaForBatch(used, ["Curator-1"]);
@@ -545,5 +577,23 @@ describe("cache guards", () => {
     });
     expect(out).toBe('fresh');
     expect(responsesSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('retry policy', () => {
+  it('backs off on retriable errors', async () => {
+    responsesSpy
+      .mockRejectedValueOnce({ status: 502 })
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({ minutes: [], decisions: [] }),
+      });
+    const randSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+    await chatCompletion({ prompt: 'p', images: [], model: 'gpt-5', cache: false });
+    randSpy.mockRestore();
+    expect(delay).toHaveBeenCalledTimes(2);
+    const first = delay.mock.calls[0][0];
+    const second = delay.mock.calls[1][0];
+    expect(first).toBeLessThan(second);
   });
 });
