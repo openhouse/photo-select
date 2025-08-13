@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -33,7 +33,8 @@ let parseReply,
   cacheKey,
   buildGPT5Schema,
   schemaForBatch,
-  useResponses;
+  useResponses,
+  decisionCounts;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
@@ -47,6 +48,7 @@ beforeAll(async () => {
     buildGPT5Schema,
     schemaForBatch,
     useResponses,
+    decisionCounts,
   } = await import('../src/chatClient.js'));
 });
 
@@ -478,6 +480,38 @@ describe("cacheKey", () => {
     const k2 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", reasoningEffort: "high" });
     expect(k1).not.toBe(k2);
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("cache guards", () => {
+  afterEach(async () => {
+    await fs.rm(".cache", { recursive: true, force: true });
+  });
+
+  it("skips caching replies with zero decisions", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cache-"));
+    const img = path.join(dir, "a.jpg");
+    await fs.writeFile(img, "a");
+    const key = await cacheKey({ prompt: "p", images: [img], model: "gpt-4o" });
+    const cachePath = path.resolve(".cache", `${key}.txt`);
+    chatSpy.mockClear();
+    chatSpy.mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ minutes: [], decisions: [] }) } }] });
+    await chatCompletion({ prompt: "p", images: [img], model: "gpt-4o", cache: true });
+    await expect(fs.stat(cachePath)).rejects.toThrow();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("counts decisions from structured JSON", () => {
+    const json = {
+      minutes: [],
+      decisions: [
+        { filename: "a.jpg", decision: "keep" },
+        { filename: "b.jpg", decision: "aside" },
+      ],
+    };
+    const { keep, aside } = decisionCounts(json);
+    expect(keep).toBe(1);
+    expect(aside).toBe(1);
   });
 });
 

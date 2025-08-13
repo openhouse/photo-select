@@ -372,7 +372,12 @@ full.
 
 Responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
-saved reply instead of hitting the API.
+saved reply instead of hitting the API. Replies that contain zero decisions
+(`keep` + `aside` = 0) are **not** cached; any existing cache entry with zero
+decisions is evicted when encountered. When ten or fewer images remain the
+prompt switches to a finalize mode that insists on a decision for every image.
+If two consecutive rounds still produce no decisions, the batch is marked with a
+`NEEDS_REVIEW` file for human follow‑up.
 
 ## Testing
 

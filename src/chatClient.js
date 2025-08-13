@@ -1,6 +1,6 @@
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
-import { readFile, stat, mkdir, writeFile, appendFile } from "node:fs/promises";
+import { readFile, stat, mkdir, writeFile, appendFile, rm } from "node:fs/promises";
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -27,6 +27,11 @@ const PEOPLE_API_BASE =
 const peopleCache = new Map();
 
 const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
+
+const dim = (s) =>
+  process.stdout.isTTY && process.env.NO_COLOR !== "1"
+    ? `\x1b[2m${s}\x1b[0m`
+    : s;
 
 function debugDir() {
   const base = process.env.PHOTO_SELECT_DEBUG_DIR || process.cwd();
@@ -420,7 +425,14 @@ export async function chatCompletion({
         });
         if (cache) {
           const hit = await getCachedReply(key);
-          if (hit) return hit;
+          if (hit) {
+            const { keep, aside } = decisionCounts(hit, used);
+            if (keep + aside === 0) {
+              try { await rm(path.join(CACHE_DIR, `${key}.txt`)); } catch {}
+            } else {
+              return hit;
+            }
+          }
         }
         const schema = schemaForBatch(used, finalCurators);
         onProgress("request");
@@ -452,7 +464,14 @@ export async function chatCompletion({
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
-        if (cache) await setCachedReply(key, text);
+        if (cache) {
+          const { keep, aside } = decisionCounts(text, used);
+          if (keep + aside === 0) {
+            console.log(dim(`cache: skip (0 decisions) for ${key}`));
+          } else {
+            await setCachedReply(key, text);
+          }
+        }
         onProgress("done");
         return text;
       }
@@ -471,7 +490,14 @@ export async function chatCompletion({
       });
       if (cache) {
         const hit = await getCachedReply(key);
-        if (hit) return hit;
+        if (hit) {
+          const { keep, aside } = decisionCounts(hit, used);
+          if (keep + aside === 0) {
+            try { await rm(path.join(CACHE_DIR, `${key}.txt`)); } catch {}
+          } else {
+            return hit;
+          }
+        }
       }
 
       onProgress("request");
@@ -509,7 +535,14 @@ export async function chatCompletion({
         const { choices } = await openai.chat.completions.create(baseParams);
         text = choices[0].message.content;
       }
-      if (cache) await setCachedReply(key, text);
+      if (cache) {
+        const { keep, aside } = decisionCounts(text, used);
+        if (keep + aside === 0) {
+          console.log(dim(`cache: skip (0 decisions) for ${key}`));
+        } else {
+          await setCachedReply(key, text);
+        }
+      }
       onProgress("done");
       return text;
     } catch (err) {
@@ -538,6 +571,17 @@ export async function chatCompletion({
           verbosity,
           reasoningEffort,
         });
+        if (cache) {
+          const hit = await getCachedReply(key);
+          if (hit) {
+            const { keep, aside } = decisionCounts(hit, used);
+            if (keep + aside === 0) {
+              try { await rm(path.join(CACHE_DIR, `${key}.txt`)); } catch {}
+            } else {
+              return hit;
+            }
+          }
+        }
         const schema = schemaForBatch(used, finalCurators);
         onProgress("request");
         onProgress("waiting");
@@ -568,7 +612,14 @@ export async function chatCompletion({
           });
           ({ text } = await extractTextWithLogging(rsp));
         }
-        if (cache) await setCachedReply(key, text);
+        if (cache) {
+          const { keep, aside } = decisionCounts(text, used);
+          if (keep + aside === 0) {
+            console.log(dim(`cache: skip (0 decisions) for ${key}`));
+          } else {
+            await setCachedReply(key, text);
+          }
+        }
         onProgress("done");
         return text;
       }
@@ -808,3 +859,29 @@ if (!parsed) {
     commitMessage,
   };
 }
+
+function decisionCounts(entry, files = []) {
+  try {
+    const parsed = typeof entry === "string" ? JSON.parse(entry) : entry;
+    if (parsed && Array.isArray(parsed.decisions)) {
+      let keep = 0;
+      let aside = 0;
+      for (const d of parsed.decisions) {
+        if (d?.decision === "keep") keep++;
+        if (d?.decision === "aside") aside++;
+      }
+      return { keep, aside };
+    }
+    if (parsed && parsed.decision && typeof parsed.decision === "object") {
+      const keep = Object.keys(parsed.decision.keep || {}).length;
+      const aside = Object.keys(parsed.decision.aside || {}).length;
+      return { keep, aside };
+    }
+  } catch {
+    const { keep, aside } = parseReply(String(entry), files);
+    return { keep: keep.length, aside: aside.length };
+  }
+  return { keep: 0, aside: 0 };
+}
+
+export { decisionCounts };
