@@ -5,6 +5,7 @@ import path from "node:path";
 
 let chatSpy;
 let responsesSpy;
+let delaySpy;
 
 class MockNotFoundError extends Error {
   constructor(msg) {
@@ -23,6 +24,11 @@ vi.mock("openai", () => {
     })),
     NotFoundError: MockNotFoundError,
   };
+});
+
+vi.mock("../src/config.js", () => {
+  delaySpy = vi.fn(() => Promise.resolve());
+  return { delay: delaySpy };
 });
 
 let parseReply,
@@ -120,6 +126,24 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("extracts decisions from DECISIONS_JSON block", () => {
+    const reply = [
+      "some text",
+      "=== DECISIONS_JSON ===",
+      '{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"ok"}]}',
+      "=== END ===",
+    ].join("\n");
+    const { keep } = parseReply(reply, files);
+    expect(keep).toContain(files[0]);
+  });
+
+  it("salvages decisions from minutes lines", () => {
+    const text = "KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur";
+    const { keep, aside } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
   });
 
   it("parses mixed object and string entries", () => {
@@ -495,9 +519,31 @@ describe("buildGPT5Schema", () => {
 
   it("provides batch helper", () => {
     const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
-    const schema = schemaForBatch(used, ["Curator-1"]);
+    const schema = schemaForBatch(used, ["Curator-1"], 5, 7);
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(schema.schema.properties.minutes.minItems).toBe(5);
+    expect(schema.schema.properties.minutes.maxItems).toBe(7);
+  });
+});
+
+describe("retry policy", () => {
+  it("backs off with jitter on retriable errors", async () => {
+    const waits = [];
+    delaySpy.mockImplementation((ms) => {
+      waits.push(ms);
+      return Promise.resolve();
+    });
+    responsesSpy
+      .mockRejectedValueOnce({ status: 503 })
+      .mockRejectedValueOnce({ cause: { code: "EPIPE" } })
+      .mockResolvedValueOnce({ output_text: JSON.stringify({ minutes: [], decisions: [] }) });
+    const orig = Math.random;
+    Math.random = () => 0.5;
+    await chatCompletion({ prompt: "p", images: [], model: "gpt-5", cache: false });
+    expect(waits[0]).toBeGreaterThan(0);
+    expect(waits[1]).toBeGreaterThan(waits[0]);
+    Math.random = orig;
   });
 });
 

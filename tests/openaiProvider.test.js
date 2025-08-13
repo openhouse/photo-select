@@ -48,4 +48,12 @@ describe('OpenAIProvider', () => {
     await provider.chat();
     expect(callArgs.responseFormat).toBeUndefined();
   });
+
+  it('includes minutes bounds in schema', async () => {
+    const OpenAIProvider = await loadProvider();
+    const provider = new OpenAIProvider();
+    await provider.chat({ minutesMin: 2, minutesMax: 4 });
+    expect(callArgs.responseFormat.schema.properties.minutes.minItems).toBe(2);
+    expect(callArgs.responseFormat.schema.properties.minutes.maxItems).toBe(4);
+  });
 });
