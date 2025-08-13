@@ -1,4 +1,4 @@
-export function buildReplySchema({ instructions = false, fullNotes = false } = {}) {
+export function buildReplySchema({ instructions = false, fullNotes = false, minutesMin = 0, minutesMax = Infinity } = {}) {
   const schema = {
     type: 'object',
     additionalProperties: false,
@@ -6,6 +6,8 @@ export function buildReplySchema({ instructions = false, fullNotes = false } = {
     properties: {
       minutes: {
         type: 'array',
+        minItems: minutesMin,
+        maxItems: minutesMax,
         items: {
           type: 'object',
           additionalProperties: false,
