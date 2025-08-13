@@ -7,11 +7,13 @@ import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
 
-const DEFAULT_TIMEOUT = 20 * 60 * 1000;
+const DEFAULT_TIMEOUT =
+  Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  timeout:
-    Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
+  maxSockets: 4,
+  maxFreeSockets: 4,
+  timeout: DEFAULT_TIMEOUT,
 });
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
@@ -25,6 +27,10 @@ const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
+
+const RETRY_BASE = Number(process.env.PHOTO_SELECT_RETRY_BASE_MS || 1000);
+const MAX_RETRIES = Number(process.env.PHOTO_SELECT_MAX_RETRIES || 6);
+const RETRIABLE = new Set([408, 429, 502, 503, 504]);
 
 const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
 
@@ -157,7 +163,7 @@ export async function curatorsFromTags(files) {
  * minutes plus the full JSON decision block without truncation. */
 export const MAX_RESPONSE_TOKENS = 8192;
 
-export function buildGPT5Schema({ files = [] }) {
+export function buildGPT5Schema({ files = [], minutesMin = 3, minutesMax = 12 }) {
   const decisionItem = {
     type: 'object',
     additionalProperties: false,
@@ -179,6 +185,8 @@ export function buildGPT5Schema({ files = [] }) {
         minutes: {
           type: 'array',
           description: 'Transcript of curator discussion',
+          minItems: minutesMin,
+          maxItems: minutesMax,
           items: {
             type: 'object',
             required: ['speaker', 'text'],
@@ -200,9 +208,9 @@ export function buildGPT5Schema({ files = [] }) {
   };
 }
 
-export function schemaForBatch(used, curators = []) {
+export function schemaForBatch(used, curators = [], minutesMin, minutesMax) {
   const files = used.map((f) => path.basename(f));
-  return buildGPT5Schema({ files });
+  return buildGPT5Schema({ files, minutesMin, minutesMax });
 }
 
 export function useResponses(model) {
@@ -380,12 +388,13 @@ export async function chatCompletion({
   model = "gpt-4o",
   verbosity = "low",
   reasoningEffort = "minimal",
-  maxRetries = 3,
   cache = true,
   curators = [],
   stream = false,
   onProgress = () => {},
   responseFormat,
+  minutesMin,
+  minutesMax,
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
   const allowedEffort = ["minimal", "low", "medium", "high"];
@@ -441,7 +450,7 @@ export async function chatCompletion({
           const hit = await getCachedReply(key, used);
           if (hit) return hit;
         }
-        const schema = schemaForBatch(used, finalCurators);
+        const schema = schemaForBatch(used, finalCurators, minutesMin, minutesMax);
         onProgress("request");
         onProgress("waiting");
         const baseOpts = {
@@ -460,15 +469,19 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         };
-        let rsp = await openai.responses.create(baseOpts);
+        const headers = { 'Idempotency-Key': crypto.randomUUID() };
+        let rsp = await openai.responses.create(baseOpts, { headers });
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          rsp = await openai.responses.create({
-            ...baseOpts,
-            reasoning: { effort: "minimal" },
-            temperature: 0.2,
-          });
+          rsp = await openai.responses.create(
+            {
+              ...baseOpts,
+              reasoning: { effort: "minimal" },
+              temperature: 0.2,
+            },
+            { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+          );
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text, used);
@@ -512,10 +525,10 @@ export async function chatCompletion({
       onProgress("waiting");
       let text;
       if (stream) {
-        const streamResp = await openai.chat.completions.create({
-          ...baseParams,
-          stream: true,
-        });
+        const streamResp = await openai.chat.completions.create(
+          { ...baseParams, stream: true },
+          { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+        );
         onProgress("stream");
         text = "";
         for await (const chunk of streamResp) {
@@ -525,18 +538,18 @@ export async function chatCompletion({
           }
         }
       } else {
-        const { choices } = await openai.chat.completions.create(baseParams);
+        const { choices } = await openai.chat.completions.create(
+          baseParams,
+          { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+        );
         text = choices[0].message.content;
       }
       if (cache) await setCachedReply(key, text, used);
       onProgress("done");
       return text;
     } catch (err) {
+      const status = err?.status || err?.code;
       const msg = String(err?.error?.message || err?.message || "");
-      const code = err?.code || err?.cause?.code;
-      const isNetwork =
-        err?.name === "APIConnectionError" ||
-        ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
         !isGpt5 &&
         (err instanceof NotFoundError || err.status === 404) &&
@@ -557,7 +570,7 @@ export async function chatCompletion({
           verbosity,
           reasoningEffort,
         });
-        const schema = schemaForBatch(used, finalCurators);
+        const schema = schemaForBatch(used, finalCurators, minutesMin, minutesMax);
         onProgress("request");
         onProgress("waiting");
         const baseOpts = {
@@ -576,15 +589,18 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         };
-        let rsp = await openai.responses.create(baseOpts);
+        let rsp = await openai.responses.create(baseOpts, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          rsp = await openai.responses.create({
-            ...baseOpts,
-            reasoning: { effort: "minimal" },
-            temperature: 0.2,
-          });
+          rsp = await openai.responses.create(
+            {
+              ...baseOpts,
+              reasoning: { effort: "minimal" },
+              temperature: 0.2,
+            },
+            { headers: { 'Idempotency-Key': crypto.randomUUID() } }
+          );
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text, used);
@@ -592,16 +608,31 @@ export async function chatCompletion({
         return text;
       }
 
-      if (attempt >= maxRetries) throw err;
+      const transient =
+        RETRIABLE.has(Number(status)) ||
+        ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(
+          err?.cause?.code || err?.code
+        );
+      if (!transient || attempt >= MAX_RETRIES) throw err;
       attempt += 1;
-      const wait = 2 ** attempt * 1000;
-      const label = isNetwork ? "network error" : "OpenAI error";
-      const codeInfo = err.status ?? code ?? "unknown";
-      console.warn(`${label} (${codeInfo}). Retrying in ${wait} ms…`);
-      console.warn("Full error response:", err);
-      await delay(wait);
+      const base = Math.min(30000, RETRY_BASE * 2 ** attempt);
+      const wait = Math.round(base * (0.7 + Math.random() * 0.6));
+      const retryAfter = Number(err?.headers?.["retry-after"] || 0) * 1000;
+      console.warn(
+        `retryable error (${status}); retrying in ${Math.max(wait, retryAfter)}ms…`
+      );
+      await delay(Math.max(wait, retryAfter));
     }
   }
+}
+
+function extractBlock(raw, start, end) {
+  if (!raw) return null;
+  const s = String(raw);
+  const i = s.indexOf(start);
+  const j = s.indexOf(end, i + start.length);
+  if (i === -1 || j === -1) return null;
+  return s.slice(i + start.length, j).trim();
 }
 
 /**
@@ -644,7 +675,34 @@ export function parseReply(text, allFiles, meta = {}) {
   let fieldNotesInstructions;
   let commitMessage;
 
+  const preMinutes = extractBlock(text, "MINUTES", "=== DECISIONS_JSON ===");
+  if (preMinutes) {
+    for (const raw of preMinutes.split("\n")) {
+      const line = raw.replace(/^\s*•?\s*/, "").trim();
+      const m = line.match(/^([^:]+):\s*(.+)$/);
+      if (m) minutes.push(`${m[1].trim()}: ${m[2].trim()}`);
+    }
+  }
+
+  const block = extractBlock(text, '=== DECISIONS_JSON ===', '=== END ===');
   let parsed = false;
+  if (block) {
+    try {
+      const obj = JSON.parse(block);
+      if (Array.isArray(obj.decisions)) {
+        for (const d of obj.decisions) {
+          if (!d || typeof d !== 'object') continue;
+          const f = lookup(d.filename);
+          if (!f) continue;
+          const choice = String(d.decision || '').toLowerCase();
+          if (choice === 'keep') keep.add(f);
+          if (choice === 'aside') aside.add(f);
+          if (d.reason) notes.set(f, String(d.reason));
+        }
+        parsed = true;
+      }
+    } catch {}
+  }
 try {
   const obj = JSON.parse(body);
   if (meta.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
@@ -750,7 +808,7 @@ if (!parsed) {
   }
 }
 
-if (!parsed) {
+  if (!parsed) {
     const lines = body.split("\n");
     for (const raw of lines) {
       const line = raw.trim();
@@ -774,6 +832,21 @@ if (!parsed) {
         }
       }
     }
+  }
+
+  const salvage = [];
+  for (const line of String(text).split("\n")) {
+    const m = line.match(/^(?:\s*)\b(KEEP|ASIDE)\b\s+(\S+)\s+—\s+(.*)$/i);
+    if (m) salvage.push({ decision: m[1].toLowerCase(), filename: m[2], reason: m[3] || '' });
+  }
+  if (salvage.length) {
+    for (const { decision, filename, reason } of salvage) {
+      const f = lookup(filename);
+      if (!f) continue;
+      (decision === 'keep' ? keep : aside).add(f);
+      if (reason) notes.set(f, reason);
+    }
+    parsed = true;
   }
 
   // Leave any files unmentioned in the reply unmoved so they can be triaged
