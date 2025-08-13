@@ -28,6 +28,8 @@ export default class OllamaProvider {
     savePayload,
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,
+    minutesMin,
+    minutesMax,
   } = {}) {
     let attempt = 0;
     while (true) {
@@ -72,6 +74,8 @@ export default class OllamaProvider {
           format = buildReplySchema({
             instructions: expectFieldNotesInstructions,
             fullNotes: expectFieldNotesMd,
+            minutesMin,
+            minutesMax,
           });
         }
         if (format !== null) {

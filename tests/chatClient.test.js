@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as config from "../src/config.js";
 
 let chatSpy;
 let responsesSpy;
@@ -120,6 +121,20 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it('parses DECISIONS_JSON block', () => {
+    const txt =
+      'MINUTES\n• Curator-A: hello?\n=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"good"}]}\n=== END ===';
+    const { keep } = parseReply(txt, files);
+    expect(keep).toContain(files[0]);
+  });
+
+  it('salvages decisions from minutes lines', () => {
+    const txt = 'KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur';
+    const { keep, aside } = parseReply(txt, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
   });
 
   it("parses mixed object and string entries", () => {
@@ -499,6 +514,13 @@ describe("buildGPT5Schema", () => {
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
   });
+
+  it('respects minutes bounds', () => {
+    const schema = buildGPT5Schema({ files: ['a.jpg'], minutesMin: 5, minutesMax: 7 });
+    const mins = schema.schema.properties.minutes;
+    expect(mins.minItems).toBe(5);
+    expect(mins.maxItems).toBe(7);
+  });
 });
 
 describe("useResponses", () => {
@@ -545,5 +567,22 @@ describe("cache guards", () => {
     });
     expect(out).toBe('fresh');
     expect(responsesSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('retry policy', () => {
+  it('backs off with jitter on transient errors', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const delaySpy = vi.spyOn(config, 'delay').mockResolvedValue();
+    responsesSpy
+      .mockRejectedValueOnce({ status: 502, headers: {} })
+      .mockResolvedValueOnce({ output_text: JSON.stringify({ minutes: [], decisions: [] }) });
+    await chatCompletion({ prompt: 'p', images: [], model: 'gpt-5', cache: false });
+    expect(delaySpy).toHaveBeenCalled();
+    const wait = delaySpy.mock.calls[0][0];
+    expect(wait).toBeGreaterThanOrEqual(1000);
+    expect(wait).toBeLessThanOrEqual(30000);
+    Math.random.mockRestore();
+    delaySpy.mockRestore();
   });
 });
