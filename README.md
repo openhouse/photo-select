@@ -116,7 +116,7 @@ through to the script unchanged.
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--parallel` | `1` | Number of batches to process simultaneously |
+| `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
 | `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
@@ -138,16 +138,9 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
-### Choosing `--parallel`
+### Concurrency: `--workers` (recommended)
 
-Running multiple batches at once hides API latency but can exhaust system resources. See
-[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
-tuning this flag. In short, start around twice your physical core count and adjust
-until network waits dominate without hitting OpenAI rate limits. Alternatively, use
-`--workers` to keep a steady stream of batches without waiting for entire groups to
-finish. Files omitted from a batch are requeued and picked up by the next available
-worker so each level fully resolves before recursion continues.
-Each completed batch updates the console with an ETA to finish the current level.
+Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.
 
 ### Streaming responses
 
@@ -156,17 +149,21 @@ from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
 
-### Pretty output & minutes JSON
+### Console summary & minutes files
 
-The CLI prettifies model replies and embeds the full decisions JSON in the
-saved minutes by default. Control this behaviour with environment variables:
+By default, the console shows a colourised summary. Minutes are saved as **JSON**; TXT transcripts are optional.
 
-| variable | default | effect |
+| variable | default | description |
 | --- | --- | --- |
-| `PHOTO_SELECT_PRETTY` | `1` | Show a colourised summary of minutes and decisions. Set to `0` for raw text. |
-| `PHOTO_SELECT_PRETTY_MINUTES` | `20` | Number of minute lines to display in the summary. |
-| `PHOTO_SELECT_MINUTES_JSON` | `1` | Append fenced JSON to minutes files. Set to `0` to skip. |
-| `PHOTO_SELECT_MINUTES_JSON_SIDECAR` | `0` | Write a separate `minutes-*.json` alongside the text file when `1`. |
+| `PHOTO_SELECT_PRETTY` | `1` | `0` to print raw LLM reply |
+| `PHOTO_SELECT_PRETTY_MINUTES` | `all (TTY) / 20 (CI)` | `all`/`0` for no cap, or a number |
+| `PHOTO_SELECT_TRANSCRIPT_TXT` | `0` | `1` to also write `minutes-*.txt` (human‑readable) |
+
+**Primary artifact:** `minutes-<uuid>.json`
+```json
+{ "minutes": [{ "speaker": "Name", "text": "..." }],
+  "decisions": [{ "filename": "file.jpg", "decision": "keep|aside", "reason": "" }] }
+```
 
 ### Custom timeout
 
@@ -348,7 +345,7 @@ through that API, so no extra flags are needed.
 2. Send them to ChatGPT with the prompt (filenames included).
 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
-5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
+5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
