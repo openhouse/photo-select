@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Wed Jul 30 23:47:58 EDT 2025
+Generated on: Wed Aug 13 11:47:03 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -38,6 +38,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   ├── generate-overview.sh
 │   └── migrate-notes.js
 ├── src
+│   ├── .DS_Store
 │   ├── batchContext.js
 │   ├── chatClient.js
 │   ├── config.js
@@ -61,7 +62,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── openaiProvider.test.js
     └── orchestrator.test.js
 
-10 directories, 41 files
+10 directories, 42 files
 ```
 
 ---
@@ -301,6 +302,55 @@ describe("triageDirectory", () => {
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
 
+  it("processes batches with workers", async () => {
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+      .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 2,
+    });
+    const etaLogs = logSpy.mock.calls.filter(([m]) =>
+      m.includes("ETA to finish level")
+    );
+    expect(etaLogs.length).toBeGreaterThanOrEqual(2);
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+    const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+    await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+    await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+  });
+
+  it("requeues unclassified images with workers", async () => {
+    await fs.writeFile(path.join(tmpDir, "3.jpg"), "c");
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: [], aside: ["2.jpg", "3.jpg"] })
+      );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 2,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(tmpDir, "_aside", "2.jpg"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(tmpDir, "_aside", "3.jpg"))
+    ).resolves.toBeTruthy();
+  });
+
   it("retries after chat errors", async () => {
     chatCompletion
       .mockRejectedValueOnce(new Error("timeout"))
@@ -317,12 +367,38 @@ describe("triageDirectory", () => {
     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
+
+  it(
+    "retries zero-decision batch in finalize mode",
+    async () => {
+    chatCompletion
+      .mockResolvedValueOnce(JSON.stringify({ decisions: [] }))
+      .mockResolvedValueOnce(
+        JSON.stringify({ decisions: [{ filename: "1.jpg", decision: "keep", reason: "" }] })
+      );
+    await fs.unlink(path.join(tmpDir, "2.jpg"));
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    const secondPrompt = chatCompletion.mock.calls[1][0].prompt;
+    expect(secondPrompt).toMatch(/FINALIZE MODE/);
+      await expect(
+        fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
+      ).resolves.toBeTruthy();
+    },
+    30000
+  );
+
 });
 ```
 
 ### File: ./tests/chatClient.test.js
 ```
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -349,11 +425,29 @@ vi.mock("openai", () => {
   };
 });
 
-let parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags;
+let parseReply,
+  buildMessages,
+  buildInput,
+  chatCompletion,
+  curatorsFromTags,
+  cacheKey,
+  buildGPT5Schema,
+  schemaForBatch,
+  useResponses;
 beforeAll(async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }));
-  ({ parseReply, buildMessages, buildInput, chatCompletion, curatorsFromTags } = await import('../src/chatClient.js'));
+  ({
+    parseReply,
+    buildMessages,
+    buildInput,
+    chatCompletion,
+    curatorsFromTags,
+    cacheKey,
+    buildGPT5Schema,
+    schemaForBatch,
+    useResponses,
+  } = await import('../src/chatClient.js'));
 });
 
 afterAll(() => {
@@ -398,8 +492,11 @@ describe("parseReply", () => {
 
   it("parses JSON responses with reasoning", () => {
     const json = JSON.stringify({
-      keep: { "DSCF1234.jpg": "good light" },
-      aside: { "DSCF5678.jpg": "out of focus" },
+      minutes: [],
+      decision: {
+        keep: { "DSCF1234.jpg": "good light" },
+        aside: { "DSCF5678.jpg": "out of focus" },
+      },
     });
     const { keep, aside, notes } = parseReply(json, files);
     expect(keep).toContain(files[0]);
@@ -409,10 +506,53 @@ describe("parseReply", () => {
     expect(aside).not.toContain(files[2]);
   });
 
+  it("parses strict decisions array", () => {
+    const json = JSON.stringify({
+      minutes: [{ speaker: "Jamie", text: "ok" }],
+      decisions: [
+        { filename: "DSCF1234.jpg", decision: "keep", reason: "good light" },
+        { filename: "DSCF5678.jpg", decision: "aside", reason: "blurry" }
+      ]
+    });
+    const { keep, aside, notes, minutes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/good light/);
+    expect(notes.get(files[1])).toMatch(/blurry/);
+    expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("parses mixed object and string entries", () => {
+    const json = JSON.stringify({
+      keep: [
+        "DSCF1234.jpg",
+        { file: "DSCF5678.jpg", reason: "great action" },
+      ],
+      aside: [
+        { file: "DSCF9012.jpg", reason: "blurry" },
+      ],
+      unclassified: [],
+      notes: [],
+      minutes: [],
+    });
+    const { keep, aside, notes } = parseReply(json, files);
+    expect(keep).toContain(files[0]);
+    expect(keep).toContain(files[1]);
+    expect(notes.get(files[1])).toMatch(/great action/);
+    expect(aside).toContain(files[2]);
+    expect(notes.get(files[2])).toMatch(/blurry/);
+  });
+
   it("handles JSON wrapped in Markdown fences", () => {
     const fenced =
       '```json\n' +
-      JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] }) +
+      JSON.stringify({
+        keep: [{ file: "DSCF1234.jpg" }],
+        aside: [{ file: "DSCF5678.jpg" }],
+        unclassified: [],
+        notes: [],
+        minutes: [],
+      }) +
       '\n```';
     const { keep, aside } = parseReply(fenced, files);
     expect(keep).toContain(files[0]);
@@ -420,7 +560,13 @@ describe("parseReply", () => {
   });
 
   it("deduplicates files listed in both groups", () => {
-    const reply = JSON.stringify({ keep: ["DSCF1234.jpg"], aside: ["DSCF1234.jpg"] });
+    const reply = JSON.stringify({
+      keep: [{ file: "DSCF1234.jpg" }],
+      aside: [{ file: "DSCF1234.jpg" }],
+      unclassified: [],
+      notes: [],
+      minutes: [],
+    });
     const { keep, aside } = parseReply(reply, files);
     expect(keep).toContain(files[0]);
     expect(aside).not.toContain(files[0]);
@@ -428,11 +574,14 @@ describe("parseReply", () => {
 
   it("parses minutes and nested decision", () => {
     const reply = JSON.stringify({
-      minutes: [{ speaker: "Curator", text: "looks good" }],
-      decision: { keep: ["DSCF1234.jpg"], aside: ["DSCF5678.jpg"] },
+      minutes: [{ speaker: "Jamie", text: "looks good" }],
+      decision: {
+        keep: { "DSCF1234.jpg": "" },
+        aside: { "DSCF5678.jpg": "" },
+      },
     });
     const { keep, aside, minutes } = parseReply(reply, files);
-    expect(minutes[0]).toMatch(/Curator/);
+    expect(minutes[0]).toMatch(/Jamie/);
     expect(keep).toContain(files[0]);
     expect(aside).toContain(files[1]);
   });
@@ -462,6 +611,21 @@ describe("parseReply", () => {
       expectFieldNotesMd: true,
     });
     expect(commitMessage).toBe("Add note");
+  });
+
+  it("writes failed replies to the debug directory", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "ps-fail-"));
+    process.env.PHOTO_SELECT_DEBUG_DIR = tmp;
+    parseReply("", files, {
+      model: "gpt-5",
+      verbosity: "high",
+      reasoningEffort: "high",
+    });
+    const debugPath = path.join(tmp, ".debug");
+    const entries = await fs.readdir(debugPath);
+    expect(entries.some((e) => e.startsWith("failed-reply-"))).toBe(true);
+    await fs.rm(tmp, { recursive: true, force: true });
+    delete process.env.PHOTO_SELECT_DEBUG_DIR;
   });
 });
 
@@ -570,6 +734,103 @@ describe("chatCompletion", () => {
     expect(result).toBe("ok");
   });
 
+  it("uses responses API with verbosity and reasoning for gpt-5 models", async () => {
+    responsesSpy.mockClear();
+    chatSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const result = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5-mini",
+      cache: false,
+    });
+    expect(responsesSpy).toHaveBeenCalled();
+    expect(chatSpy).not.toHaveBeenCalled();
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("low");
+    expect(args.reasoning.effort).toBe("minimal");
+    expect(args.text.format.type).toBe("json_schema");
+    expect(args.text.format.name).toBe("photo_select_decision");
+    expect(args.text.format.strict).toBe(true);
+    expect(
+      args.text.format.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+    expect(result).toBe("ok");
+  });
+
+  it("extracts JSON from output_json when output_text is empty", async () => {
+    responsesSpy.mockClear();
+    const payload = {
+      output_text: "",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            {
+              type: "output_json",
+              json: {
+                keep: [{ file: "DSCF1234.jpg", reason: "sharp" }],
+                aside: [{ file: "DSCF5678.jpg", reason: "blurry" }],
+                unclassified: [],
+                notes: [],
+                minutes: [],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    responsesSpy.mockResolvedValueOnce(payload);
+    const reply = await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+    });
+    const testFiles = ["/tmp/DSCF1234.jpg", "/tmp/DSCF5678.jpg"];
+    const { keep, aside } = parseReply(reply, testFiles);
+    expect(keep).toContain(testFiles[0]);
+    expect(aside).toContain(testFiles[1]);
+    await fs.rm('.debug', { recursive: true, force: true });
+  });
+
+  it("allows overriding verbosity and reasoning effort", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+      verbosity: "high",
+      reasoningEffort: "high",
+    });
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.text.verbosity).toBe("high");
+    expect(args.reasoning.effort).toBe("high");
+  });
+
+  it("rejects invalid flags", async () => {
+    await expect(
+      chatCompletion({
+        prompt: "p",
+        images: [],
+        model: "gpt-5",
+        cache: false,
+        verbosity: "loud",
+      })
+    ).rejects.toThrow(/verbosity/);
+    await expect(
+      chatCompletion({
+        prompt: "p",
+        images: [],
+        model: "gpt-5",
+        cache: false,
+        reasoningEffort: "extreme",
+      })
+    ).rejects.toThrow(/reasoningEffort/);
+  });
+
   it("logs additional curators from tags", async () => {
     vi.resetModules();
     const { chatCompletion } = await import("../src/chatClient.js");
@@ -595,6 +856,95 @@ describe("chatCompletion", () => {
     );
     logSpy.mockRestore();
     await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("cacheKey", () => {
+  it("changes when verbosity differs", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cache-"));
+    const img = path.join(dir, "a.jpg");
+    await fs.writeFile(img, "a");
+    const k1 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", verbosity: "low" });
+    const k2 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", verbosity: "high" });
+    expect(k1).not.toBe(k2);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("changes when reasoning effort differs", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cache-"));
+    const img = path.join(dir, "a.jpg");
+    await fs.writeFile(img, "a");
+    const k1 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", reasoningEffort: "minimal" });
+    const k2 = await cacheKey({ prompt: "p", images: [img], model: "gpt-5", reasoningEffort: "high" });
+    expect(k1).not.toBe(k2);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("buildGPT5Schema", () => {
+  it("enumerates files", () => {
+    const schema = buildGPT5Schema({
+      files: ["a.jpg", "b.jpg"],
+    });
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+    expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
+    expect(item.required).toEqual(["filename", "decision", "reason"]);
+    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+  });
+
+  it("provides batch helper", () => {
+    const used = ["/tmp/a.jpg", "/tmp/b.jpg"];
+    const schema = schemaForBatch(used, ["Curator-1"]);
+    const item = schema.schema.properties.decisions.items;
+    expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
+  });
+});
+
+describe("useResponses", () => {
+  it("detects gpt-5 models", () => {
+    expect(useResponses("gpt-5-mini")).toBe(true);
+    expect(useResponses("gpt-4o")).toBe(false);
+  });
+});
+
+describe("cache guards", () => {
+  beforeEach(async () => {
+    await fs.rm('.cache', { recursive: true, force: true });
+    responsesSpy.mockReset();
+  });
+
+  it("skips caching zero-decision replies", async () => {
+    responsesSpy.mockResolvedValueOnce({
+      output_text: JSON.stringify({ minutes: [], decisions: [] }),
+    });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: true,
+    });
+    const files = await fs.readdir('.cache').catch(() => []);
+    expect(files.length).toBe(0);
+  });
+
+  it("evicts zero-decision cache entries", async () => {
+    const key = await cacheKey({ prompt: "p", images: [], model: "gpt-5" });
+    await fs.mkdir('.cache', { recursive: true });
+    await fs.writeFile(
+      path.join('.cache', `${key}.txt`),
+      JSON.stringify({ minutes: [], decisions: [] }),
+      'utf8'
+    );
+    responsesSpy.mockResolvedValueOnce({ output_text: 'fresh' });
+    const out = await chatCompletion({
+      prompt: 'p',
+      images: [],
+      model: 'gpt-5',
+      cache: true,
+    });
+    expect(out).toBe('fresh');
+    expect(responsesSpy).toHaveBeenCalledTimes(1);
   });
 });
 ```
@@ -1050,36 +1400,34 @@ through to the script unchanged.
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
+| `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
+| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
-| `--parallel` | `1` | Number of batches to process simultaneously |
+| `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
+| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
 
-When enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message.
-During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
+When `--field-notes` is enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message. During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
 
-See [docs/field-notes.md](docs/field-notes.md) for a description of how the
-notebook system works.
+See [docs/field-notes.md](docs/field-notes.md) for a description of how the notebook system works.
 
 ### Increasing memory
 
-The Node.js heap defaults to about 4 GB. Large runs with `--parallel` greater than 1
+The Node.js heap defaults to about 4 GB. Large runs with `--parallel` or `--workers` greater than 1
 may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
 
 ```bash
 PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
-  /path/to/photo-select/photo-select-here.sh --parallel 10 --api-key sk-...
+  /path/to/photo-select/photo-select-here.sh --workers 10 --api-key sk-...
 ```
 
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
 
-### Choosing `--parallel`
+### Concurrency: `--workers` (recommended)
 
-Running multiple batches at once hides API latency but can exhaust system resources. See
-[`docs/parallel-playbook.md`](docs/parallel-playbook.md) for a practical guide on
-tuning this flag. In short, start around twice your physical core count and adjust
-until network waits dominate without hitting OpenAI rate limits.
+Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.
 
 ### Streaming responses
 
@@ -1087,6 +1435,22 @@ To avoid connection timeouts with large image batches, the CLI streams tokens
 from OpenAI as soon as they are available. Progress bars advance to a
 "stream" stage while data arrives. Streaming keeps the HTTPS socket alive and
 reduces the chance of retry loops on slow requests.
+
+### Console summary & minutes files
+
+By default, the console shows a colourised summary. Minutes are saved as **JSON**; TXT transcripts are optional.
+
+| variable | default | description |
+| --- | --- | --- |
+| `PHOTO_SELECT_PRETTY` | `1` | `0` to print raw LLM reply |
+| `PHOTO_SELECT_PRETTY_MINUTES` | `all (TTY) / 20 (CI)` | `all`/`0` for no cap, or a number |
+| `PHOTO_SELECT_TRANSCRIPT_TXT` | `0` | `1` to also write `minutes-*.txt` (human‑readable) |
+
+**Primary artifact:** `minutes-<uuid>.json`
+```json
+{ "minutes": [{ "speaker": "Name", "text": "..." }],
+  "decisions": [{ "filename": "file.jpg", "decision": "keep|aside", "reason": "" }] }
+```
 
 ### Custom timeout
 
@@ -1102,7 +1466,8 @@ Both providers generate a JSON schema for each request so vision models return
 typed responses. The environment variables `PHOTO_SELECT_OLLAMA_FORMAT` and
 `PHOTO_SELECT_OPENAI_FORMAT` can override this behaviour and are parsed as JSON
 when the value begins with `{`. Use an empty string to omit the parameter. The
-legacy `"json"` flag remains available for Ollama but can hang with images.
+legacy `"json"` flag is still available for Ollama but is unreliable with
+images; schema-based structured outputs work with vision models.
 
 ```bash
 export PHOTO_SELECT_OLLAMA_FORMAT='{"type":"object","properties":{...}}'
@@ -1111,7 +1476,7 @@ export PHOTO_SELECT_OLLAMA_FORMAT=""
 ```
 
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
-By default it matches the 4096-token limit used for OpenAI.
+By default it roughly matches the 4,096-token output limit of many OpenAI models.
 
 `PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
 from either provider. The default is 20 minutes. Pass `--verbose` or set
@@ -1134,60 +1499,38 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
 
 The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
-
+* **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, and `gpt-5-chat-latest`
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
 * **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
   `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
   `gpt-4o-mini-realtime-preview`, `gpt-4o-search-preview`, and
   `gpt-4o-mini-search-preview`
-* **o‑series reasoning models** – `o4-mini`, `o3`, `o3-pro` *(responses API)*,
-  `o3-mini`, `o1`, `o1-pro`, and the deprecated `o1-mini`
-* **Other vision models** – `gpt-4-turbo`, `gpt-4.5-preview` *(deprecated)*. The
-  `gpt-4-vision-preview` model has been removed.
+* **o‑series reasoning models** – `o4-mini`, `o4-mini-deep-research`, `o3`,
+  `o3-deep-research`, `o3-pro` *(responses API)*, `o3-mini`, `o1`, `o1-pro`,
+  and `o1-mini`
+* **Legacy vision models** – `gpt-4-turbo`, `gpt-4.5-preview` *(deprecated)*.
+  The `gpt-4-vision-preview` model has been removed.
 
 Example output of `openai api models.list`:
 
 ```text
-gpt-4.1-nano
-gpt-4.1-nano-2025-04-14
-gpt-4.5-preview
-gpt-4.5-preview-2025-02-27
+gpt-5
+gpt-5-mini
+gpt-5-nano
+gpt-4.1
+gpt-4.1-mini
 gpt-4o
-gpt-4o-2024-05-13
-gpt-4o-2024-08-06
-gpt-4o-2024-11-20
-gpt-4o-audio-preview
-gpt-4o-audio-preview-2024-10-01
-gpt-4o-audio-preview-2024-12-17
-gpt-4o-audio-preview-2025-06-03
 gpt-4o-mini
-gpt-4o-mini-2024-07-18
-gpt-4o-mini-audio-preview
-gpt-4o-mini-audio-preview-2024-12-17
-gpt-4o-mini-realtime-preview
-gpt-4o-mini-realtime-preview-2024-12-17
-gpt-4o-mini-search-preview
-gpt-4o-mini-search-preview-2025-03-11
 gpt-4o-realtime-preview
-gpt-4o-realtime-preview-2024-10-01
-gpt-4o-realtime-preview-2024-12-17
-gpt-4o-realtime-preview-2025-06-03
 gpt-4o-search-preview
-gpt-4o-search-preview-2025-03-11
 o1
-o1-2024-12-17
 o1-mini
-o1-mini-2024-09-12
 o1-pro
-o1-pro-2025-03-19
 o3
-o3-2025-04-16
 o3-mini
-o3-mini-2025-01-31
 o3-pro
-o3-pro-2025-06-10
 o4-mini
-o4-mini-2025-04-16
+o4-mini-deep-research
 ```
 These names match the model ids provided by the OpenAI Node SDK, as seen in its
 [type definitions](node_modules/openai/resources/beta/assistants.d.ts).
@@ -1221,22 +1564,25 @@ full 315‑photo set therefore uses about 2.5 million input tokens plus roughl
 
 Approximate price per run:
 
-| model          | input $/1M | output $/1M | est. cost on 315 photos |
-| -------------- | ---------- | ----------- | ---------------------- |
-| `gpt-4.1`      | $2.00      | $8.00       | ~$7 |
-| `gpt-4.1-mini` | $0.40      | $1.60       | ~$1.4 |
-| `gpt-4.1-nano` | $0.10      | $0.40       | ~$0.35 |
-| `o4-mini`      | $1.10      | $4.40       | ~$3.85 |
-| `o3`           | $2.00      | $8.00       | ~$7 |
-| `o3-pro`       | $20.00     | $80.00      | ~$70 |
-| `o3-mini`      | $1.10      | $4.40       | ~$3.85 |
-| `o1`           | $15.00     | $60.00      | ~$52.5 |
-| `o1-pro`       | $150.00    | $600.00     | ~$525 |
-| `gpt-4o`       | $2.50      | $10.00      | ~$9 |
-| `gpt-4o-mini`  | $0.15      | $0.60       | ~$0.55 |
-| `gpt-4-turbo`  | $10.00     | $30.00      | ~$33 |
-| `gpt-4.5-preview`      | $75.00     | $150.00     | ~$225 |
-| `gpt-4`        | $30.00     | $60.00      | ~$90 |
+| model                | input $/1M | output $/1M | est. cost on 315 photos |
+| -------------------- | ---------- | ----------- | ---------------------- |
+| `gpt-5`              | $1.25      | $10.00      | ~$5.62 |
+| `gpt-5-mini`         | $0.25      | $2.00       | ~$1.12 |
+| `gpt-5-nano`         | $0.05      | $0.40       | ~$0.23 |
+| `gpt-4.1`            | $2.00      | $8.00       | ~$7.00 |
+| `gpt-4.1-mini`       | $0.40      | $1.60       | ~$1.40 |
+| `gpt-4.1-nano`       | $0.10      | $0.40       | ~$0.35 |
+| `gpt-4o`             | $2.50      | $10.00      | ~$8.75 |
+| `gpt-4o-mini`        | $0.15      | $0.60       | ~$0.53 |
+| `o4-mini`            | $1.10      | $4.40       | ~$3.85 |
+| `o4-mini-deep-research` | $2.00   | $8.00       | ~$7.00 |
+| `o3`                 | $2.00      | $8.00       | ~$7.00 |
+| `o3-pro`             | $20.00     | $80.00      | ~$70.00 |
+| `o3-mini`            | $1.10      | $4.40       | ~$3.85 |
+| `o3-deep-research`   | $10.00     | $40.00      | ~$35.00 |
+| `o1`                 | $15.00     | $60.00      | ~$52.50 |
+| `o1-pro`             | $150.00    | $600.00     | ~$525.00 |
+| `o1-mini`            | $1.10      | $4.40       | ~$3.85 |
 
 These figures are approximate and based on current
 [OpenAI pricing](https://openai.com/pricing). Actual costs will vary with output
@@ -1262,15 +1608,15 @@ so you can compare the results side by side.
 
 ```bash
 # prepare two identical folders
-mkdir trial-gpt-4o trial-gpt-4.5-preview
+mkdir trial-gpt-4o trial-gpt-5
 cp /path/to/source/*.jpg trial-gpt-4o/
-cp /path/to/source/*.jpg trial-gpt-4.5-preview/
+cp /path/to/source/*.jpg trial-gpt-5/
 
 # run with GPT‑4o
 /path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-... --context /path/to/context.txt
 
-# run with GPT‑4.5-preview
-/path/to/photo-select/photo-select-here.sh --model gpt-4.5-preview --dir trial-gpt-4.5-preview --api-key sk-... --context /path/to/context.txt
+# run with GPT‑5
+/path/to/photo-select/photo-select-here.sh --model gpt-5 --dir trial-gpt-5 --api-key sk-... --context /path/to/context.txt
 ```
 
 If you see repeated `OpenAI error (404)` messages, your API key may not have
@@ -1286,7 +1632,7 @@ through that API, so no extra flags are needed.
 2. Send them to ChatGPT with the prompt (filenames included).
 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
-5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<timestamp>.txt` in the directory.
+5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
    If every photo at a level is kept or every photo is set aside, recursion stops early.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
@@ -1303,7 +1649,9 @@ export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'
 export PHOTO_SELECT_OPENAI_FORMAT=""  # disable the parameter
 ```
 
-The CLI allows up to 4096 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
+The OpenAI request uses `response_format: { type: "json_object" }` so the
+assistant replies with strict JSON, avoiding the need to strip Markdown fences.
+The CLI allows up to 8192 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
 `src/chatClient.js`) so the minutes and JSON decision block are returned in
 full.
 
@@ -1311,7 +1659,12 @@ full.
 
 Responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
-saved reply instead of hitting the API.
+saved reply instead of hitting the API. The tool never caches model responses
+that contain zero decisions (0 keeps + 0 asides). Such entries are skipped on
+write and evicted on read. If a batch still produces no decisions, the run is
+retried (finalize mode when 10 or fewer images remain). After two consecutive
+no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
+continues.
 
 ## Testing
 
@@ -1343,6 +1696,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
 /node_modules
 /.env
 .DS_Store
+.debug
 ```
 
 ### File: ./package.json
@@ -1517,7 +1871,7 @@ echo ""
 if command -v tree >/dev/null 2>&1; then
   echo "Below is the tree of files/folders (excluding .git, node_modules, dist, project-overview*):"
   echo '```'
-  tree -a -I ".git|node_modules|dist|.cache|project-overview*" .
+  tree -a -I ".git|node_modules|dist|.cache|.debug|project-overview*" .
   echo '```'
 else
   echo "Below is the 'ls -R' style listing of files/folders (excluding .git, node_modules, dist, project-overview*)."
@@ -1626,7 +1980,7 @@ echo "PDF files are extracted as text if possible; binary files are noted but no
 echo ""
 
 # Directories to skip anywhere in the repo
-SKIP_DIRS=(.git node_modules dist .vscode .cache)
+SKIP_DIRS=(.git node_modules dist .vscode .cache .debug)
 
 # File patterns to skip
 SKIP_FILES=("*.lock" "yarn.lock" "package-lock.json" "project-overview*")
@@ -2217,26 +2571,26 @@ All people depicted have signed legal releases granting permission for their lik
 Capture that conversation inside the `minutes` array; do not write it outside the JSON object. Begin with a diarised conversation in which the curators discuss the images and gently work toward consensus.
 Reflect the thoughtful, iterative process described in the briefing: curators share insights, consider relationships among works, and refine the selection together.
 
-After capturing these remarks as meeting minutes, output a JSON object summarising the final decision:
-
-If you are uncertain about a photo, **omit it from the decision block**.
-Never invent filenames or keys.
+After capturing these remarks as meeting minutes, output a JSON object summarising the final decision. Never invent filenames or keys. Return only JSON in exactly this structure; include only filenames from this batch. If uncertain about a photo, omit it from the decisions. Always include a reason for each decision; use empty string if none.
 
 {
   "minutes": [
-    { "speaker": "Name", "text": "what was said" },
+    { "speaker": "Name or description", "text": "what was said" },
     ...
   ],
-  "decision": {
-    "keep": {
-      "filename1.jpg": "why it stays",
-      ...
-    },
-    "aside": {
-      "filename2.jpg": "why it is set aside",
-      ...
+  "decisions": [
+      {
+        "filename": "filename1.jpg",
+        "decision": "keep",
+        "reason": "why it stays (use empty string if none)"
+      },
+    {
+      "filename": "filename2.jpg",
+      "decision": "aside",
+      "reason": "why it is set aside"
     }
-  }
+    ...
+  ]
 }
 
 Include only those filenames for which you reach a clear decision.
@@ -2397,20 +2751,34 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export const batchStore = new AsyncLocalStorage();
 ```
 
+### File: ./src/.DS_Store
+```
+(File type is application/octet-stream — skipping raw dump.)
+```
+
 ### File: ./src/chatClient.js
 ```
 import { OpenAI, NotFoundError } from "openai";
 import KeepAliveAgent from "agentkeepalive";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import {
+  readFile,
+  stat,
+  mkdir,
+  writeFile,
+  appendFile,
+  rm,
+} from "node:fs/promises";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
 
-const DEFAULT_TIMEOUT = 20 * 60 * 1000;
+const DEFAULT_TIMEOUT = 30 * 60 * 1000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  timeout: Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
+  timeout:
+    Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT,
 });
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
@@ -2424,6 +2792,79 @@ const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const peopleCache = new Map();
+
+const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
+
+function debugDir() {
+  const base = process.env.PHOTO_SELECT_DEBUG_DIR || process.cwd();
+  return path.join(base, ".debug");
+}
+
+async function logWarn(msg) {
+  console.warn(msg);
+  const dir = debugDir();
+  await mkdir(dir, { recursive: true });
+  await appendFile(path.join(dir, "warnings.log"), `${msg}\n`);
+}
+
+function extractPayload(rsp) {
+  if (typeof rsp.output_text === "string" && rsp.output_text.trim()) {
+    return { text: rsp.output_text, json: null };
+  }
+  const msg = rsp.output?.find((o) => o.type === "message");
+  const jsonPart = msg?.content?.find(
+    (c) => c.type === "output_json" && c.json
+  );
+  if (jsonPart) {
+    return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
+  }
+  const textPart = msg?.content?.find(
+    (c) => c.type === "output_text" && c.text?.trim()
+  );
+  if (textPart) return { text: textPart.text, json: null };
+  return { text: "", json: null };
+}
+
+async function extractTextWithLogging(rsp) {
+  const types =
+    rsp.output?.flatMap((o) =>
+      o.type === "message" ? (o.content || []).map((c) => c.type) : [o.type]
+    ) || [];
+  console.log(
+    `\uD83D\uDD0E responses.create content types: ${types.join(", ")}`
+  );
+  console.log(
+    `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
+  );
+  const { text, json } = extractPayload(rsp);
+  const debug = process.env.PHOTO_SELECT_DEBUG;
+  if (!text.trim() || debug) {
+    const dir = debugDir();
+    await mkdir(dir, { recursive: true });
+    const f = path.join(dir, `resp-${Date.now()}.json`);
+    let body = JSON.stringify(rsp, null, 2);
+    if (Buffer.byteLength(body) > MAX_DEBUG_BYTES) {
+      body = body.slice(0, MAX_DEBUG_BYTES);
+      await logWarn(
+        `⚠️  Responses payload truncated to ${MAX_DEBUG_BYTES} bytes at ${f}`
+      );
+    }
+    await writeFile(f, body);
+    if (!text.trim()) {
+      await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
+    } else {
+      console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
+      await appendFile(
+        path.join(dir, "warnings.log"),
+        `Saved Responses payload to ${f}\n`
+      );
+    }
+  }
+  if (debug) {
+    console.log(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
+  }
+  return { text, json };
+}
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
   try {
@@ -2446,7 +2887,9 @@ async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
 async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
-    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(filename)}/persons`;
+    const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
+      filename
+    )}/persons`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -2454,7 +2897,7 @@ async function getPeople(filename) {
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
-    const msg = err?.message || err?.code || 'unknown error';
+    const msg = err?.message || err?.code || "unknown error";
     console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
     return [];
@@ -2479,41 +2922,121 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 4096;
+export const MAX_RESPONSE_TOKENS = 16384;
 
-function ensureJsonMention(text) {
-  return /\bjson\b/i.test(text)
-    ? text
-    : `${text}\nRespond in json format.`;
+export function buildGPT5Schema({ files = [] }) {
+  const decisionItem = {
+    type: "object",
+    additionalProperties: false,
+    // Strict JSON schema requires required[] to include every key in properties.
+    required: ["filename", "decision", "reason"],
+    properties: {
+      filename: { type: "string", enum: files },
+      decision: { type: "string", enum: ["keep", "aside"] },
+      reason: { type: "string" }, // allow empty string when no rationale
+    },
+  };
+  return {
+    name: "photo_select_decision",
+    schema: {
+      type: "object",
+      required: ["minutes", "decisions"],
+      additionalProperties: false,
+      properties: {
+        minutes: {
+          type: "array",
+          description: "Transcript of curator discussion",
+          items: {
+            type: "object",
+            required: ["speaker", "text"],
+            additionalProperties: false,
+            properties: {
+              speaker: { type: "string" },
+              text: { type: "string" },
+            },
+          },
+        },
+        decisions: {
+          type: "array",
+          description: "Per-file decisions",
+          items: decisionItem,
+          minItems: 0,
+        },
+      },
+    },
+  };
 }
 
-const CACHE_DIR = path.resolve('.cache');
+export function schemaForBatch(used, curators = []) {
+  const files = used.map((f) => path.basename(f));
+  return buildGPT5Schema({ files });
+}
 
-async function getCachedReply(key) {
+export function useResponses(model) {
+  return /^gpt-5/.test(model);
+}
+
+function ensureJsonMention(text) {
+  return /\bjson\b/i.test(text) ? text : `${text}\nRespond in json format.`;
+}
+
+const CACHE_DIR = path.resolve(".cache");
+const CACHE_KEY_PREFIX = "v5";
+
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== "1";
+}
+const dim = (s) => (useColor() ? `\x1b[2m${s}\x1b[0m` : s);
+
+async function getCachedReply(key, used = []) {
   try {
-    return await readFile(path.join(CACHE_DIR, `${key}.txt`), 'utf8');
+    const file = path.join(CACHE_DIR, `${key}.txt`);
+    const text = await readFile(file, "utf8");
+    const { keep, aside } = parseReply(text, used);
+    if (keep.length + aside.length === 0) {
+      try {
+        await rm(file);
+      } catch {}
+      return null;
+    }
+    return text;
   } catch {
     return null;
   }
 }
 
-async function setCachedReply(key, text) {
+async function setCachedReply(key, text, used = []) {
+  const { keep, aside } = parseReply(text, used);
+  if (keep.length + aside.length === 0) {
+    console.log(dim(`cache: skip (0 decisions)`));
+    return;
+  }
   await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, 'utf8');
+  await writeFile(path.join(CACHE_DIR, `${key}.txt`), text, "utf8");
 }
 
-export async function cacheKey({ prompt, images, model, curators = [] }) {
-  const hash = crypto.createHash('sha256');
+export async function cacheKey({
+  prompt,
+  images,
+  model,
+  curators = [],
+  verbosity,
+  reasoningEffort,
+}) {
+  const hash = crypto.createHash("sha256");
+  hash.update(CACHE_KEY_PREFIX);
   hash.update(model);
   hash.update(prompt);
-  if (curators.length) hash.update(curators.join(','));
+  if (curators.length) hash.update(curators.join(","));
+  if (verbosity) hash.update(verbosity);
+  if (reasoningEffort) hash.update(reasoningEffort);
   for (const file of images) {
     const info = await stat(file);
     hash.update(file);
     hash.update(String(info.mtimeMs));
     hash.update(String(info.size));
   }
-  return hash.digest('hex');
+  return hash.digest("hex");
 }
 
 /**
@@ -2523,7 +3046,7 @@ export async function cacheKey({ prompt, images, model, curators = [] }) {
 export async function buildMessages(prompt, images, curators = []) {
   let content = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     content = content.replace(/\{\{curators\}\}/g, names);
   }
   const system = { role: "system", content };
@@ -2539,7 +3062,9 @@ export async function buildMessages(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     userImageParts.push(
       { type: "text", text: JSON.stringify(info) },
       {
@@ -2551,7 +3076,6 @@ export async function buildMessages(prompt, images, curators = []) {
       }
     );
   }
-
 
   const userText = {
     role: "user",
@@ -2568,7 +3092,7 @@ export async function buildMessages(prompt, images, curators = []) {
 export async function buildInput(prompt, images, curators = []) {
   let instructions = prompt;
   if (curators.length) {
-    const names = curators.join(', ');
+    const names = curators.join(", ");
     instructions = instructions.replace(/\{\{curators\}\}/g, names);
   }
   const used = [];
@@ -2582,7 +3106,9 @@ export async function buildInput(prompt, images, curators = []) {
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
     const people = await getPeople(name);
-    const info = people.length ? { filename: name, people } : { filename: name };
+    const info = people.length
+      ? { filename: name, people }
+      : { filename: name };
     imageParts.push(
       { type: "input_text", text: JSON.stringify(info) },
       {
@@ -2593,14 +3119,16 @@ export async function buildInput(prompt, images, curators = []) {
     );
   }
 
-
   return {
     instructions,
     input: [
       {
         role: "user",
         content: [
-          { type: "input_text", text: ensureJsonMention("Here are the images:") },
+          {
+            type: "input_text",
+            text: ensureJsonMention("Here are the images:"),
+          },
           ...imageParts,
         ],
       },
@@ -2617,6 +3145,8 @@ export async function chatCompletion({
   prompt,
   images,
   model = "gpt-4o",
+  verbosity = "low",
+  reasoningEffort = "minimal",
   maxRetries = 3,
   cache = true,
   curators = [],
@@ -2624,27 +3154,95 @@ export async function chatCompletion({
   onProgress = () => {},
   responseFormat,
 }) {
-  const extras = await curatorsFromTags(images);
-  const added = extras.filter((n) => !curators.includes(n));
-  const finalCurators = Array.from(new Set([...curators, ...extras]));
+  const allowedVerbosity = ["low", "medium", "high"];
+  const allowedEffort = ["minimal", "low", "medium", "high"];
+  if (!allowedVerbosity.includes(verbosity)) {
+    throw new Error(`invalid verbosity: ${verbosity}`);
+  }
+  if (!allowedEffort.includes(reasoningEffort)) {
+    throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
+  }
+
+  const clean = (n) => n.replace(/^and\s+/i, "").trim();
+  const extras = (await curatorsFromTags(images)).map(clean);
+  const baseCurators = curators.map(clean);
+  const added = extras.filter((n) => !baseCurators.includes(n));
+  const finalCurators = Array.from(new Set([...baseCurators, ...extras]));
   if (added.length) {
     const info = batchStore.getStore();
     const prefix = info?.batch ? `Batch ${info.batch} ` : "";
-    console.log(`👥  ${prefix}additional curators from tags: ${added.join(', ')}`);
+    console.log(
+      `👥  ${prefix}additional curators from tags: ${added.join(", ")}`
+    );
   }
   let finalPrompt = prompt;
   if (finalCurators.length) {
-    const names = finalCurators.join(', ');
+    const names = finalCurators.join(", ");
     finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
+  finalPrompt += "\nOnly include these filenames; do not invent new ones.";
 
+  const isGpt5 = useResponses(model);
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
-      onProgress('encoding');
+      onProgress("encoding");
+      if (isGpt5) {
+        const { instructions, input, used } = await buildInput(
+          finalPrompt,
+          images,
+          finalCurators
+        );
+        const key = await cacheKey({
+          prompt: finalPrompt,
+          images: used,
+          model,
+          curators: finalCurators,
+          verbosity,
+          reasoningEffort,
+        });
+        if (cache) {
+          const hit = await getCachedReply(key, used);
+          if (hit) return hit;
+        }
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress("request");
+        onProgress("waiting");
+        const baseOpts = {
+          model,
+          instructions,
+          input,
+          text: {
+            verbosity,
+            format: {
+              type: "json_schema",
+              name: schema.name,
+              schema: schema.schema,
+              strict: true,
+            },
+          },
+          reasoning: { effort: reasoningEffort },
+          max_output_tokens: MAX_RESPONSE_TOKENS,
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: "minimal" },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
+        if (cache) await setCachedReply(key, text, used);
+        onProgress("done");
+        return text;
+      }
+
       const { messages, used } = await buildMessages(
         finalPrompt,
         images,
@@ -2658,55 +3256,60 @@ export async function chatCompletion({
         curators: finalCurators,
       });
       if (cache) {
-        const hit = await getCachedReply(key);
+        const hit = await getCachedReply(key, used);
         if (hit) return hit;
       }
 
-      onProgress('request');
+      onProgress("request");
       const baseParams = {
         model,
         messages,
       };
       if (responseFormat === undefined) {
-        baseParams.response_format = { type: 'json_object' };
+        baseParams.response_format = { type: "json_object" };
       } else if (responseFormat !== null) {
         baseParams.response_format = responseFormat;
       }
-      if (/^o\d/.test(model)) {
+      const needsCompletionTokens = /^o\d/.test(model);
+      if (needsCompletionTokens) {
         baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
       } else {
         baseParams.max_tokens = MAX_RESPONSE_TOKENS;
       }
-      onProgress('waiting');
+      onProgress("waiting");
       let text;
       if (stream) {
         const streamResp = await openai.chat.completions.create({
           ...baseParams,
           stream: true,
         });
+        onProgress("stream");
         text = "";
         for await (const chunk of streamResp) {
           const delta = chunk.choices?.[0]?.delta?.content;
           if (delta) {
             text += delta;
-            onProgress('stream');
           }
         }
       } else {
         const { choices } = await openai.chat.completions.create(baseParams);
         text = choices[0].message.content;
       }
-      if (cache) await setCachedReply(key, text);
-      onProgress('done');
+      if (cache) await setCachedReply(key, text, used);
+      onProgress("done");
       return text;
     } catch (err) {
       const msg = String(err?.error?.message || err?.message || "");
       const code = err?.code || err?.cause?.code;
-      const isNetwork = err?.name === "APIConnectionError" ||
+      const isNetwork =
+        err?.name === "APIConnectionError" ||
         ["EPIPE", "ECONNRESET", "ETIMEDOUT"].includes(code);
       if (
+        !isGpt5 &&
         (err instanceof NotFoundError || err.status === 404) &&
-        (/v1\/responses/.test(msg) || /v1\/completions/.test(msg) || /not a chat model/i.test(msg))
+        (/v1\/responses/.test(msg) ||
+          /v1\/completions/.test(msg) ||
+          /not a chat model/i.test(msg))
       ) {
         const { instructions, input, used } = await buildInput(
           finalPrompt,
@@ -2718,21 +3321,41 @@ export async function chatCompletion({
           images: used,
           model,
           curators: finalCurators,
+          verbosity,
+          reasoningEffort,
         });
-        const rsp = await openai.responses.create({
+        const schema = schemaForBatch(used, finalCurators);
+        onProgress("request");
+        onProgress("waiting");
+        const baseOpts = {
           model,
           instructions,
           input,
-          text:
-            responseFormat === undefined
-              ? { format: { type: 'json_object' } }
-              : responseFormat === null
-                ? undefined
-                : { format: responseFormat },
+          text: {
+            format: {
+              type: "json_schema",
+              name: schema.name,
+              schema: schema.schema,
+              strict: true,
+            },
+            verbosity,
+          },
+          reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
-        });
-        const text = rsp.output_text;
-        if (cache) await setCachedReply(key, text);
+        };
+        let rsp = await openai.responses.create(baseOpts);
+        let { text } = await extractTextWithLogging(rsp);
+        if (!text.trim()) {
+          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
+          rsp = await openai.responses.create({
+            ...baseOpts,
+            reasoning: { effort: "minimal" },
+            temperature: 0.2,
+          });
+          ({ text } = await extractTextWithLogging(rsp));
+        }
+        if (cache) await setCachedReply(key, text, used);
+        onProgress("done");
         return text;
       }
 
@@ -2755,12 +3378,12 @@ export async function chatCompletion({
  *  • “DSCF1234 — keep  …reason…”
  *  • “Set aside: DSCF5678”
  */
-export function parseReply(text, allFiles, opts = {}) {
-  // Strip Markdown code fences like ```json ... ``` if present
-  const fenced = text.trim();
-  if (fenced.startsWith('```')) {
+export function parseReply(text, allFiles, meta = {}) {
+  let body = text;
+  const fenced = body.trim();
+  if (fenced.startsWith("```")) {
     const match = fenced.match(/^```\w*\n([\s\S]*?)\n```$/);
-    if (match) text = match[1];
+    if (match) body = match[1];
   }
   const map = new Map();
   for (const f of allFiles) {
@@ -2781,94 +3404,146 @@ export function parseReply(text, allFiles, opts = {}) {
   const aside = new Set();
   const notes = new Map();
   const minutes = [];
+  let unclassified = [];
 
   let fieldNotesDiff;
   let fieldNotesMd;
   let fieldNotesInstructions;
   let commitMessage;
-  // Try JSON first
+
+  let parsed = false;
   try {
-    const obj = JSON.parse(text);
-    if (opts.expectFieldNotesDiff && typeof obj.field_notes_diff === 'string') {
+    const obj = JSON.parse(body);
+    if (meta.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
       fieldNotesDiff = obj.field_notes_diff;
     }
-    if (opts.expectFieldNotesMd && typeof obj.field_notes_md === 'string') {
+    if (meta.expectFieldNotesMd && typeof obj.field_notes_md === "string") {
       fieldNotesMd = obj.field_notes_md;
     }
     if (
-      opts.expectFieldNotesInstructions &&
-      typeof obj.field_notes_instructions === 'string'
+      meta.expectFieldNotesInstructions &&
+      typeof obj.field_notes_instructions === "string"
     ) {
       fieldNotesInstructions = obj.field_notes_instructions;
     }
-    if (typeof obj.commit_message === 'string') {
+    if (typeof obj.commit_message === "string") {
       commitMessage = obj.commit_message.trim();
     }
-
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside) {
-        if (Array.isArray(node.minutes)) minutes.push(...node.minutes.map((m) => `${m.speaker}: ${m.text}`));
-        return node.decision;
+    if (obj && Array.isArray(obj.decisions)) {
+      for (const item of obj.decisions) {
+        if (!item || typeof item !== "object") continue;
+        const base = String(item.filename || "").trim();
+        if (!base) continue;
+        const f = allFiles.find((p) => path.basename(p) === base);
+        if (!f) continue;
+        const choice = String(item.decision || "").toLowerCase();
+        if (choice === "keep") {
+          keep.add(f);
+        } else if (choice === "aside") {
+          aside.add(f);
+        }
+        if (typeof item.reason === "string" && item.reason.trim()) {
+          notes.set(f, item.reason.trim());
+        }
       }
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
-      }
-      return null;
-    };
-
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const n of val) {
-            const f = lookup(n);
-            if (f) set.add(f);
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
+      if (Array.isArray(obj.minutes)) {
+        for (const m of obj.minutes) {
+          if (
+            m &&
+            typeof m === "object" &&
+            typeof m.speaker === "string" &&
+            typeof m.text === "string"
+          ) {
+            minutes.push(m.speaker + ": " + m.text);
           }
         }
-      };
-
-      handle('keep', keep);
-      handle('aside', aside);
-      // continue to normalization below
+      }
+      parsed = true;
     }
   } catch {
-    // fall through to plain text handling
+    // not JSON; fall through
   }
 
-  const lines = text.split("\n");
-  for (const raw of lines) {
-    const line = raw.trim();
-    const lower = line.toLowerCase();
-    const tm = line.match(/^([^:]+):\s*(.+)$/);
-    if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
-    for (const [name, f] of map) {
-      let short = name;
-      const idx = name.indexOf("dscf");
-      if (idx !== -1) short = name.slice(idx);
+  if (!parsed) {
+    try {
+      const obj = JSON.parse(body);
+      const extract = (node) => {
+        if (!node || typeof node !== "object") return null;
+        if (Array.isArray(node.minutes))
+          minutes.push(...node.minutes.map((m) => m.speaker + ": " + m.text));
+        if (node.keep && node.aside) return node;
+        if (node.decision && node.decision.keep && node.decision.aside)
+          return node.decision;
+        for (const val of Object.values(node)) {
+          const found = extract(val);
+          if (found) return found;
+        }
+        return null;
+      };
+      const decision = extract(obj);
+      if (decision) {
+        const handle = (group, set) => {
+          const val = decision[group];
+          if (Array.isArray(val)) {
+            for (const item of val) {
+              if (typeof item === "string") {
+                const f = lookup(item);
+                if (f) set.add(f);
+              } else if (item && typeof item === "object") {
+                const f = lookup(item.file);
+                if (f) {
+                  set.add(f);
+                  if (item.reason) notes.set(f, String(item.reason));
+                }
+              }
+            }
+          } else if (val && typeof val === "object") {
+            for (const [n, reason] of Object.entries(val)) {
+              const f = lookup(n);
+              if (f) {
+                set.add(f);
+                if (reason) notes.set(f, String(reason));
+              }
+            }
+          }
+        };
+        handle("keep", keep);
+        handle("aside", aside);
+        if (Array.isArray(decision.unclassified)) {
+          for (const n of decision.unclassified) {
+            const f = lookup(n);
+            if (f) unclassified.push(f);
+          }
+        }
+        parsed = true;
+      }
+    } catch {
+      // ignore JSON errors
+    }
+  }
 
-      if (lower.includes(name) || (short !== name && lower.includes(short))) {
-        let decision;
-        if (lower.includes("keep")) decision = "keep";
-        if (lower.includes("aside")) decision = "aside";
-        if (decision === "keep") keep.add(f);
-        if (decision === "aside") aside.add(f);
+  if (!parsed) {
+    const lines = body.split("\n");
+    for (const raw of lines) {
+      const line = raw.trim();
+      const lower = line.toLowerCase();
+      const tm = line.match(/^([^:]+):\s*(.+)$/);
+      if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      for (const [name, f] of map) {
+        let short = name;
+        const idx = name.indexOf("dscf");
+        if (idx !== -1) short = name.slice(idx);
 
-        const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-        if (m && m[1]) notes.set(f, m[1].trim());
+        if (lower.includes(name) || (short !== name && lower.includes(short))) {
+          let decision;
+          if (lower.includes("keep")) decision = "keep";
+          if (lower.includes("aside")) decision = "aside";
+          if (decision === "keep") keep.add(f);
+          if (decision === "aside") aside.add(f);
+
+          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+          if (m && m[1]) notes.set(f, m[1].trim());
+        }
       }
     }
   }
@@ -2877,12 +3552,40 @@ export function parseReply(text, allFiles, opts = {}) {
   // in a later batch. Only files explicitly marked keep or aside are returned.
 
   // Prefer keeping when a file appears in both groups
-  for (const f of keep) {
-    aside.delete(f);
-  }
+  for (const f of keep) aside.delete(f);
 
   const decided = new Set([...keep, ...aside]);
-  const unclassified = allFiles.filter((f) => !decided.has(f));
+  if (!unclassified.length) {
+    unclassified = allFiles.filter((f) => !decided.has(f));
+  } else {
+    unclassified = unclassified.filter((f) => !decided.has(f));
+  }
+
+  if (
+    keep.size === 0 &&
+    aside.size === 0 &&
+    minutes.length === 0 &&
+    notes.size === 0
+  ) {
+    const failFile = path.join(
+      debugDir(),
+      `failed-reply-${crypto.randomUUID()}.json`
+    );
+    const payload = {
+      model: meta.model,
+      verbosity: meta.verbosity,
+      reasoningEffort: meta.reasoningEffort,
+      files: allFiles.map((f) => path.basename(f)),
+      reply: body,
+    };
+    try {
+      mkdirSync(path.dirname(failFile), { recursive: true });
+      writeFileSync(failFile, JSON.stringify(payload, null, 2));
+    } catch {
+      // ignore file write errors
+    }
+    console.warn(`⚠️  empty reply saved to ${failFile}`);
+  }
 
   return {
     keep: [...keep],
@@ -2948,11 +3651,12 @@ import { parseFormatEnv } from '../formatOverride.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const client = new Ollama({ host: BASE_URL });
-// Check for an environment override. When undefined we generate a schema
+// Check for an environment override. When undefined we generate a JSON schema
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
 const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
-// default to a long response similar to OpenAI's 4096 token cap
+// Default to a long response (~4k tokens) matching the output limit of many
+// OpenAI models.
 const OLLAMA_NUM_PREDICT = Number.parseInt(
   process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
   10
@@ -3005,7 +3709,9 @@ export default class OllamaProvider {
         };
 
         // Build the request format. If an environment override is not provided
-        // generate a schema that matches the expected reply shape.
+        // generate a structured-output schema matching the expected reply
+        // shape. Legacy "json" mode remains available but is unreliable with
+        // images.
         let format = OLLAMA_FORMAT_OVERRIDE;
         if (format === undefined) {
           format = buildReplySchema({
@@ -3127,13 +3833,32 @@ program
     "-x, --context <file>",
     "Text file with exhibition context for the curators"
   )
+  .option(
+    "--verbosity <level>",
+    "LLM verbosity (low|medium|high)",
+    process.env.PHOTO_SELECT_VERBOSITY || "high"
+  )
+  .option(
+    "--reasoning-effort <level>",
+    "Reasoning effort (minimal|low|medium|high)",
+    process.env.PHOTO_SELECT_REASONING_EFFORT
+  )
   .option("--no-recurse", "Process a single directory only")
-  .option("-P, --parallel <n>", "Number of concurrent API calls", (v) => Math.max(1, parseInt(v, 10)), 1)
+  .option(
+    "-P, --parallel <n>",
+    "Number of concurrent API calls (deprecated; use --workers)",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
   .option("--field-notes", "Enable field notes workflow")
   .option("-v, --verbose", "Store prompts and responses for debugging")
+  .option(
+    "--workers <n>",
+    "Number of worker processes (each runs batches sequentially)",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
   .parse(process.argv);
 
-const {
+let {
   dir,
   prompt: promptPath,
   provider: providerName,
@@ -3145,8 +3870,18 @@ const {
   parallel,
   fieldNotes,
   verbose,
+  workers,
+  verbosity,
+  reasoningEffort,
   ollamaBaseUrl,
 } = program.opts();
+
+if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
+  const n = Number(parallel) || 1;
+  if (!workers) workers = n;
+  console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
+}
+if (!workers) workers = 1;
 
 if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
@@ -3163,6 +3898,11 @@ const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+}
+
+let finalReasoningEffort = reasoningEffort;
+if (!finalReasoningEffort) {
+  finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
 }
 
 (async () => {
@@ -3185,9 +3925,11 @@ if (!finalModel) {
       recurse,
       curators,
       contextPath,
-      parallel,
       fieldNotes,
       verbose,
+      workers,
+      verbosity,
+      reasoningEffort: finalReasoningEffort,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
@@ -3498,6 +4240,96 @@ import { MultiBar, Presets } from "cli-progress";
 
 const exec = promisify(execFile);
 
+// ---- env & defaults ---------------------------------------------------------
+function envBool(name, def) {
+  const v = process.env[name];
+  if (v == null) return def;
+  if (/^(1|true|yes|on)$/i.test(v)) return true;
+  if (/^(0|false|no|off)$/i.test(v)) return false;
+  return def;
+}
+const PRETTY = envBool("PHOTO_SELECT_PRETTY", true);                 // pretty console summary
+const TRANSCRIPT_TXT = envBool("PHOTO_SELECT_TRANSCRIPT_TXT", false); // optional .txt transcript
+
+function parsePrettyMinutes() {
+  const raw = process.env.PHOTO_SELECT_PRETTY_MINUTES;
+  const isTTY = process.stdout.isTTY;
+  const isCI = !!process.env.CI;
+  if (raw != null) {
+    if (/^(all|∞|infinity|0)$/i.test(raw)) return Infinity;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n === 0 ? Infinity : n;
+  }
+  return isTTY && !isCI ? Infinity : 20;
+}
+const MAX_MINUTES = parsePrettyMinutes();
+
+function extractJsonBlock(body) {
+  if (!body) return null;
+  let s = String(body).trim();
+  const fenced = s.match(/^```\w*\n([\s\S]*?)\n```$/);
+  if (fenced) s = fenced[1];
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function useColor() {
+  return process.stdout.isTTY && process.env.NO_COLOR !== "1";
+}
+function color(s, code) {
+  return useColor() ? `\x1b[${code}m${s}\x1b[0m` : s;
+}
+const dim = (s) => color(s, 2);
+const green = (s) => color(s, 32);
+const yellow = (s) => color(s, 33);
+const MAX_ZERO_DECISION_STREAK = 2;
+
+function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
+  const json = extractJsonBlock(raw);
+  if (!json) {
+    try {
+      return JSON.stringify(JSON.parse(String(raw)), null, 2);
+    } catch {
+      return String(raw);
+    }
+  }
+  let out = "";
+  if (Array.isArray(json.minutes)) {
+    out += `${dim("— Minutes —")}\n`;
+    const slice =
+      maxMinutes === Infinity ? json.minutes : json.minutes.slice(0, maxMinutes);
+    for (const m of slice) {
+      if (m && typeof m === "object") {
+        const who = (m.speaker ?? "Curator").toString();
+        const txt = (m.text ?? "").toString();
+        out += `  • ${who}: ${txt}\n`;
+      }
+    }
+    if (maxMinutes !== Infinity && json.minutes.length > slice.length) {
+      out += dim(`  … +${json.minutes.length - slice.length} more\n`);
+    }
+  }
+  if (Array.isArray(json.decisions)) {
+    const keeps = json.decisions.filter((d) => d && d.decision === "keep");
+    const asides = json.decisions.filter((d) => d && d.decision === "aside");
+    out += `${dim("— Decisions —")} ${keeps.length} keep / ${asides.length} aside\n`;
+    for (const d of keeps)
+      out += `  ${green("KEEP")}  ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ""
+      }\n`;
+    for (const d of asides)
+      out += `  ${yellow("ASIDE")} ${d.filename}${
+        d.reason ? ` — ${d.reason}` : ""
+      }\n`;
+  } else {
+    out += JSON.stringify(json, null, 2) + "\n";
+  }
+  return out.trimEnd();
+}
+
 async function ensureGitRepo(dir) {
   try {
     await stat(path.join(dir, ".git"));
@@ -3572,9 +4404,8 @@ function formatDuration(ms) {
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
- * @param {number} [options.parallel=1]      Number of API requests to run simultaneously
- * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
- * @param {number} [options.depth=0]         Internal recursion depth (for logging)
+* @param {boolean} [options.fieldNotes=false] Enable field notes workflow
+* @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
 export async function triageDirectory({
   dir,
@@ -3584,9 +4415,11 @@ export async function triageDirectory({
   recurse = true,
   curators = [],
   contextPath,
-  parallel = 1,
   fieldNotes = false,
   verbose = false,
+  workers = 1,
+  verbosity,
+  reasoningEffort,
   depth = 0,
   gitRoot,
 }) {
@@ -3596,6 +4429,11 @@ export async function triageDirectory({
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
+
+  if (depth === 0) {
+    const shown = MAX_MINUTES === Infinity ? 'all' : String(MAX_MINUTES);
+    console.log(dim(`UI: pretty=${PRETTY?'on':'off'}, transcript_txt=${TRANSCRIPT_TXT?'on':'off'}, minutes_shown=${shown}`));
+  }
 
   if (!gitRoot) gitRoot = dir;
   if (fieldNotes && depth === 0) {
@@ -3672,210 +4510,212 @@ export async function triageDirectory({
     }
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
-
-    // Step 1 – select up to parallel × 10 images
-    const total = Math.min(images.length, parallel * 10);
-    const selection = pickRandom(images, total);
-    console.log(`${indent}🔍  Selected ${selection.length} image(s)`);
-
-    const batches = [];
-    for (let i = 0; i < selection.length; i += 10) {
-      batches.push(selection.slice(i, i + 10));
-    }
-
-    console.log(`${indent}⏳  Sending ${batches.length} batch(es) to ChatGPT…`);
+    const queue = pickRandom(images, images.length);
+    console.log(
+      `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+    );
 
     const multibar = new MultiBar(
-      {
-        clearOnComplete: false,
-        hideCursor: true,
-        format: `${indent}{prefix} |{bar}| {stage}`,
-      },
-      Presets.shades_classic
-    );
-    const stageMap = { encoding: 1, request: 2, waiting: 3, done: 4 };
-    const bars = batches.map((_, i) =>
-      multibar.create(4, 0, { prefix: `Batch ${i + 1}`, stage: "queued" })
-    );
+        {
+          clearOnComplete: false,
+          hideCursor: true,
+          format: `${indent}{prefix} |{bar}| {stage}`,
+        },
+        Presets.shades_classic
+      );
+      try {
+        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+        const getBar = (idx) =>
+          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+        const log = (msg) => {
+          for (const line of String(msg).split(/\n/)) {
+            multibar.log(line + "\n");
+            if (process.env.NODE_ENV === "test") console.log(line);
+          }
+        };
+        let batchIdx = 0;
+        let completed = 0;
+        const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
 
-    let nextIndex = 0;
-    async function worker() {
-      while (true) {
-        const idx = nextIndex++;
-        if (idx >= batches.length) break;
-        const batch = batches[idx];
-        const bar = bars[idx];
-        await batchStore.run({ batch: idx + 1 }, async () => {
-          try {
-            const notesText = notesWriter ? await notesWriter.read() : undefined;
-            const basePrompt = await buildPrompt(promptPath, {
-              curators,
-              contextPath,
-              images: batch,
-              fieldNotes: notesText,
-              hasFieldNotes: !!notesWriter,
-              isSecondPass: false,
-            });
-            let prompt = basePrompt;
-            const start = Date.now();
-            const promptId = crypto.randomUUID();
-            if (verbose) {
-              const pFile = path.join(levelDir, '_prompts', `batch-${idx + 1}-${promptId}.txt`);
-              await writeFile(pFile, prompt, 'utf8');
-            }
-            const savePayload = verbose
-              ? async (obj) => {
-                  const dir = path.join(levelDir, '_payloads');
-                  await mkdir(dir, { recursive: true });
-                  const file = path.join(
-                    dir,
-                    `batch-${idx + 1}-${promptId}.json`
-                  );
-                  await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
-                }
-              : undefined;
-            const reply = await provider.chat({
-              prompt,
-              images: batch,
-              model,
-              curators,
-              expectFieldNotesInstructions: !!notesWriter,
-              savePayload,
-              onProgress: (stage) => {
-                bar.update(stageMap[stage] || 0, { stage });
-              },
-              stream: true,
-            });
-            if (verbose) {
-              const rFile = path.join(levelDir, '_responses', `batch-${idx + 1}-${promptId}.txt`);
-              await writeFile(rFile, reply, 'utf8');
-            }
-            const ms = Date.now() - start;
-            bar.update(4, { stage: "done" });
-            bar.stop();
-            console.log(`${indent}🤖  ChatGPT reply:\n${reply}`);
-            console.log(`${indent}⏱️  Batch ${idx + 1} completed in ${(ms / 1000).toFixed(1)}s`);
-
-            let parsed = parseReply(reply, batch, {
-              expectFieldNotesInstructions: !!notesWriter,
-            });
-            const {
-              keep,
-              aside,
-              notes,
-              minutes,
-              fieldNotesInstructions,
-              fieldNotesMd,
-            } = parsed;
-            if (notesWriter && (fieldNotesMd || fieldNotesInstructions)) {
-              if (fieldNotesMd) {
-                await notesWriter.writeFull(fieldNotesMd);
-                if (parsed.commitMessage) {
-                  await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
-                }
-              } else if (fieldNotesInstructions) {
-                const [prev1 = "", prev2 = ""] = await getRevisionHistory(
-                  gitRoot,
-                  notesWriter.file,
-                  2
-                );
-                const commitMsgs = await getCommitMessages(
-                  gitRoot,
-                  notesWriter.file
-                );
-                let secondPrompt = await buildPrompt(promptPath, {
-                  curators,
-                  contextPath,
-                  images: batch,
-                  fieldNotes: notesText,
-                  fieldNotesPrev: prev1,
-                  fieldNotesPrev2: prev2,
-                  commitMessages: commitMsgs,
-                  hasFieldNotes: !!notesWriter,
-                  isSecondPass: true,
-                });
-                secondPrompt += `\nUpdate instructions:\n${fieldNotesInstructions}\n`;
-                const secondId = crypto.randomUUID();
-                if (verbose) {
-                  const sp = path.join(levelDir, '_prompts', `batch-${idx + 1}-${secondId}-second.txt`);
-                  await writeFile(sp, secondPrompt, 'utf8');
-                }
-                const secondSavePayload = verbose
-                  ? async (obj) => {
-                      const dir = path.join(levelDir, '_payloads');
-                      await mkdir(dir, { recursive: true });
-                      const file = path.join(
-                        dir,
-                        `batch-${idx + 1}-${secondId}-second.json`
-                      );
-                      await writeFile(file, JSON.stringify(obj, null, 2), 'utf8');
-                    }
-                  : undefined;
-                const second = await provider.chat({
-                  prompt: secondPrompt,
-                  images: batch,
-                  model,
-                  curators,
-                  expectFieldNotesMd: true,
-                  savePayload: secondSavePayload,
-                  stream: true,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                });
-                if (verbose) {
-                  const sr = path.join(levelDir, '_responses', `batch-${idx + 1}-${secondId}-second.txt`);
-                  await writeFile(sr, second, 'utf8');
-                }
-                parsed = parseReply(second, batch, { expectFieldNotesMd: true });
-                if (parsed.fieldNotesMd) {
-                  await notesWriter.writeFull(parsed.fieldNotesMd);
-                  if (parsed.commitMessage) {
-                    await commitFile(gitRoot, path.relative(gitRoot, notesWriter.file), parsed.commitMessage);
+        async function workerFn() {
+          while (true) {
+            const batch = nextBatch();
+            if (!batch) break;
+            const idx = ++batchIdx;
+            const bar = getBar(idx);
+            await batchStore.run({ batch: idx }, async () => {
+              try {
+                const batchStart = Date.now();
+                const remaining = batch.length + queue.length;
+                const isSmall = remaining <= 10;
+                let zeroStreak = 0;
+                let finalize = false;
+                let reply;
+                let keep = [];
+                let aside = [];
+                let unclassified = [];
+                let notes = new Map();
+                let minutes = [];
+                for (let attempt = 1; attempt <= MAX_ZERO_DECISION_STREAK; attempt++) {
+                  let prompt = await buildPrompt(promptPath, {
+                    curators,
+                    contextPath,
+                    images: batch,
+                    hasFieldNotes: false,
+                    isSecondPass: false,
+                  });
+                  if (finalize) {
+                    prompt +=
+                      "\nFINALIZE MODE:\n- You must assign every image to \"keep\" or \"aside\".\n- Returning zero decisions is invalid.";
+                  }
+                  reply = await provider.chat({
+                    prompt,
+                    images: batch,
+                    model,
+                    curators,
+                    verbosity,
+                    reasoningEffort,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                    stream: true,
+                  });
+                  ({ keep, aside, unclassified, notes, minutes } = parseReply(
+                    reply,
+                    batch,
+                    { model, verbosity, reasoningEffort }
+                  ));
+                  if (keep.length + aside.length > 0) break;
+                  zeroStreak++;
+                  if (isSmall && zeroStreak < MAX_ZERO_DECISION_STREAK) {
+                    finalize = true;
+                    console.log(
+                      dim("No decisions; not cached; retrying in finalize mode.")
+                    );
+                    continue;
+                  }
+                  if (zeroStreak >= MAX_ZERO_DECISION_STREAK) {
+                    console.log(
+                      dim(
+                        `⚠️  No decisions after ${zeroStreak} attempt(s); marking NEEDS_REVIEW and continuing.`
+                      )
+                    );
+                    const marker = path.join(dir, "NEEDS_REVIEW");
+                    const list = batch
+                      .map((f) => path.basename(f))
+                      .join("\n");
+                    try {
+                      const prev = await readFile(marker, "utf8").catch(() => "");
+                      await writeFile(marker, `${prev}${list}\n`, "utf8");
+                    } catch {}
+                    break;
                   }
                 }
+                const ms = Date.now() - batchStart;
+                bar.update(4, { stage: "done" });
+                bar.stop();
+                multibar.remove(bar);
+                if (PRETTY) {
+                  log(`${indent}🤖  ChatGPT reply (pretty):\n` + prettyLLMReply(reply));
+                } else {
+                  log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                }
+                log(
+                  `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
+                );
+
+                // Write primary minutes JSON and optional transcript
+                const uuid = crypto.randomUUID();
+                const jsonPath = path.join(dir, `minutes-${uuid}.json`);
+                const j =
+                  extractJsonBlock(reply) || (() => {
+                    const mk = (arr, tag) =>
+                      arr.map((f) => ({
+                        filename: path.basename(f),
+                        decision: tag,
+                        reason: (notes.get(f) || "").toString(),
+                      }));
+                    const decisions = [
+                      ...mk(keep, "keep"),
+                      ...mk(aside, "aside"),
+                    ];
+                    const minutesObjs = minutes.map((line) => {
+                      const m = line.match(/^([^:]+):\s*(.*)$/);
+                      return m
+                        ? { speaker: m[1], text: m[2] }
+                        : { speaker: "Curator", text: line };
+                    });
+                    return { minutes: minutesObjs, decisions };
+                  })();
+                await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
+                log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
+                if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
+                  const txtPath = path.join(dir, `minutes-${uuid}.txt`);
+                  let out = j.minutes
+                    .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
+                    .join("\n");
+                  if (Array.isArray(j.decisions)) {
+                    const keeps = j.decisions.filter((d) => d.decision === "keep");
+                    const asides = j.decisions.filter((d) => d.decision === "aside");
+                    out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
+                    for (const d of keeps)
+                      out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                    for (const d of asides)
+                      out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                  }
+                  await writeFile(txtPath, out, "utf8");
+                  log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
+                }
+                const keepDir = path.join(dir, "_keep");
+                const asideDir = path.join(dir, "_aside");
+                await Promise.all([
+                  moveFiles(keep, keepDir, notes),
+                  moveFiles(aside, asideDir, notes),
+                ]);
+                  if (unclassified.length && keep.length + aside.length > 0) {
+                    queue.push(...unclassified);
+                  }
+                log(
+                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                );
+
+                completed += keep.length + aside.length;
+                if (completed) {
+                  const remaining = totalImages - completed;
+                  const elapsed = Date.now() - levelStart;
+                  const etaMs = (elapsed / completed) * remaining;
+                  log(
+                    `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                  );
+                }
+              } catch (err) {
+                bar.update(4, { stage: "error" });
+                bar.stop();
+                multibar.remove(bar);
+                log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
               }
-            }
-            if (minutes.length) {
-              const uuid = crypto.randomUUID();
-              const minutesFile = path.join(dir, `minutes-${uuid}.txt`);
-              await writeFile(minutesFile, minutes.join('\n'), 'utf8');
-              console.log(`${indent}📝  Saved meeting minutes to ${minutesFile}`);
-            }
-
-            const keepDir = path.join(dir, "_keep");
-            const asideDir = path.join(dir, "_aside");
-            await Promise.all([
-              moveFiles(keep, keepDir, notes),
-              moveFiles(aside, asideDir, notes),
-            ]);
-
-            console.log(
-              `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
-            );
-          } catch (err) {
-            bar.update(4, { stage: "error" });
-            bar.stop();
-            console.warn(`${indent}⚠️  Batch ${idx + 1} failed: ${err.message}`);
+            });
           }
-        });
-      }
-    }
+        }
 
-    const workers = Array.from(
-      { length: Math.min(parallel, batches.length) },
-      () => worker()
-    );
-    await Promise.all(workers);
-    multibar.stop();
-    const remaining = (await listImages(dir)).length;
-    const processed = totalImages - remaining;
-    if (processed) {
-      const elapsed = Date.now() - levelStart;
-      const etaMs = (elapsed / processed) * remaining;
-      console.log(`${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`);
-    }
-  }
+        const pool = Array.from(
+          { length: Math.min(workers, Math.max(queue.length, 1)) },
+          () => workerFn()
+        );
+        await Promise.all(pool);
+      } finally {
+        multibar.stop();
+      }
+      const remaining = (await listImages(dir)).length;
+      const processed = totalImages - remaining;
+      if (processed) {
+        const elapsed = Date.now() - levelStart;
+        const etaMs = (elapsed / processed) * remaining;
+        console.log(
+          `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+        );
+      }
+}
 
   // Step 5 – recurse into keepDir if both keep and aside exist
   if (recurse) {
@@ -3897,8 +4737,11 @@ export async function triageDirectory({
         recurse,
         curators,
         contextPath,
-        parallel,
         fieldNotes,
+        verbose,
+        workers,
+        verbosity,
+        reasoningEffort,
         depth: depth + 1,
         gitRoot,
       });
@@ -3946,31 +4789,25 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Wed Jul 30 23:48:01 EDT 2025
-23:48  up 3 days, 11:39, 14 users, load averages: 5.01 7.93 6.32
+Wed Aug 13 11:47:05 EDT 2025
+11:47  up 12:14, 6 users, load averages: 4.69 4.97 5.60
 ```
 
 ### Disk Usage
 ```
-Filesystem                           Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1                      7.3Ti    14Gi    15Gi    48%    425k  162M    0%   /
-devfs                               227Ki   227Ki     0Bi   100%     784     0  100%   /dev
-/dev/disk3s6                        7.3Ti   1.0Gi    15Gi     7%       1  162M    0%   /System/Volumes/VM
-/dev/disk3s2                        7.3Ti    13Gi    15Gi    47%    1.8k  162M    0%   /System/Volumes/Preboot
-/dev/disk3s4                        7.3Ti   684Mi    15Gi     5%     329  162M    0%   /System/Volumes/Update
-/dev/disk1s2                        500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
-/dev/disk1s1                        500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
-/dev/disk1s3                        500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5                        7.3Ti   7.2Ti    15Gi   100%    6.3M  162M    4%   /System/Volumes/Data
-map auto_home                         0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
-/dev/disk6s1                        8.0Gi   7.8Gi   239Mi    98%      13  2.4M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-5A827A60-A3C4-4EA5-A797-96042F68CA6C
-/dev/disk8s1                         18Gi    17Gi   461Mi    98%    444k  4.7M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22A3351
-/dev/disk10s1                       8.4Gi   8.1Gi   248Mi    98%      13  2.5M    0%   /Library/Developer/CoreSimulator/Cryptex/Images/bundle/SimRuntimeBundle-F5C6F012-5536-4988-8A2F-A3A204D4ABFE
-/dev/disk12s1                        18Gi    18Gi   472Mi    98%    459k  4.8M    9%   /Library/Developer/CoreSimulator/Volumes/iOS_22C150
-/dev/disk2s1                        5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
-/Applications/Audible.app/Wrapper   7.3Ti   7.2Ti    12Gi   100%    6.3M  131M    5%   /private/var/folders/yh/6tlwwnn50zdf84ttzgsxb0tw0000gn/X/FF5D994C-669B-5D66-A07F-3B37DAFA8FE8
-/dev/disk4s1                         30Gi    18Gi    12Gi    60%       0     0     -   /Volumes/DR-70D
-/dev/disk3s1                        7.3Ti    14Gi    15Gi    48%    426k  162M    0%   /System/Volumes/Update/mnt1
+Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
+/dev/disk3s1s1   7.3Ti    14Gi   509Gi     3%    425k  4.3G    0%   /
+devfs            202Ki   202Ki     0Bi   100%     700     0  100%   /dev
+/dev/disk3s6     7.3Ti    24Ki   509Gi     1%       0  5.3G    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi   509Gi     3%    1.9k  5.3G    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   682Mi   509Gi     1%     328  5.3G    0%   /System/Volumes/Update
+/dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
+/dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
+/dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
+/dev/disk3s5     7.3Ti   6.7Ti   509Gi    94%    6.4M  5.3G    0%   /System/Volumes/Data
+map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
+/dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
+/dev/disk3s1     7.3Ti    14Gi   509Gi     3%    426k  4.3G    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -4960,22 +5797,22 @@ CONDA_PROMPT_MODIFIER=(base)
 CONDA_SHLVL=1
 CONDA_PYTHON_EXE=/opt/anaconda3/bin/python
 CONDA_DEFAULT_ENV=base
-PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/jburkart/.nvm/versions/node/v20.19.2/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/Apple/usr/bin:/Applications/iTerm.app/Contents/Resources/utilities
+PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/jburkart/.nvm/versions/node/v23.8.0/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/Apple/usr/bin:/Applications/iTerm.app/Contents/Resources/utilities
 ```
 
 ### Ollama Models
 ```
 NAME                   ID              SIZE      MODIFIED     
-llama3.2-vision:90b    bee2a956f3a8    54 GB     31 hours ago    
-qwen2.5vl:72b          05ea68274581    48 GB     2 days ago      
+llama3.2-vision:90b    bee2a956f3a8    54 GB     2 weeks ago     
+qwen2.5vl:72b          05ea68274581    48 GB     2 weeks ago     
 r1-1776:70b            140ea940f21d    42 GB     4 months ago    
-deepseek-r1:14b        ea35dfe18182    9.0 GB    5 months ago    
-deepseek-r1:8b         28f8fd6cdc67    4.9 GB    5 months ago    
-deepseek-r1:7b         0a8c26691023    4.7 GB    5 months ago    
-deepseek-r1:1.5b       a42b25d8c10a    1.1 GB    5 months ago    
-deepseek-r1:70b        0c1615a8ca32    42 GB     5 months ago    
-deepseek-r1:32b        38056bbcbb2d    19 GB     5 months ago    
-deepseek-r1:latest     0a8c26691023    4.7 GB    5 months ago    
+deepseek-r1:14b        ea35dfe18182    9.0 GB    6 months ago    
+deepseek-r1:8b         28f8fd6cdc67    4.9 GB    6 months ago    
+deepseek-r1:7b         0a8c26691023    4.7 GB    6 months ago    
+deepseek-r1:1.5b       a42b25d8c10a    1.1 GB    6 months ago    
+deepseek-r1:70b        0c1615a8ca32    42 GB     6 months ago    
+deepseek-r1:32b        38056bbcbb2d    19 GB     6 months ago    
+deepseek-r1:latest     0a8c26691023    4.7 GB    6 months ago    
 ```
 
 Overview generation complete. The file 'project-overview.txt' has been created.
