@@ -25,6 +25,8 @@ vi.mock("openai", () => {
   };
 });
 
+vi.mock("../src/config.js", () => ({ delay: vi.fn(() => Promise.resolve()) }));
+
 let parseReply,
   buildMessages,
   buildInput,
@@ -120,6 +122,21 @@ describe("parseReply", () => {
     expect(notes.get(files[0])).toMatch(/good light/);
     expect(notes.get(files[1])).toMatch(/blurry/);
     expect(minutes[0]).toMatch(/Jamie/);
+  });
+
+  it("parses DECISIONS_JSON block", () => {
+    const text = `some minutes\n=== DECISIONS_JSON ===\n{"decisions":[{"filename":"DSCF1234.jpg","decision":"keep","reason":"nice"}]}\n=== END ===`;
+    const { keep, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(notes.get(files[0])).toMatch(/nice/);
+  });
+
+  it("salvages decisions from minutes lines", () => {
+    const text = `KEEP DSCF1234.jpg — anchor\nASIDE DSCF5678.jpg — blur`;
+    const { keep, aside, notes } = parseReply(text, files);
+    expect(keep).toContain(files[0]);
+    expect(aside).toContain(files[1]);
+    expect(notes.get(files[0])).toMatch(/anchor/);
   });
 
   it("parses mixed object and string entries", () => {
@@ -482,15 +499,18 @@ describe("cacheKey", () => {
 });
 
 describe("buildGPT5Schema", () => {
-  it("enumerates files", () => {
+  it("enumerates files and minutes bounds", () => {
     const schema = buildGPT5Schema({
       files: ["a.jpg", "b.jpg"],
+      minutesMin: 2,
+      minutesMax: 5,
     });
     const item = schema.schema.properties.decisions.items;
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
     expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
     expect(item.required).toEqual(["filename", "decision", "reason"]);
-    expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+    expect(schema.schema.properties.minutes.minItems).toBe(2);
+    expect(schema.schema.properties.minutes.maxItems).toBe(5);
   });
 
   it("provides batch helper", () => {
@@ -545,5 +565,23 @@ describe("cache guards", () => {
     });
     expect(out).toBe('fresh');
     expect(responsesSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retry policy", () => {
+  it("backs off with jitter on retriable errors", async () => {
+    const { delay } = await import("../src/config.js");
+    delay.mockClear();
+    responsesSpy
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({ minutes: [], decisions: [] }),
+      });
+    await chatCompletion({
+      prompt: "p", images: [], model: "gpt-5", cache: false,
+    });
+    expect(delay).toHaveBeenCalled();
+    const wait = delay.mock.calls[0][0];
+    expect(wait).toBeGreaterThanOrEqual(1000);
   });
 });
