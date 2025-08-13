@@ -174,23 +174,27 @@ describe("triageDirectory", () => {
   });
 
   it(
-    "retries zero-decision batch in finalize mode",
+    "repairs zero-decision batch",
     async () => {
-    chatCompletion
-      .mockResolvedValueOnce(JSON.stringify({ decisions: [] }))
-      .mockResolvedValueOnce(
-        JSON.stringify({ decisions: [{ filename: "1.jpg", decision: "keep", reason: "" }] })
-      );
-    await fs.unlink(path.join(tmpDir, "2.jpg"));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-    });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const secondPrompt = chatCompletion.mock.calls[1][0].prompt;
-    expect(secondPrompt).toMatch(/FINALIZE MODE/);
+      chatCompletion
+        .mockResolvedValueOnce("")
+        .mockResolvedValueOnce(
+          '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
+        );
+      await fs.unlink(path.join(tmpDir, "2.jpg"));
+      await triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "test-model",
+        recurse: false,
+      });
+      expect(chatCompletion).toHaveBeenCalledTimes(2);
+      const secondCall = chatCompletion.mock.calls[1][0];
+      expect(secondCall.prompt).toMatch(/Return only the block below/);
+      expect(secondCall.prompt).toMatch(/role play as/);
+      expect(secondCall.verbosity).toBe("low");
+      expect(secondCall.reasoningEffort).toBe("low");
+      expect(secondCall.responseFormat).toBeUndefined();
       await expect(
         fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
       ).resolves.toBeTruthy();
