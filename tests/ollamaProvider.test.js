@@ -100,4 +100,13 @@ describe('OllamaProvider', () => {
     expect(body.format.properties).toHaveProperty('field_notes_instructions');
     expect(body.format.properties).toHaveProperty('minutes');
   });
+
+  it('includes minutes bounds in schema', async () => {
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: [], model: 'm', minutesMin: 2, minutesMax: 4 });
+    const body = globalThis.__chatMock.mock.calls[0][0];
+    expect(body.format.properties.minutes.minItems).toBe(2);
+    expect(body.format.properties.minutes.maxItems).toBe(4);
+  });
 });
