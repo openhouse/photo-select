@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -505,5 +505,45 @@ describe("useResponses", () => {
   it("detects gpt-5 models", () => {
     expect(useResponses("gpt-5-mini")).toBe(true);
     expect(useResponses("gpt-4o")).toBe(false);
+  });
+});
+
+describe("cache guards", () => {
+  beforeEach(async () => {
+    await fs.rm('.cache', { recursive: true, force: true });
+    responsesSpy.mockReset();
+  });
+
+  it("skips caching zero-decision replies", async () => {
+    responsesSpy.mockResolvedValueOnce({
+      output_text: JSON.stringify({ minutes: [], decisions: [] }),
+    });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: true,
+    });
+    const files = await fs.readdir('.cache').catch(() => []);
+    expect(files.length).toBe(0);
+  });
+
+  it("evicts zero-decision cache entries", async () => {
+    const key = await cacheKey({ prompt: "p", images: [], model: "gpt-5" });
+    await fs.mkdir('.cache', { recursive: true });
+    await fs.writeFile(
+      path.join('.cache', `${key}.txt`),
+      JSON.stringify({ minutes: [], decisions: [] }),
+      'utf8'
+    );
+    responsesSpy.mockResolvedValueOnce({ output_text: 'fresh' });
+    const out = await chatCompletion({
+      prompt: 'p',
+      images: [],
+      model: 'gpt-5',
+      cache: true,
+    });
+    expect(out).toBe('fresh');
+    expect(responsesSpy).toHaveBeenCalledTimes(1);
   });
 });

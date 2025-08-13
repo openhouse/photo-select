@@ -372,7 +372,12 @@ full.
 
 Responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
-saved reply instead of hitting the API.
+saved reply instead of hitting the API. The tool never caches model responses
+that contain zero decisions (0 keeps + 0 asides). Such entries are skipped on
+write and evicted on read. If a batch still produces no decisions, the run is
+retried (finalize mode when 10 or fewer images remain). After two consecutive
+no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
+continues.
 
 ## Testing
 

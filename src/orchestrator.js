@@ -58,6 +58,7 @@ function color(s, code) {
 const dim = (s) => color(s, 2);
 const green = (s) => color(s, 32);
 const yellow = (s) => color(s, 33);
+const MAX_ZERO_DECISION_STREAK = 2;
 
 function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   const json = extractJsonBlock(raw);
@@ -317,27 +318,73 @@ export async function triageDirectory({
             const bar = getBar(idx);
             await batchStore.run({ batch: idx }, async () => {
               try {
-                const start = Date.now();
-                const prompt = await buildPrompt(promptPath, {
-                  curators,
-                  contextPath,
-                  images: batch,
-                  hasFieldNotes: false,
-                  isSecondPass: false,
-                });
-                const reply = await provider.chat({
-                  prompt,
-                  images: batch,
-                  model,
-                  curators,
-                  verbosity,
-                  reasoningEffort,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                  stream: true,
-                });
-                const ms = Date.now() - start;
+                const batchStart = Date.now();
+                const remaining = batch.length + queue.length;
+                const isSmall = remaining <= 10;
+                let zeroStreak = 0;
+                let finalize = false;
+                let reply;
+                let keep = [];
+                let aside = [];
+                let unclassified = [];
+                let notes = new Map();
+                let minutes = [];
+                for (let attempt = 1; attempt <= MAX_ZERO_DECISION_STREAK; attempt++) {
+                  let prompt = await buildPrompt(promptPath, {
+                    curators,
+                    contextPath,
+                    images: batch,
+                    hasFieldNotes: false,
+                    isSecondPass: false,
+                  });
+                  if (finalize) {
+                    prompt +=
+                      "\nFINALIZE MODE:\n- You must assign every image to \"keep\" or \"aside\".\n- Returning zero decisions is invalid.";
+                  }
+                  reply = await provider.chat({
+                    prompt,
+                    images: batch,
+                    model,
+                    curators,
+                    verbosity,
+                    reasoningEffort,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                    stream: true,
+                  });
+                  ({ keep, aside, unclassified, notes, minutes } = parseReply(
+                    reply,
+                    batch,
+                    { model, verbosity, reasoningEffort }
+                  ));
+                  if (keep.length + aside.length > 0) break;
+                  zeroStreak++;
+                  if (isSmall && zeroStreak < MAX_ZERO_DECISION_STREAK) {
+                    finalize = true;
+                    console.log(
+                      dim("No decisions; not cached; retrying in finalize mode.")
+                    );
+                    continue;
+                  }
+                  if (zeroStreak >= MAX_ZERO_DECISION_STREAK) {
+                    console.log(
+                      dim(
+                        `⚠️  No decisions after ${zeroStreak} attempt(s); marking NEEDS_REVIEW and continuing.`
+                      )
+                    );
+                    const marker = path.join(dir, "NEEDS_REVIEW");
+                    const list = batch
+                      .map((f) => path.basename(f))
+                      .join("\n");
+                    try {
+                      const prev = await readFile(marker, "utf8").catch(() => "");
+                      await writeFile(marker, `${prev}${list}\n`, "utf8");
+                    } catch {}
+                    break;
+                  }
+                }
+                const ms = Date.now() - batchStart;
                 bar.update(4, { stage: "done" });
                 bar.stop();
                 multibar.remove(bar);
@@ -350,11 +397,6 @@ export async function triageDirectory({
                   `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
                 );
 
-                const { keep, aside, unclassified, notes, minutes } = parseReply(
-                  reply,
-                  batch,
-                  { model, verbosity, reasoningEffort }
-                );
                 // Write primary minutes JSON and optional transcript
                 const uuid = crypto.randomUUID();
                 const jsonPath = path.join(dir, `minutes-${uuid}.json`);
@@ -403,9 +445,9 @@ export async function triageDirectory({
                   moveFiles(keep, keepDir, notes),
                   moveFiles(aside, asideDir, notes),
                 ]);
-                if (unclassified.length) {
-                  queue.push(...unclassified);
-                }
+                  if (unclassified.length && keep.length + aside.length > 0) {
+                    queue.push(...unclassified);
+                  }
                 log(
                   `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
                 );
