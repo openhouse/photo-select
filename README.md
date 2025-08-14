@@ -364,8 +364,8 @@ export PHOTO_SELECT_OPENAI_FORMAT=""  # disable the parameter
 
 For chat.completions the request uses
 `response_format: { type: "json_object" }`.
-For the Responses API (gpt-5 models) the schema lives under
-`text.format`.
+For the Responses API (gpt-5 models) the schema is supplied under
+`text.format` with top-level `name`, `schema`, and `strict: true`.
 In both cases the assistant replies with strict JSON, avoiding the need to
 strip Markdown fences.
 The CLI allows up to 8192 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
