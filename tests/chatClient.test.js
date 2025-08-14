@@ -36,7 +36,7 @@ let parseReply,
   chatCompletion,
   curatorsFromTags,
   cacheKey,
-  buildGPT5Schema,
+  buildPhotoSelectSchema,
   schemaForBatch,
   useResponses;
 beforeAll(async () => {
@@ -49,7 +49,7 @@ beforeAll(async () => {
     chatCompletion,
     curatorsFromTags,
     cacheKey,
-    buildGPT5Schema,
+    buildPhotoSelectSchema,
     schemaForBatch,
     useResponses,
   } = await import('../src/chatClient.js'));
@@ -370,11 +370,11 @@ describe("chatCompletion", () => {
     const args = responsesSpy.mock.calls[0][0];
     expect(args.text.verbosity).toBe("low");
     expect(args.reasoning.effort).toBe("minimal");
-    expect(args.text.format.type).toBe("json_schema");
-    expect(args.text.format.name).toBe("photo_select_decision");
-    expect(args.text.format.strict).toBe(true);
+    expect(args.response_format.type).toBe("json_schema");
+    expect(args.response_format.json_schema.name).toBe("PhotoSelectPanelV1");
     expect(
-      args.text.format.schema.properties.minutes.items.properties.speaker.type).toBe("string");
+      args.response_format.json_schema.schema.properties.minutes.items.properties.speaker.type
+    ).toBe("string");
     expect(result).toBe("ok");
   });
 
@@ -502,9 +502,9 @@ describe("cacheKey", () => {
   });
 });
 
-describe("buildGPT5Schema", () => {
+describe("buildPhotoSelectSchema", () => {
   it("enumerates files", () => {
-    const schema = buildGPT5Schema({
+    const schema = buildPhotoSelectSchema({
       files: ["a.jpg", "b.jpg"],
     });
     const item = schema.schema.properties.decisions.items;
@@ -522,7 +522,7 @@ describe("buildGPT5Schema", () => {
   });
 
   it('honors minutes bounds', () => {
-    const s = buildGPT5Schema({ files: [], minutesMin: 2, minutesMax: 4 });
+    const s = buildPhotoSelectSchema({ files: [], minutesMin: 2, minutesMax: 4 });
     expect(s.schema.properties.minutes.minItems).toBe(2);
     expect(s.schema.properties.minutes.maxItems).toBe(4);
     const r = buildReplySchema({ minutesMin: 2, minutesMax: 4 });

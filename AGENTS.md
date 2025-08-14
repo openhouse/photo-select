@@ -41,7 +41,7 @@ The contract protects:
 
 | Phase                  | Expected LLM Output Keys                             | Parser Mode         |
 | ---------------------- | ---------------------------------------------------- | ------------------- |
-| **Triage**             | `minutes`, `decision`, _optional_ `field_notes_diff` | `expectDiff = true` |
+| **Triage**             | `minutes`, `decisions`, _optional_ `field_notes_diff` | `expectDiff = true` |
 | **Act II** _(if diff)_ | `field_notes_md`                                     | `expectMd = true`   |
 
 LLM receives identical personas, context, and filename whitelist in both passes.
@@ -51,7 +51,7 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 ## 3  Reply Schema Invariants
 
 - **minutes** → `array<{ speaker:string, text:string }>`; last `text` ends with a forward‑looking question.
-- **decision** → object with optional keys **exactly** `"keep"` and `"aside"`; each maps `filename → rationale`.
+- **decisions** → `array<{ filename:string, decision:"keep"|"aside", reason:string }>`; include each reviewed filename exactly once.
 - **field_notes_diff** or **field_notes_md** as per Phase rules.
 - **No additional top‑level keys**.
 

@@ -19,6 +19,9 @@ const httpsAgent = new KeepAliveAgent.HttpsAgent({
 const RETRY_BASE = Number(process.env.PHOTO_SELECT_RETRY_BASE_MS || 1000);
 const MAX_RETRIES = Number(process.env.PHOTO_SELECT_MAX_RETRIES || 6);
 const RETRIABLE = new Set([408, 429, 502, 503, 504]);
+function isSocketReset(err) {
+  return ["EPIPE", "ECONNRESET"].includes(err?.cause?.code || err?.code);
+}
 httpsAgent.on("error", (err) => {
   if (["EPIPE", "ECONNRESET"].includes(err.code)) {
     console.warn("agent error:", err.message);
@@ -172,7 +175,7 @@ export async function curatorsFromTags(files) {
  * minutes plus the full JSON decision block without truncation. */
 export const MAX_RESPONSE_TOKENS = 8192;
 
-export function buildGPT5Schema({ files = [], minutesMin = 3, minutesMax = 12 }) {
+export function buildPhotoSelectSchema({ files = [], minutesMin = 3, minutesMax = 12 }) {
   const decisionItem = {
     type: 'object',
     additionalProperties: false,
@@ -185,7 +188,7 @@ export function buildGPT5Schema({ files = [], minutesMin = 3, minutesMax = 12 })
     },
   };
   return {
-    name: 'photo_select_decision',
+    name: 'PhotoSelectPanelV1',
     schema: {
       type: 'object',
       required: ['minutes', 'decisions'],
@@ -219,7 +222,7 @@ export function buildGPT5Schema({ files = [], minutesMin = 3, minutesMax = 12 })
 
 export function schemaForBatch(used, curators = [], minutes = {}) {
   const files = used.map((f) => path.basename(f));
-  return buildGPT5Schema({ files, ...minutes });
+  return buildPhotoSelectSchema({ files, ...minutes });
 }
 
 export function useResponses(model) {
@@ -469,20 +472,15 @@ export async function chatCompletion({
           model,
           instructions,
           input,
-          text: {
-            verbosity,
-            format: {
-              type: "json_schema",
-              name: schema.name,
-              schema: schema.schema,
-              strict: true,
-            },
-          },
+          response_format: { type: "json_schema", json_schema: schema },
+          text: { verbosity },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         };
         const headers = { "Idempotency-Key": crypto.randomUUID() };
         let rsp = await openai.responses.create(baseOpts, { headers });
+        const reqId = rsp?.response?.headers?.["x-request-id"];
+        if (reqId) console.log(`🆔 request-id: ${reqId}`);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
@@ -592,20 +590,15 @@ export async function chatCompletion({
           model,
           instructions,
           input,
-          text: {
-            format: {
-              type: "json_schema",
-              name: schema.name,
-              schema: schema.schema,
-              strict: true,
-            },
-            verbosity,
-          },
+          response_format: { type: "json_schema", json_schema: schema },
+          text: { verbosity },
           reasoning: { effort: reasoningEffort },
           max_output_tokens: MAX_RESPONSE_TOKENS,
         };
         const headers = { "Idempotency-Key": crypto.randomUUID() };
         let rsp = await openai.responses.create(baseOpts, { headers });
+        const reqId = rsp?.response?.headers?.["x-request-id"];
+        if (reqId) console.log(`🆔 request-id: ${reqId}`);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
@@ -636,8 +629,14 @@ export async function chatCompletion({
       const delayMs = Math.max(wait, retryAfter);
       const label = isNetwork ? "network error" : "OpenAI error";
       const codeInfo = status ?? code ?? "unknown";
+      const reqId = err?.response?.headers?.["x-request-id"];
       console.warn(`${label} (${codeInfo}). Retrying in ${delayMs} ms…`);
+      if (reqId) console.warn(`request-id: ${reqId}`);
       console.warn("Full error response:", err);
+      if (attempt === 2 && isSocketReset(err) && httpsAgent.keepAlive) {
+        httpsAgent.keepAlive = false;
+        console.warn("Disabling keep-alive due to socket resets");
+      }
       await delay(delayMs);
     }
   }
@@ -685,77 +684,79 @@ export function parseReply(text, allFiles, meta = {}) {
 
   let parsed = false;
 
-  // 0) Preferred path: explicit block
-  const block = extractBlock(text, '=== DECISIONS_JSON ===', '=== END ===');
-  if (block) {
-    try {
-      const obj = JSON.parse(block);
-      if (Array.isArray(obj.decisions)) {
-        for (const item of obj.decisions) {
-          if (!item || typeof item !== 'object') continue;
-          const base = String(item.filename || '').trim();
-          if (!base) continue;
-          const f = allFiles.find((p) => path.basename(p) === base);
-          if (!f) continue;
-          const choice = String(item.decision || '').toLowerCase();
-          if (choice === 'keep') keep.add(f);
-          if (choice === 'aside') aside.add(f);
-          if (typeof item.reason === 'string' && item.reason.trim()) {
-            notes.set(f, item.reason.trim());
+  try {
+    const obj = JSON.parse(body.trim());
+    if (meta.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
+      fieldNotesDiff = obj.field_notes_diff;
+    }
+    if (meta.expectFieldNotesMd && typeof obj.field_notes_md === "string") {
+      fieldNotesMd = obj.field_notes_md;
+    }
+    if (
+      meta.expectFieldNotesInstructions &&
+      typeof obj.field_notes_instructions === "string"
+    ) {
+      fieldNotesInstructions = obj.field_notes_instructions;
+    }
+    if (typeof obj.commit_message === "string") {
+      commitMessage = obj.commit_message.trim();
+    }
+    if (obj && Array.isArray(obj.decisions)) {
+      for (const item of obj.decisions) {
+        if (!item || typeof item !== 'object') continue;
+        const base = String(item.filename || '').trim();
+        if (!base) continue;
+        const f = allFiles.find((p) => path.basename(p) === base);
+        if (!f) continue;
+        const choice = String(item.decision || '').toLowerCase();
+        if (choice === 'keep') {
+          keep.add(f);
+        } else if (choice === 'aside') {
+          aside.add(f);
+        }
+        if (typeof item.reason === 'string' && item.reason.trim()) {
+          notes.set(f, item.reason.trim());
+        }
+      }
+      if (Array.isArray(obj.minutes)) {
+        for (const m of obj.minutes) {
+          if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
+            minutes.push(m.speaker + ': ' + m.text);
           }
         }
-        parsed = true;
       }
-    } catch {
-      /* fall through */
+      parsed = true;
     }
+  } catch {
+    // not JSON; fall through
   }
-try {
-  const obj = JSON.parse(body);
-  if (meta.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
-    fieldNotesDiff = obj.field_notes_diff;
-  }
-  if (meta.expectFieldNotesMd && typeof obj.field_notes_md === "string") {
-    fieldNotesMd = obj.field_notes_md;
-  }
-  if (
-    meta.expectFieldNotesInstructions &&
-    typeof obj.field_notes_instructions === "string"
-  ) {
-    fieldNotesInstructions = obj.field_notes_instructions;
-  }
-  if (typeof obj.commit_message === "string") {
-    commitMessage = obj.commit_message.trim();
-  }
-  if (obj && Array.isArray(obj.decisions)) {
-    for (const item of obj.decisions) {
-      if (!item || typeof item !== 'object') continue;
-      const base = String(item.filename || '').trim();
-      if (!base) continue;
-      const f = allFiles.find((p) => path.basename(p) === base);
-      if (!f) continue;
-      const choice = String(item.decision || '').toLowerCase();
-      if (choice === 'keep') {
-        keep.add(f);
-      } else if (choice === 'aside') {
-        aside.add(f);
-      }
-      if (typeof item.reason === 'string' && item.reason.trim()) {
-        notes.set(f, item.reason.trim());
-      }
-    }
-    if (Array.isArray(obj.minutes)) {
-      for (const m of obj.minutes) {
-        if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
-          minutes.push(m.speaker + ': ' + m.text);
+
+  if (!parsed) {
+    const block = extractBlock(text, '=== DECISIONS_JSON ===', '=== END ===');
+    if (block) {
+      try {
+        const obj = JSON.parse(block);
+        if (Array.isArray(obj.decisions)) {
+          for (const item of obj.decisions) {
+            if (!item || typeof item !== 'object') continue;
+            const base = String(item.filename || '').trim();
+            if (!base) continue;
+            const f = allFiles.find((p) => path.basename(p) === base);
+            if (!f) continue;
+            const choice = String(item.decision || '').toLowerCase();
+            if (choice === 'keep') keep.add(f);
+            if (choice === 'aside') aside.add(f);
+            if (typeof item.reason === 'string' && item.reason.trim()) {
+              notes.set(f, item.reason.trim());
+            }
+          }
+          parsed = true;
         }
+      } catch {
+        /* fall through */
       }
     }
-    parsed = true;
   }
-} catch {
-  // not JSON; fall through
-}
 
 if (!parsed) {
   try {
