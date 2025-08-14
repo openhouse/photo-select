@@ -370,10 +370,10 @@ describe("chatCompletion", () => {
     const args = responsesSpy.mock.calls[0][0];
     expect(args.text.verbosity).toBe("low");
     expect(args.reasoning.effort).toBe("minimal");
-    expect(args.response_format.type).toBe("json_schema");
-    expect(args.response_format.json_schema.name).toBe("PhotoSelectPanelV1");
+    expect(args.text.format.type).toBe("json_schema");
+    expect(args.text.format.json_schema.name).toBe("PhotoSelectPanelV1");
     expect(
-      args.response_format.json_schema.schema.properties.minutes.items.properties.speaker.type
+      args.text.format.json_schema.schema.properties.minutes.items.properties.speaker.type
     ).toBe("string");
     expect(result).toBe("ok");
   });
