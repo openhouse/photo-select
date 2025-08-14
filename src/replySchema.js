@@ -3,11 +3,22 @@ export function buildReplySchema({
   fullNotes = false,
   minutesMin = 3,
   minutesMax = 12,
+  images = [],
 } = {}) {
+  const decisionItem = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['filename', 'decision', 'reason'],
+    properties: {
+      filename: images.length ? { type: 'string', enum: images } : { type: 'string' },
+      decision: { type: 'string', enum: ['keep', 'aside'] },
+      reason: { type: 'string' },
+    },
+  };
   const schema = {
     type: 'object',
     additionalProperties: false,
-    required: ['minutes', 'decision'],
+    required: ['minutes', 'decisions'],
     properties: {
       minutes: {
         type: 'array',
@@ -23,19 +34,11 @@ export function buildReplySchema({
           },
         },
       },
-      decision: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          keep: {
-            type: 'object',
-            additionalProperties: { type: 'string' },
-          },
-          aside: {
-            type: 'object',
-            additionalProperties: { type: 'string' },
-          },
-        },
+      decisions: {
+        type: 'array',
+        minItems: images.length,
+        maxItems: images.length,
+        items: decisionItem,
       },
     },
   };

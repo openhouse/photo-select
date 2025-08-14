@@ -210,6 +210,26 @@ export async function triageDirectory({
   const indent = "  ".repeat(depth);
   let notesWriter;
 
+  let dynamicWorkers = workers;
+  let consecutiveGatewayErrors = 0;
+  function isGatewayError(e) {
+    const s = e?.status || e?.code;
+    return s === 502 || s === 503;
+  }
+  function noteGatewayError() {
+    consecutiveGatewayErrors++;
+    if (consecutiveGatewayErrors >= 3 && dynamicWorkers > 1) {
+      dynamicWorkers = 1;
+      console.warn(
+        `${indent}⚠️  High gateway error rate → reducing workers to 1 for the next 10 minutes.`
+      );
+      setTimeout(() => {
+        dynamicWorkers = workers;
+        consecutiveGatewayErrors = 0;
+      }, 10 * 60 * 1000);
+    }
+  }
+
   if (depth === 0) {
     const shown = MAX_MINUTES === Infinity ? 'all' : String(MAX_MINUTES);
     console.log(dim(`UI: pretty=${PRETTY?'on':'off'}, transcript_txt=${TRANSCRIPT_TXT?'on':'off'}, minutes_shown=${shown}`));
@@ -292,7 +312,7 @@ export async function triageDirectory({
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
     const queue = pickRandom(images, images.length);
     console.log(
-      `${indent}⏳  Processing ${queue.length} image(s) with ${workers} worker(s)…`
+      `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
     );
 
     const multibar = new MultiBar(
@@ -491,6 +511,7 @@ export async function triageDirectory({
                   );
                 }
               } catch (err) {
+                if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();
                 multibar.remove(bar);
@@ -501,7 +522,7 @@ export async function triageDirectory({
         }
 
         const pool = Array.from(
-          { length: Math.min(workers, Math.max(queue.length, 1)) },
+          { length: Math.min(dynamicWorkers, Math.max(queue.length, 1)) },
           () => workerFn()
         );
         await Promise.all(pool);

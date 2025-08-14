@@ -3,6 +3,7 @@ import { delay } from '../config.js';
 import { Ollama } from 'ollama';
 import { buildReplySchema } from '../replySchema.js';
 import { parseFormatEnv } from '../formatOverride.js';
+import path from 'node:path';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const client = new Ollama({ host: BASE_URL });
@@ -28,6 +29,8 @@ export default class OllamaProvider {
     savePayload,
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,
+    minutesMin,
+    minutesMax,
   } = {}) {
     let attempt = 0;
     while (true) {
@@ -72,6 +75,9 @@ export default class OllamaProvider {
           format = buildReplySchema({
             instructions: expectFieldNotesInstructions,
             fullNotes: expectFieldNotesMd,
+            minutesMin,
+            minutesMax,
+            images: (images || []).map((f) => path.basename(f)),
           });
         }
         if (format !== null) {

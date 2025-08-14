@@ -1,6 +1,7 @@
 import { chatCompletion } from '../chatClient.js';
 import { buildReplySchema } from '../replySchema.js';
 import { parseFormatEnv } from '../formatOverride.js';
+import path from 'node:path';
 
 const OPENAI_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OPENAI_FORMAT');
 
@@ -19,6 +20,7 @@ export default class OpenAIProvider {
           fullNotes: expectFieldNotesMd,
           minutesMin: opts.minutesMin,
           minutesMax: opts.minutesMax,
+          images: (opts.images || []).map((f) => path.basename(f)),
         }),
       };
     } else if (typeof format === 'string') {
