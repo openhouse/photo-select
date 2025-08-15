@@ -66,6 +66,7 @@ const MAX_SMALL = Number(
 const MAX_LARGE = Number(
   process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_LARGE || 2
 );
+const BATCH_SIZE = Number(process.env.PHOTO_SELECT_BATCH_SIZE || 10);
 
 function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   const json = extractJsonBlock(raw);
@@ -335,7 +336,7 @@ export async function triageDirectory({
         };
         let batchIdx = 0;
         let completed = 0;
-        const nextBatch = () => (queue.length ? queue.splice(0, 10) : null);
+        const nextBatch = () => (queue.length ? queue.splice(0, BATCH_SIZE) : null);
 
         async function workerFn() {
           while (true) {

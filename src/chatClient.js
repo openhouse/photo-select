@@ -13,12 +13,21 @@ import {
 } from "./tokenEstimate.js";
 import { enforceEffortGuard } from "./effortGuard.js";
 
+function numEnv(name, fallback) {
+  const v = process.env[name];
+  if (v === undefined || v === "") return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 const DEFAULT_TIMEOUT =
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  maxSockets: 8,
-  maxFreeSockets: 4,
+  maxSockets: numEnv("PHOTO_SELECT_MAX_SOCKETS", 8),
+  maxFreeSockets: numEnv("PHOTO_SELECT_MAX_FREE_SOCKETS", 4),
+  keepAliveMsecs: numEnv("PHOTO_SELECT_KEEPALIVE_MS", 10000),
+  freeSocketTimeout: numEnv("PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS", 60000),
   timeout: DEFAULT_TIMEOUT,
 });
 
@@ -39,7 +48,42 @@ httpsAgent.on("error", (err) => {
 const openai = new OpenAI({ httpAgent: httpsAgent });
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
+const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
+const peopleAgent = PEOPLE_API_BASE.startsWith("https")
+  ? new KeepAliveAgent.HttpsAgent({
+      keepAlive: true,
+      maxSockets: PEOPLE_CONCURRENCY,
+      maxFreeSockets: PEOPLE_CONCURRENCY,
+    })
+  : new KeepAliveAgent({
+      keepAlive: true,
+      maxSockets: PEOPLE_CONCURRENCY,
+      maxFreeSockets: PEOPLE_CONCURRENCY,
+    });
+class SimpleSemaphore {
+  constructor(max) {
+    this.max = max;
+    this.inUse = 0;
+    this.q = [];
+  }
+  async run(fn) {
+    if (this.inUse >= this.max) {
+      await new Promise((resolve) => this.q.push(resolve));
+    }
+    this.inUse++;
+    try {
+      return await fn();
+    } finally {
+      this.inUse = Math.max(0, this.inUse - 1);
+      const next = this.q.shift();
+      if (next) next();
+    }
+  }
+}
+const peopleSem = new SimpleSemaphore(PEOPLE_CONCURRENCY);
 const peopleCache = new Map();
+
+const BUMP_TOKENS = numEnv("PHOTO_SELECT_BUMP_TOKENS", 4000);
 
 const MAX_DEBUG_BYTES = 5 * 1024 * 1024;
 
@@ -148,7 +192,9 @@ async function getPeople(filename) {
     const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
       filename
     )}/persons`;
-    const res = await fetch(url);
+    const res = await peopleSem.run(() =>
+      fetch(url, { agent: peopleAgent })
+    );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     const names = Array.isArray(json.data) ? json.data : [];
@@ -533,7 +579,10 @@ export async function chatCompletion({
         let { text, hasMessage } = await extractTextWithLogging(rsp);
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
-          max_output_tokens = Math.min(max_output_tokens + 4000, 32000);
+          max_output_tokens = Math.min(
+            max_output_tokens + BUMP_TOKENS,
+            32000
+          );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {
@@ -732,7 +781,10 @@ export async function chatCompletion({
         let { text, hasMessage } = await extractTextWithLogging(rsp);
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
-          max_output_tokens = Math.min(max_output_tokens + 4000, 32000);
+          max_output_tokens = Math.min(
+            max_output_tokens + BUMP_TOKENS,
+            32000
+          );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {

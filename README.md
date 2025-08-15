@@ -142,6 +142,43 @@ available RAM.
 
 Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.
 
+### Concurrency & Tuning
+
+Autoscaling widens the pipes without lowering `--reasoning-effort`.
+
+| env | formula (`W` = workers) |
+| --- | --- |
+| `PHOTO_SELECT_MAX_SOCKETS` | `clamp(W*2 + 2, 8, 64)` |
+| `PHOTO_SELECT_MAX_FREE_SOCKETS` | `clamp(ceil(MAX_SOCKETS/2), 4, 32)` |
+| `PHOTO_SELECT_KEEPALIVE_MS` | `10000` |
+| `PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS` | `60000` |
+| `PHOTO_SELECT_RETRY_BASE_MS` | `500 + 50*W` |
+| `UV_THREADPOOL_SIZE` | `min(64, 8 + 4*W)` |
+| `PHOTO_SELECT_BATCH_SIZE` | `clamp(8 + floor(W/2), 8, 16)` |
+| `PHOTO_SELECT_PEOPLE_CONCURRENCY` | `clamp(2*W, 2, 16)` |
+| `PHOTO_SELECT_BUMP_TOKENS` | `min(4000 + 500*(W-1), 8000)` |
+| `PHOTO_SELECT_TPM_SOFT_CAP` | tokens/min soft cap (optional) |
+| `PHOTO_SELECT_RPM_SOFT_CAP` | requests/min soft cap (optional) |
+
+One-liner to set the knobs for `W=8`:
+
+```bash
+W=8
+export PHOTO_SELECT_MAX_SOCKETS=$(( W*2 + 2 ))
+export PHOTO_SELECT_MAX_FREE_SOCKETS=$(( (PHOTO_SELECT_MAX_SOCKETS+1)/2 ))
+export UV_THREADPOOL_SIZE=$(( 8 + 4*W )); [ $UV_THREADPOOL_SIZE -gt 64 ] && UV_THREADPOOL_SIZE=64
+export PHOTO_SELECT_RETRY_BASE_MS=$(( 500 + 50*W ))
+export PHOTO_SELECT_BATCH_SIZE=$(( 8 + W/2 )); [ $PHOTO_SELECT_BATCH_SIZE -gt 16 ] && PHOTO_SELECT_BATCH_SIZE=16
+export PHOTO_SELECT_TIMEOUT_MS=600000
+```
+
+**Ramp protocol**
+
+1. Start with `workers = 3`.
+2. Increase by one every 2–3 batches *if all are true*: 429 rate < 1 %, socket resets < 0.5 %, and p95 latency rises < 25 %.
+3. On breach, drop workers by one and widen `PHOTO_SELECT_RETRY_BASE_MS` by +100 ms for the next 10 minutes.
+4. Record `success_rate`, `p95_latency`, `429s`, `resets`, and `tokens_in/out per min` in a ring buffer and display when the level completes.
+
 ### Streaming responses
 
 To avoid connection timeouts with large image batches, the CLI streams tokens
