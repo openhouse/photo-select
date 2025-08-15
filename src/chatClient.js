@@ -6,6 +6,11 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
 import { delay } from "./config.js";
+import { scheduler } from "./scheduler.js";
+import {
+  computeMaxOutputTokens,
+  estimateInputTokens,
+} from "./tokenEstimate.js";
 
 const DEFAULT_TIMEOUT =
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
@@ -466,8 +471,25 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
+        // ADAPTIVE max_output_tokens
+        const max_output_tokens = computeMaxOutputTokens({
+          fileCount: used.length,
+          minutesMax,
+        });
+        // ESTIMATE input tokens
+        const schemaJson = JSON.stringify(
+          schema?.schema || schema || {},
+          null,
+          0,
+        );
+        const estInputTokens = estimateInputTokens({
+          instructions,
+          schemaJson,
+          imageCount: used.length,
+          imageDetail: "low",
+          extraText: "",
+        });
         onProgress("request");
-        onProgress("waiting");
         const baseOpts = {
           model,
           instructions,
@@ -482,23 +504,52 @@ export async function chatCompletion({
             },
           },
           reasoning: { effort: reasoningEffort },
-          max_output_tokens: MAX_RESPONSE_TOKENS,
+          max_output_tokens,
         };
         const headers = { "Idempotency-Key": crypto.randomUUID() };
-        let rsp = await openai.responses.create(baseOpts, { headers });
+        const estTokens = estInputTokens + max_output_tokens;
+        const handle = await scheduler.reserve({ model, estTokens });
+        onProgress("waiting");
+        let rsp;
+        try {
+          rsp = await openai.responses.create(baseOpts, { headers });
+          const usage = rsp?.usage;
+          const actual =
+            Number(usage?.total_tokens) ||
+            (Number(usage?.input_tokens || 0) +
+              Number(usage?.output_tokens || 0)) ||
+            estTokens;
+          scheduler.commit(handle, actual);
+        } catch (e) {
+          scheduler.cancel(handle);
+          throw e;
+        }
         const reqId = rsp?.response?.headers?.["x-request-id"];
         if (reqId) console.log(`🆔 request-id: ${reqId}`);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          rsp = await openai.responses.create(
-            {
-              ...baseOpts,
-              reasoning: { effort: "minimal" },
-              temperature: 0.2,
-            },
-            { headers: { "Idempotency-Key": crypto.randomUUID() } }
-          );
+          const handle2 = await scheduler.reserve({ model, estTokens });
+          try {
+            rsp = await openai.responses.create(
+              {
+                ...baseOpts,
+                reasoning: { effort: "minimal" },
+                temperature: 0.2,
+              },
+              { headers: { "Idempotency-Key": crypto.randomUUID() } },
+            );
+            const usage2 = rsp?.usage;
+            const actual2 =
+              Number(usage2?.total_tokens) ||
+              (Number(usage2?.input_tokens || 0) +
+                Number(usage2?.output_tokens || 0)) ||
+              estTokens;
+            scheduler.commit(handle2, actual2);
+          } catch (e) {
+            scheduler.cancel(handle2);
+            throw e;
+          }
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text, used);
@@ -523,6 +574,17 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
+      const max_output_tokens = computeMaxOutputTokens({
+        fileCount: used.length,
+        minutesMax,
+      });
+      const estInputTokens = estimateInputTokens({
+        instructions: finalPrompt,
+        schemaJson: "",
+        imageCount: used.length,
+        imageDetail: "low",
+        extraText: "",
+      });
       onProgress("request");
       const baseParams = {
         model,
@@ -535,28 +597,44 @@ export async function chatCompletion({
       }
       const needsCompletionTokens = /^o\d/.test(model);
       if (needsCompletionTokens) {
-        baseParams.max_completion_tokens = MAX_RESPONSE_TOKENS;
+        baseParams.max_completion_tokens = max_output_tokens;
       } else {
-        baseParams.max_tokens = MAX_RESPONSE_TOKENS;
+        baseParams.max_tokens = max_output_tokens;
       }
+      const estTokens = estInputTokens + max_output_tokens;
+      const handle = await scheduler.reserve({ model, estTokens });
       onProgress("waiting");
       let text;
-      if (stream) {
-        const streamResp = await openai.chat.completions.create({
-          ...baseParams,
-          stream: true,
-        });
-        onProgress("stream");
-        text = "";
-        for await (const chunk of streamResp) {
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (delta) {
-            text += delta;
+      try {
+        if (stream) {
+          const streamResp = await openai.chat.completions.create({
+            ...baseParams,
+            stream: true,
+          });
+          onProgress("stream");
+          text = "";
+          for await (const chunk of streamResp) {
+            const delta = chunk.choices?.[0]?.delta?.content;
+            if (delta) {
+              text += delta;
+            }
           }
+          scheduler.commit(handle, estTokens);
+        } else {
+          const { choices, usage } = await openai.chat.completions.create(
+            baseParams,
+          );
+          text = choices[0].message.content;
+          const actual =
+            Number(usage?.total_tokens) ||
+            (Number(usage?.prompt_tokens || 0) +
+              Number(usage?.completion_tokens || 0)) ||
+            estTokens;
+          scheduler.commit(handle, actual);
         }
-      } else {
-        const { choices } = await openai.chat.completions.create(baseParams);
-        text = choices[0].message.content;
+      } catch (e) {
+        scheduler.cancel(handle);
+        throw e;
       }
       if (cache) await setCachedReply(key, text, used);
       onProgress("done");
@@ -591,8 +669,23 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
+        const max_output_tokens = computeMaxOutputTokens({
+          fileCount: used.length,
+          minutesMax,
+        });
+        const schemaJson = JSON.stringify(
+          schema?.schema || schema || {},
+          null,
+          0,
+        );
+        const estInputTokens = estimateInputTokens({
+          instructions,
+          schemaJson,
+          imageCount: used.length,
+          imageDetail: "low",
+          extraText: "",
+        });
         onProgress("request");
-        onProgress("waiting");
         const baseOpts = {
           model,
           instructions,
@@ -607,23 +700,52 @@ export async function chatCompletion({
             },
           },
           reasoning: { effort: reasoningEffort },
-          max_output_tokens: MAX_RESPONSE_TOKENS,
+          max_output_tokens,
         };
         const headers = { "Idempotency-Key": crypto.randomUUID() };
-        let rsp = await openai.responses.create(baseOpts, { headers });
+        const estTokens = estInputTokens + max_output_tokens;
+        const handle = await scheduler.reserve({ model, estTokens });
+        onProgress("waiting");
+        let rsp;
+        try {
+          rsp = await openai.responses.create(baseOpts, { headers });
+          const usage = rsp?.usage;
+          const actual =
+            Number(usage?.total_tokens) ||
+            (Number(usage?.input_tokens || 0) +
+              Number(usage?.output_tokens || 0)) ||
+            estTokens;
+          scheduler.commit(handle, actual);
+        } catch (e) {
+          scheduler.cancel(handle);
+          throw e;
+        }
         const reqId = rsp?.response?.headers?.["x-request-id"];
         if (reqId) console.log(`🆔 request-id: ${reqId}`);
         let { text } = await extractTextWithLogging(rsp);
         if (!text.trim()) {
           console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          rsp = await openai.responses.create(
-            {
-              ...baseOpts,
-              reasoning: { effort: "minimal" },
-              temperature: 0.2,
-            },
-            { headers: { "Idempotency-Key": crypto.randomUUID() } }
-          );
+          const handle2 = await scheduler.reserve({ model, estTokens });
+          try {
+            rsp = await openai.responses.create(
+              {
+                ...baseOpts,
+                reasoning: { effort: "minimal" },
+                temperature: 0.2,
+              },
+              { headers: { "Idempotency-Key": crypto.randomUUID() } },
+            );
+            const usage2 = rsp?.usage;
+            const actual2 =
+              Number(usage2?.total_tokens) ||
+              (Number(usage2?.input_tokens || 0) +
+                Number(usage2?.output_tokens || 0)) ||
+              estTokens;
+            scheduler.commit(handle2, actual2);
+          } catch (e) {
+            scheduler.cancel(handle2);
+            throw e;
+          }
           ({ text } = await extractTextWithLogging(rsp));
         }
         if (cache) await setCachedReply(key, text, used);
