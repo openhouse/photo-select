@@ -105,7 +105,7 @@ process.env.PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS = "60000";
 process.env.PHOTO_SELECT_RETRY_BASE_MS = String(500 + 50 * workers);
 process.env.UV_THREADPOOL_SIZE = String(Math.min(64, 8 + 4 * workers));
 process.env.PHOTO_SELECT_BATCH_SIZE = String(
-  clamp(8 + Math.floor(workers / 2), 8, 16)
+  clamp(8 + Math.floor(workers / 2), 8, 10)
 );
 process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
   clamp(2 * workers, 2, 16)

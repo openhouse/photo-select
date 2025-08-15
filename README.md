@@ -154,7 +154,7 @@ Autoscaling widens the pipes without lowering `--reasoning-effort`.
 | `PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS` | `60000` |
 | `PHOTO_SELECT_RETRY_BASE_MS` | `500 + 50*W` |
 | `UV_THREADPOOL_SIZE` | `min(64, 8 + 4*W)` |
-| `PHOTO_SELECT_BATCH_SIZE` | `clamp(8 + floor(W/2), 8, 16)` |
+| `PHOTO_SELECT_BATCH_SIZE` | `clamp(8 + floor(W/2), 8, 10)` |
 | `PHOTO_SELECT_PEOPLE_CONCURRENCY` | `clamp(2*W, 2, 16)` |
 | `PHOTO_SELECT_BUMP_TOKENS` | `min(4000 + 500*(W-1), 8000)` |
 | `PHOTO_SELECT_TPM_SOFT_CAP` | tokens/min soft cap (optional) |
@@ -168,7 +168,7 @@ export PHOTO_SELECT_MAX_SOCKETS=$(( W*2 + 2 ))
 export PHOTO_SELECT_MAX_FREE_SOCKETS=$(( (PHOTO_SELECT_MAX_SOCKETS+1)/2 ))
 export UV_THREADPOOL_SIZE=$(( 8 + 4*W )); [ $UV_THREADPOOL_SIZE -gt 64 ] && UV_THREADPOOL_SIZE=64
 export PHOTO_SELECT_RETRY_BASE_MS=$(( 500 + 50*W ))
-export PHOTO_SELECT_BATCH_SIZE=$(( 8 + W/2 )); [ $PHOTO_SELECT_BATCH_SIZE -gt 16 ] && PHOTO_SELECT_BATCH_SIZE=16
+export PHOTO_SELECT_BATCH_SIZE=$(( 8 + W/2 )); [ $PHOTO_SELECT_BATCH_SIZE -gt 10 ] && PHOTO_SELECT_BATCH_SIZE=10
 export PHOTO_SELECT_TIMEOUT_MS=600000
 ```
 
