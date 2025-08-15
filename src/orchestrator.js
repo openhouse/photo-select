@@ -60,13 +60,15 @@ const green = (s) => color(s, 32);
 const yellow = (s) => color(s, 33);
 
 const SMALL = Number(process.env.PHOTO_SELECT_SMALL_BATCH_THRESHOLD || 10);
+const BATCH_CAP = 10;
 const MAX_SMALL = Number(
   process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_SMALL || 1
 );
 const MAX_LARGE = Number(
   process.env.PHOTO_SELECT_ZERO_DECISION_MAX_STREAK_LARGE || 2
 );
-const BATCH_SIZE = Number(process.env.PHOTO_SELECT_BATCH_SIZE || 10);
+// Enforce hard cap for vision LLM stability.
+const BATCH_SIZE = Math.min(Number(process.env.PHOTO_SELECT_BATCH_SIZE || 10), BATCH_CAP);
 
 function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   const json = extractJsonBlock(raw);
