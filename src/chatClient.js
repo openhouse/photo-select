@@ -17,7 +17,7 @@ const DEFAULT_TIMEOUT =
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
 const httpsAgent = new KeepAliveAgent.HttpsAgent({
   keepAlive: true,
-  maxSockets: 4,
+  maxSockets: 8,
   maxFreeSockets: 4,
   timeout: DEFAULT_TIMEOUT,
 });

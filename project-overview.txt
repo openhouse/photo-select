@@ -1454,11 +1454,11 @@ By default, the console shows a colourised summary. Minutes are saved as **JSON*
 
 ### Custom timeout
 
-Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
-The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
-or `OLLAMA_HTTP_TIMEOUT` to override this value if your environment
-needs a different window. `OLLAMA_HTTP_TIMEOUT` mirrors the official
-Ollama SDK and is respected when using the bundled provider.
+Long vision batches can occasionally exceed the default 3‑minute HTTP timeout.
+Set `PHOTO_SELECT_TIMEOUT_MS` or `OLLAMA_HTTP_TIMEOUT` to widen this window.
+For GPT‑5 workloads, `PHOTO_SELECT_TIMEOUT_MS=600000` (10 min) has been reliable.
+`OLLAMA_HTTP_TIMEOUT` mirrors the official Ollama SDK and is respected when using
+the bundled provider.
 
 ### Structured outputs and JSON mode
 
@@ -1478,8 +1478,8 @@ export PHOTO_SELECT_OLLAMA_FORMAT=""
 Set `PHOTO_SELECT_OLLAMA_NUM_PREDICT` to control the length of Ollama replies.
 By default it roughly matches the 4,096-token output limit of many OpenAI models.
 
-`PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response
-from either provider. The default is 20 minutes. Pass `--verbose` or set
+`PHOTO_SELECT_TIMEOUT_MS` also governs how long the CLI waits for a response from
+either provider. The default is 3 minutes. Pass `--verbose` or set
 `PHOTO_SELECT_VERBOSE=1` to print additional debugging output when requests fail.
 
 ### People metadata (optional)
