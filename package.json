@@ -1,7 +1,7 @@
 {
   "name": "photo-select",
   "version": "0.1.1",
-  "description": "CLI tool to recursively triage fine‑art photos with ChatGPT 4.5",
+  "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
   "type": "module",
   "bin": {
     "photo-select": "./src/index.js"
