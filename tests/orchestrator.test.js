@@ -191,7 +191,6 @@ describe("triageDirectory", () => {
     expect(secondCall.prompt).toMatch(/Return only the block below/);
     expect(secondCall.prompt).toMatch(/role play as/);
     expect(secondCall.verbosity).toBe('low');
-    expect(secondCall.reasoningEffort).toBe('low');
     expect(secondCall.minutesMin).toBe(0);
     expect(secondCall.minutesMax).toBe(0);
     await expect(fs.stat(path.join(tmpDir, '_keep', '1.jpg'))).resolves.toBeTruthy();

@@ -115,6 +115,7 @@ let finalReasoningEffort = reasoningEffort;
 if (!finalReasoningEffort) {
   finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
 }
+process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
 (async () => {
   try {

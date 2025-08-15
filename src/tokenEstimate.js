@@ -7,18 +7,27 @@ const def = (name, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+export function estimateVisibleTokens({
+  minutesCount,
+  decisionsCount,
+  maxWordsPerLine = 18,
+}) {
+  const words = minutesCount * maxWordsPerLine + decisionsCount * 16;
+  const textTokens = Math.ceil(words * 1.3);
+  const jsonOverhead = 300;
+  return textTokens + jsonOverhead;
+}
+
 /** Adaptive cap for Responses 'max_output_tokens'. */
 export function computeMaxOutputTokens({
-  fileCount,
-  minutesMax,
-  minOut = def("PHOTO_SELECT_MIN_OUTPUT_TOKENS", 768),
-  maxOut = def("PHOTO_SELECT_MAX_OUTPUT_TOKENS", 2048),
-  base = def("PHOTO_SELECT_TOKENS_BASE", 160),
-  perDecision = def("PHOTO_SELECT_TOKENS_PER_DECISION", 32),
-  perMinute = def("PHOTO_SELECT_TOKENS_PER_MINUTE", 90),
+  minutesCount,
+  decisionsCount,
+  effort = "low",
 }) {
-  const raw = base + perDecision * fileCount + perMinute * minutesMax;
-  return Math.max(minOut, Math.min(maxOut, Math.ceil(raw)));
+  const visible = estimateVisibleTokens({ minutesCount, decisionsCount });
+  const base = Math.ceil(visible * 3);
+  const cushion = effort === "high" ? 2000 : 1000;
+  return Math.max(8192, base + cushion);
 }
 
 /**

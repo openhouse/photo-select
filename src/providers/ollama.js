@@ -11,7 +11,7 @@ const client = new Ollama({ host: BASE_URL });
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
 const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
-// Default to a long response (~4k tokens) matching the output limit of many
+// Default to a long response (~32k tokens) matching the output limit of many
 // OpenAI models.
 const OLLAMA_NUM_PREDICT = Number.parseInt(
   process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
