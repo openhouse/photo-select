@@ -69,6 +69,12 @@ const MAX_LARGE = Number(
 );
 // Enforce hard cap for vision LLM stability.
 const BATCH_SIZE = Math.min(Number(process.env.PHOTO_SELECT_BATCH_SIZE || 10), BATCH_CAP);
+const CONCURRENCY = Number(process.env.PHOTO_SELECT_MAX_CONCURRENT || 10);
+if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+  console.log(
+    `⚙️  BATCH_SIZE=${BATCH_SIZE} (cap=${BATCH_CAP}) CONCURRENCY=${CONCURRENCY} SMALL_THRESHOLD=${SMALL}`
+  );
+}
 
 function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   const json = extractJsonBlock(raw);
