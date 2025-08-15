@@ -114,6 +114,10 @@ process.env.PHOTO_SELECT_BUMP_TOKENS = String(
   Math.min(4000 + 500 * (workers - 1), 8000)
 );
 
+// Ensure HTTP pool + timeouts honor the env we just set.
+import { configureHttpFromEnv } from './net.js';
+configureHttpFromEnv();
+
 if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
 }
