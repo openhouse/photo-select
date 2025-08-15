@@ -94,6 +94,26 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
 }
 if (!workers) workers = 1;
 
+// Scale transport, filesystem, and batching with worker count
+const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+const maxSockets = clamp(workers * 2 + 2, 8, 64);
+const maxFreeSockets = clamp(Math.ceil(maxSockets / 2), 4, 32);
+process.env.PHOTO_SELECT_MAX_SOCKETS = String(maxSockets);
+process.env.PHOTO_SELECT_MAX_FREE_SOCKETS = String(maxFreeSockets);
+process.env.PHOTO_SELECT_KEEPALIVE_MS = "10000";
+process.env.PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS = "60000";
+process.env.PHOTO_SELECT_RETRY_BASE_MS = String(500 + 50 * workers);
+process.env.UV_THREADPOOL_SIZE = String(Math.min(64, 8 + 4 * workers));
+process.env.PHOTO_SELECT_BATCH_SIZE = String(
+  clamp(8 + Math.floor(workers / 2), 8, 16)
+);
+process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
+  clamp(2 * workers, 2, 16)
+);
+process.env.PHOTO_SELECT_BUMP_TOKENS = String(
+  Math.min(4000 + 500 * (workers - 1), 8000)
+);
+
 if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
 }
