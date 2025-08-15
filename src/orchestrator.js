@@ -256,6 +256,7 @@ export async function triageDirectory({
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
+  const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
   await mkdir(levelDir, { recursive: true });
   if (verbose) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
@@ -311,6 +312,8 @@ export async function triageDirectory({
     await notesWriter.init();
   }
 
+  let completedBatches = 0;
+
   while (true) {
     const images = await listImages(dir);
     if (images.length === 0) {
@@ -343,7 +346,6 @@ export async function triageDirectory({
           }
         };
         let batchIdx = 0;
-        let completed = 0;
         const nextBatch = () => (queue.length ? queue.splice(0, BATCH_SIZE) : null);
 
         async function workerFn() {
@@ -510,13 +512,14 @@ export async function triageDirectory({
                   `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
                 );
 
-                completed += keep.length + aside.length;
-                if (completed) {
-                  const remaining = totalImages - completed;
-                  const elapsed = Date.now() - levelStart;
-                  const etaMs = (elapsed / completed) * remaining;
+                if (keep.length + aside.length > 0) {
+                  completedBatches++;
+                  const elapsedSec = (Date.now() - levelStart) / 1000;
+                  const remaining = totalBatches - completedBatches;
+                  const tps = completedBatches / elapsedSec;
+                  const etaSec = tps > 0 ? Math.ceil(remaining / tps) : Infinity;
                   log(
-                    `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+                    `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
                   );
                 }
               } catch (err) {
@@ -539,12 +542,13 @@ export async function triageDirectory({
         multibar.stop();
       }
       const remaining = (await listImages(dir)).length;
-      const processed = totalImages - remaining;
-      if (processed) {
-        const elapsed = Date.now() - levelStart;
-        const etaMs = (elapsed / processed) * remaining;
+      const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+      if (completedBatches) {
+        const elapsedSec = (Date.now() - levelStart) / 1000;
+        const tps = completedBatches / elapsedSec;
+        const etaSec = tps > 0 ? Math.ceil(remainingBatches / tps) : Infinity;
         console.log(
-          `${indent}⏳  ETA to finish level: ${formatDuration(etaMs)}`
+          `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
         );
       }
 }
