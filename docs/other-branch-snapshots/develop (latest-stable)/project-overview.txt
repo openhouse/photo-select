@@ -751,9 +751,9 @@ reduces the chance of retry loops on slow requests.
 
 ### Custom timeout
 
-Long vision batches can occasionally exceed the default 5‑minute HTTP timeout.
-The client now waits up to **20 minutes** by default. Set `PHOTO_SELECT_TIMEOUT_MS`
-to override this value if your environment needs a different window.
+Long vision batches can occasionally exceed the default 3‑minute HTTP timeout.
+Set `PHOTO_SELECT_TIMEOUT_MS` to widen this window; `600000` (10 min) has been
+reliable for GPT‑5 workloads.
 
 ### People metadata (optional)
 
