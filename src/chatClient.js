@@ -11,6 +11,7 @@ import {
   computeMaxOutputTokens,
   estimateInputTokens,
 } from "./tokenEstimate.js";
+import { enforceEffortGuard } from "./effortGuard.js";
 
 const DEFAULT_TIMEOUT =
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
@@ -65,20 +66,21 @@ function extractBlock(raw, start, end) {
 
 function extractPayload(rsp) {
   if (typeof rsp.output_text === "string" && rsp.output_text.trim()) {
-    return { text: rsp.output_text, json: null };
+    return { text: rsp.output_text, json: null, hasMessage: true };
   }
   const msg = rsp.output?.find((o) => o.type === "message");
-  const jsonPart = msg?.content?.find(
-    (c) => c.type === "output_json" && c.json
-  );
+  if (!msg) return { text: "", json: null, hasMessage: false };
+  const jsonPart = msg.content?.find((c) => c.type === "output_json" && c.json);
   if (jsonPart) {
-    return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
+    return {
+      text: JSON.stringify(jsonPart.json),
+      json: jsonPart.json,
+      hasMessage: true,
+    };
   }
-  const textPart = msg?.content?.find(
-    (c) => c.type === "output_text" && c.text?.trim()
-  );
-  if (textPart) return { text: textPart.text, json: null };
-  return { text: "", json: null };
+  const textPart = msg.content?.find((c) => c.type === "output_text" && c.text?.trim());
+  if (textPart) return { text: textPart.text, json: null, hasMessage: true };
+  return { text: "", json: null, hasMessage: true };
 }
 
 async function extractTextWithLogging(rsp) {
@@ -92,9 +94,9 @@ async function extractTextWithLogging(rsp) {
   console.log(
     `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
   );
-  const { text, json } = extractPayload(rsp);
+  const { text, json, hasMessage } = extractPayload(rsp);
   const debug = process.env.PHOTO_SELECT_DEBUG;
-  if (!text.trim() || debug) {
+  if (!hasMessage || !text.trim() || debug) {
     const dir = debugDir();
     await mkdir(dir, { recursive: true });
     const f = path.join(dir, `resp-${Date.now()}.json`);
@@ -106,7 +108,7 @@ async function extractTextWithLogging(rsp) {
       );
     }
     await writeFile(f, body);
-    if (!text.trim()) {
+    if (!hasMessage || !text.trim()) {
       await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
     } else {
       console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
@@ -119,7 +121,7 @@ async function extractTextWithLogging(rsp) {
   if (debug) {
     console.log(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
   }
-  return { text, json };
+  return { text, json, hasMessage };
 }
 
 async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
@@ -178,7 +180,7 @@ export async function curatorsFromTags(files) {
 
 /** Max response tokens allowed from OpenAI. Large enough to hold
  * minutes plus the full JSON decision block without truncation. */
-export const MAX_RESPONSE_TOKENS = 8192;
+export const MAX_RESPONSE_TOKENS = 32000;
 
 export function buildPhotoSelectSchema({ files = [], minutesMin = 3, minutesMax = 12 }) {
   const decisionItem = {
@@ -421,6 +423,7 @@ export async function chatCompletion({
   if (!allowedEffort.includes(reasoningEffort)) {
     throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
   }
+  enforceEffortGuard(reasoningEffort);
 
   const clean = (n) => n.replace(/^and\s+/i, "").trim();
   const extras = (await curatorsFromTags(images)).map(clean);
@@ -473,8 +476,9 @@ export async function chatCompletion({
         });
         // ADAPTIVE max_output_tokens
         const max_output_tokens = computeMaxOutputTokens({
-          fileCount: used.length,
-          minutesMax,
+          decisionsCount: used.length,
+          minutesCount: minutesMax,
+          effort: reasoningEffort,
         });
         // ESTIMATE input tokens
         const schemaJson = JSON.stringify(
@@ -526,17 +530,15 @@ export async function chatCompletion({
         }
         const reqId = rsp?.response?.headers?.["x-request-id"];
         if (reqId) console.log(`🆔 request-id: ${reqId}`);
-        let { text } = await extractTextWithLogging(rsp);
-        if (!text.trim()) {
-          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          const handle2 = await scheduler.reserve({ model, estTokens });
+        let { text, hasMessage } = await extractTextWithLogging(rsp);
+        if (!hasMessage || !text.trim()) {
+          console.warn("⚠️ Empty text; retrying with more tokens…");
+          max_output_tokens = Math.min(max_output_tokens + 4000, 32000);
+          const estTokens2 = estInputTokens + max_output_tokens;
+          const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {
             rsp = await openai.responses.create(
-              {
-                ...baseOpts,
-                reasoning: { effort: "minimal" },
-                temperature: 0.2,
-              },
+              { ...baseOpts, max_output_tokens },
               { headers: { "Idempotency-Key": crypto.randomUUID() } },
             );
             const usage2 = rsp?.usage;
@@ -544,13 +546,16 @@ export async function chatCompletion({
               Number(usage2?.total_tokens) ||
               (Number(usage2?.input_tokens || 0) +
                 Number(usage2?.output_tokens || 0)) ||
-              estTokens;
+              estTokens2;
             scheduler.commit(handle2, actual2);
           } catch (e) {
             scheduler.cancel(handle2);
             throw e;
           }
-          ({ text } = await extractTextWithLogging(rsp));
+          ({ text, hasMessage } = await extractTextWithLogging(rsp));
+          if (!hasMessage || !text.trim()) {
+            throw new Error("Empty text after retry");
+          }
         }
         if (cache) await setCachedReply(key, text, used);
         onProgress("done");
@@ -575,8 +580,9 @@ export async function chatCompletion({
       }
 
       const max_output_tokens = computeMaxOutputTokens({
-        fileCount: used.length,
-        minutesMax,
+        decisionsCount: used.length,
+        minutesCount: minutesMax,
+        effort: reasoningEffort,
       });
       const estInputTokens = estimateInputTokens({
         instructions: finalPrompt,
@@ -670,8 +676,9 @@ export async function chatCompletion({
           minutesMax,
         });
         const max_output_tokens = computeMaxOutputTokens({
-          fileCount: used.length,
-          minutesMax,
+          decisionsCount: used.length,
+          minutesCount: minutesMax,
+          effort: reasoningEffort,
         });
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
@@ -722,17 +729,15 @@ export async function chatCompletion({
         }
         const reqId = rsp?.response?.headers?.["x-request-id"];
         if (reqId) console.log(`🆔 request-id: ${reqId}`);
-        let { text } = await extractTextWithLogging(rsp);
-        if (!text.trim()) {
-          console.warn("⚠️ Empty text; retrying with minimal reasoning…");
-          const handle2 = await scheduler.reserve({ model, estTokens });
+        let { text, hasMessage } = await extractTextWithLogging(rsp);
+        if (!hasMessage || !text.trim()) {
+          console.warn("⚠️ Empty text; retrying with more tokens…");
+          max_output_tokens = Math.min(max_output_tokens + 4000, 32000);
+          const estTokens2 = estInputTokens + max_output_tokens;
+          const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {
             rsp = await openai.responses.create(
-              {
-                ...baseOpts,
-                reasoning: { effort: "minimal" },
-                temperature: 0.2,
-              },
+              { ...baseOpts, max_output_tokens },
               { headers: { "Idempotency-Key": crypto.randomUUID() } },
             );
             const usage2 = rsp?.usage;
@@ -740,13 +745,16 @@ export async function chatCompletion({
               Number(usage2?.total_tokens) ||
               (Number(usage2?.input_tokens || 0) +
                 Number(usage2?.output_tokens || 0)) ||
-              estTokens;
+              estTokens2;
             scheduler.commit(handle2, actual2);
           } catch (e) {
             scheduler.cancel(handle2);
             throw e;
           }
-          ({ text } = await extractTextWithLogging(rsp));
+          ({ text, hasMessage } = await extractTextWithLogging(rsp));
+          if (!hasMessage || !text.trim()) {
+            throw new Error("Empty text after retry");
+          }
         }
         if (cache) await setCachedReply(key, text, used);
         onProgress("done");
