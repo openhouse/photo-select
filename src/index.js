@@ -6,7 +6,7 @@ import "./errorHandler.js";
 import { Command } from "commander";
 import path from "node:path";
 import { DEFAULT_PROMPT_PATH } from "./templates.js";
-
+import { configureHttpFromEnv } from "./net.js";
 
 const program = new Command();
 program
@@ -114,9 +114,14 @@ process.env.PHOTO_SELECT_BUMP_TOKENS = String(
   Math.min(4000 + 500 * (workers - 1), 8000)
 );
 
-// Ensure HTTP pool + timeouts honor the env we just set.
-import { configureHttpFromEnv } from './net.js';
-configureHttpFromEnv();
+// Early bootstrap log (helps confirm the process is alive).
+if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+  console.log(`🔧 bootstrap: node=${process.version} workers=${workers} dir=${process.cwd()}`);
+}
+
+// Configure HTTP dispatcher only if explicitly enabled.
+// This is async but we don't block startup on it.
+void configureHttpFromEnv();
 
 if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
