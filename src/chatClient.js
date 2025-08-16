@@ -20,46 +20,60 @@ function numEnv(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+const HTTP_DRIVER = String(
+  process.env.PHOTO_SELECT_HTTP_DRIVER || ""
+).toLowerCase();
+const USE_UNDICI = HTTP_DRIVER === "undici";
 const DEFAULT_TIMEOUT =
   Number.parseInt(process.env.PHOTO_SELECT_TIMEOUT_MS, 10) || 180000;
-const httpsAgent = new KeepAliveAgent.HttpsAgent({
-  keepAlive: true,
-  maxSockets: numEnv("PHOTO_SELECT_MAX_SOCKETS", 8),
-  maxFreeSockets: numEnv("PHOTO_SELECT_MAX_FREE_SOCKETS", 4),
-  keepAliveMsecs: numEnv("PHOTO_SELECT_KEEPALIVE_MS", 10000),
-  freeSocketTimeout: numEnv("PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS", 60000),
-  timeout: DEFAULT_TIMEOUT,
-});
-
 const RETRY_BASE = Number(process.env.PHOTO_SELECT_RETRY_BASE_MS || 1000);
 const MAX_RETRIES = Number(process.env.PHOTO_SELECT_MAX_RETRIES || 6);
 const RETRIABLE = new Set([408, 429, 502, 503, 504]);
 function isSocketReset(err) {
   return ["EPIPE", "ECONNRESET"].includes(err?.cause?.code || err?.code);
 }
-httpsAgent.on("error", (err) => {
-  if (["EPIPE", "ECONNRESET"].includes(err.code)) {
-    console.warn("agent error:", err.message);
-  } else {
-    throw err;
-  }
-});
 
-const openai = new OpenAI({ httpAgent: httpsAgent });
+let httpsAgent;
+if (!USE_UNDICI) {
+  httpsAgent = new KeepAliveAgent.HttpsAgent({
+    keepAlive: true,
+    maxSockets: numEnv("PHOTO_SELECT_MAX_SOCKETS", 8),
+    maxFreeSockets: numEnv("PHOTO_SELECT_MAX_FREE_SOCKETS", 4),
+    keepAliveMsecs: numEnv("PHOTO_SELECT_KEEPALIVE_MS", 10000),
+    freeSocketTimeout: numEnv("PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS", 60000),
+    timeout: DEFAULT_TIMEOUT,
+  });
+  httpsAgent.on("error", (err) => {
+    if (["EPIPE", "ECONNRESET"].includes(err.code)) {
+      console.warn("agent error:", err.message);
+    } else {
+      throw err;
+    }
+  });
+}
+
+const openai = new OpenAI({
+  ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
+  timeout: DEFAULT_TIMEOUT,
+  maxRetries: MAX_RETRIES,
+});
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
-const peopleAgent = PEOPLE_API_BASE.startsWith("https")
-  ? new KeepAliveAgent.HttpsAgent({
-      keepAlive: true,
-      maxSockets: PEOPLE_CONCURRENCY,
-      maxFreeSockets: PEOPLE_CONCURRENCY,
-    })
-  : new KeepAliveAgent({
-      keepAlive: true,
-      maxSockets: PEOPLE_CONCURRENCY,
-      maxFreeSockets: PEOPLE_CONCURRENCY,
-    });
+let peopleAgent;
+if (!USE_UNDICI) {
+  peopleAgent = PEOPLE_API_BASE.startsWith("https")
+    ? new KeepAliveAgent.HttpsAgent({
+        keepAlive: true,
+        maxSockets: PEOPLE_CONCURRENCY,
+        maxFreeSockets: PEOPLE_CONCURRENCY,
+      })
+    : new KeepAliveAgent({
+        keepAlive: true,
+        maxSockets: PEOPLE_CONCURRENCY,
+        maxFreeSockets: PEOPLE_CONCURRENCY,
+      });
+}
 class SimpleSemaphore {
   constructor(max) {
     this.max = max;
@@ -193,7 +207,7 @@ async function getPeople(filename) {
       filename
     )}/persons`;
     const res = await peopleSem.run(() =>
-      fetch(url, { agent: peopleAgent })
+      fetch(url, peopleAgent ? { agent: peopleAgent } : undefined)
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -556,6 +570,16 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens,
         };
+        if (process.env.PHOTO_SELECT_VERBOSE === "1") {
+          const sizeMB = (
+            Buffer.byteLength(JSON.stringify(baseOpts)) /
+            1024 /
+            1024
+          ).toFixed(1);
+          console.log(
+            `⇢  Sending payload ~${sizeMB} MiB for ${used.length} image(s)`
+          );
+        }
         const headers = { "Idempotency-Key": crypto.randomUUID() };
         const estTokens = estInputTokens + max_output_tokens;
         const handle = await scheduler.reserve({ model, estTokens });
@@ -758,6 +782,16 @@ export async function chatCompletion({
           reasoning: { effort: reasoningEffort },
           max_output_tokens,
         };
+        if (process.env.PHOTO_SELECT_VERBOSE === "1") {
+          const sizeMB = (
+            Buffer.byteLength(JSON.stringify(baseOpts)) /
+            1024 /
+            1024
+          ).toFixed(1);
+          console.log(
+            `⇢  Sending payload ~${sizeMB} MiB for ${used.length} image(s)`
+          );
+        }
         const headers = { "Idempotency-Key": crypto.randomUUID() };
         const estTokens = estInputTokens + max_output_tokens;
         const handle = await scheduler.reserve({ model, estTokens });
@@ -829,7 +863,7 @@ export async function chatCompletion({
       console.warn(`${label} (${codeInfo}). Retrying in ${delayMs} ms…`);
       if (reqId) console.warn(`request-id: ${reqId}`);
       console.warn("Full error response:", err);
-      if (attempt === 2 && isSocketReset(err) && httpsAgent.keepAlive) {
+      if (attempt === 2 && isSocketReset(err) && httpsAgent?.keepAlive) {
         httpsAgent.keepAlive = false;
         console.warn("Disabling keep-alive due to socket resets");
       }

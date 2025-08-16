@@ -232,6 +232,16 @@ By default it roughly matches the 4,096-token output limit of many OpenAI models
 either provider. The default is 3 minutes. Pass `--verbose` or set
 `PHOTO_SELECT_VERBOSE=1` to print additional debugging output when requests fail.
 
+### Tuned HTTP dispatcher
+
+Set `PHOTO_SELECT_HTTP_DRIVER=undici` to use an [Undici](https://github.com/nodejs/undici)
+dispatcher with configurable socket pooling and timeouts. When enabled, the CLI
+respects env vars such as `PHOTO_SELECT_MAX_SOCKETS`, `PHOTO_SELECT_TIMEOUT_MS`,
+and `PHOTO_SELECT_MAX_RETRIES`. Combine with
+`NODE_OPTIONS="--dns-result-order=ipv4first --max-old-space-size=32768"` if your
+network favours IPv4. With `PHOTO_SELECT_VERBOSE=1` the selected driver is logged
+on startup.
+
 ### People metadata (optional)
 
 Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
