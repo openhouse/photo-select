@@ -3,7 +3,7 @@
 You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
 
 Role play as {{curators}}:
- - Inidicate who is speaking
+ - Indicate who is speaking
  - Say what you think
 
 Session participants:
@@ -13,6 +13,11 @@ Session participants:
 You will review the following image files (use *only* these names when forming decisions):
 {{#each images}}- {{this}}
 {{/each}}
+
+### Per-image metadata available
+Before each image you will be given a one-line JSON object like:
+{"filename":"<name>","people":["<First Last>", "..."]}
+Curators may use this to ground person names/roles/relationships/etc. Never invent names.
 
 {{#if context}}
 Background for today's review:
@@ -53,7 +58,8 @@ Constraints:
 - The **last** minutes item must be a forward-looking question.
 - In "decisions", include **every** filename from the list **exactly once**.
 - If uncertain, choose "aside" to omit from consideration for this show.
-- Use only the provided filenames; never invent names.
+- Use only the provided filenames; never invent filenames.
+- When referring to people, curators may use names/roles/relationships/etc present in the per‑image metadata.
 - Do not include any text before or after the JSON.
 If you cannot produce the single JSON object, return the two fallback sections:
 
