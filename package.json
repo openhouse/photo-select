@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "photo-select",
-    "test": "vitest run"
+    "test": "vitest run",
+    "undici:smoke": "node scripts/undici-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -28,6 +29,7 @@
     "undici": "^6.21.3"
   },
   "devDependencies": {
-    "vitest": "^1.5.0"
+    "vitest": "^1.5.0",
+    "undici": "^6.21.3"
   }
 }
