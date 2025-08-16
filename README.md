@@ -142,6 +142,30 @@ available RAM.
 
 Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.
 
+### Undici smoke test
+
+If you suspect Undici (or DNS/IPv6) is stalling, run the minimal probe:
+
+```bash
+npm i -D undici
+node scripts/undici-smoke.mjs                # defaults to httpbin
+OPENAI_API_KEY=sk-... node scripts/undici-smoke.mjs https://api.openai.com/v1/models
+```
+
+Helpful flags:
+
+```bash
+# Prefer IPv4 if v6 is flaky on your network
+NODE_OPTIONS="--dns-result-order=ipv4first" \
+DEBUG=undici:* \
+SMOKE_CONCURRENCY=8 SMOKE_TIMEOUT_MS=20000 \
+node scripts/undici-smoke.mjs https://httpbin.org/get
+```
+
+The script prints ALPN (h2/h1), remote/local addresses, timing, and whether
+sockets are reused. Once this is healthy, apply the same dispatcher settings
+to the main pipeline.
+
 ### Concurrency & Tuning
 
 Autoscaling widens the pipes without lowering `--reasoning-effort`.
