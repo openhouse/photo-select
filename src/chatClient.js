@@ -476,14 +476,18 @@ export async function chatCompletion({
   minutesMax = 12,
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
-  const allowedEffort = ["minimal", "low", "medium", "high"];
+  const allowedEffort = ["auto", "minimal", "low", "medium", "high"];
   if (!allowedVerbosity.includes(verbosity)) {
     throw new Error(`invalid verbosity: ${verbosity}`);
   }
   if (!allowedEffort.includes(reasoningEffort)) {
     throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
   }
-  enforceEffortGuard(reasoningEffort);
+  if (reasoningEffort !== "auto") {
+    enforceEffortGuard(reasoningEffort);
+  }
+  const effort = reasoningEffort === "auto" ? "" : reasoningEffort;
+  const effortForTokens = effort || "low";
 
   const clean = (n) => n.replace(/^and\s+/i, "").trim();
   const extras = (await curatorsFromTags(images)).map(clean);
@@ -538,7 +542,7 @@ export async function chatCompletion({
         const max_output_tokens = computeMaxOutputTokens({
           decisionsCount: used.length,
           minutesCount: minutesMax,
-          effort: reasoningEffort,
+          effort: effortForTokens,
         });
         // ESTIMATE input tokens
         const schemaJson = JSON.stringify(
@@ -567,7 +571,7 @@ export async function chatCompletion({
               strict: true,
             },
           },
-          reasoning: { effort: reasoningEffort },
+          ...(effort ? { reasoning: { effort } } : {}),
           max_output_tokens,
         };
         if (process.env.PHOTO_SELECT_VERBOSE === "1") {
@@ -655,7 +659,7 @@ export async function chatCompletion({
       const max_output_tokens = computeMaxOutputTokens({
         decisionsCount: used.length,
         minutesCount: minutesMax,
-        effort: reasoningEffort,
+        effort: effortForTokens,
       });
       const estInputTokens = estimateInputTokens({
         instructions: finalPrompt,
@@ -751,7 +755,7 @@ export async function chatCompletion({
         const max_output_tokens = computeMaxOutputTokens({
           decisionsCount: used.length,
           minutesCount: minutesMax,
-          effort: reasoningEffort,
+          effort: effortForTokens,
         });
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
@@ -779,7 +783,7 @@ export async function chatCompletion({
               strict: true,
             },
           },
-          reasoning: { effort: reasoningEffort },
+          ...(effort ? { reasoning: { effort } } : {}),
           max_output_tokens,
         };
         if (process.env.PHOTO_SELECT_VERBOSE === "1") {

@@ -114,7 +114,7 @@ through to the script unchanged.
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
-| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`) |
+| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
