@@ -14,13 +14,13 @@ You will review the following image files (use *only* these filenames when formi
 {{#each images}}- {{this}}
 {{/each}}
 
-All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent. All named people are friends.
+All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent.
 
-{{!-- 
 Before each image you will be given a one-line JSON object like:
 {"filename":"<name>","people":["<First Last>", "..."]}
-You may use this to ground person names/roles/relationships/etc.
---}}
+These are the "photographer's notes" written on the back of each photo.
+
+Consider all named people friends.
 
 {{#if context}}
 Background for today's review:
@@ -28,7 +28,7 @@ Background for today's review:
 {{/if}}
 
 {{#if hasFieldNotes}}
-Field‑notes snapshot (for reference):
+Field-notes snapshot (for reference):
 {{fieldNotes}}
 {{/if}}
 
@@ -62,7 +62,7 @@ Constraints:
 - In "decisions", include **every** filename from the list **exactly once**.
 - If uncertain, choose "aside" to omit from consideration for this show.
 - Use only the provided filenames; never invent filenames.
-- When referring to people we know, we can use their names/roles/relationships/etc as we talk.
+- When referring to people, always use their names from the photographer's notes. This helps the photographer understand our minutes through the lens of their own lived experience.
 - Do not include any text before or after the JSON.
 
 {{!--
