@@ -432,6 +432,20 @@ describe("chatCompletion", () => {
     expect(args.reasoning.effort).toBe("high");
   });
 
+  it("omits reasoning when effort is auto", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+      reasoningEffort: "auto",
+    });
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.reasoning).toBeUndefined();
+  });
+
   it("rejects invalid flags", async () => {
     await expect(
       chatCompletion({

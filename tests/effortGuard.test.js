@@ -7,4 +7,10 @@ describe('effort guard', () => {
     expect(() => enforceEffortGuard('medium')).toThrow(/EffortGuard/);
     delete process.env.PHOTO_SELECT_USER_EFFORT;
   });
+
+  it('allows auto', () => {
+    process.env.PHOTO_SELECT_USER_EFFORT = 'auto';
+    expect(() => enforceEffortGuard('minimal')).not.toThrow();
+    delete process.env.PHOTO_SELECT_USER_EFFORT;
+  });
 });

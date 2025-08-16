@@ -51,7 +51,7 @@ program
   )
   .option(
     "--reasoning-effort <level>",
-    "Reasoning effort (minimal|low|medium|high)",
+    "Reasoning effort (minimal|low|medium|high|auto)",
     process.env.PHOTO_SELECT_REASONING_EFFORT
   )
   .option("--no-recurse", "Process a single directory only")
@@ -140,7 +140,7 @@ if (!finalModel) {
   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
 }
 
-let finalReasoningEffort = reasoningEffort;
+let finalReasoningEffort = reasoningEffort?.toLowerCase();
 if (!finalReasoningEffort) {
   finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
 }
