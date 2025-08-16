@@ -10,14 +10,17 @@ Session participants:
 - Curators: {{curators}}
 - Facilitator: Jamie
 
-You will review the following image files (use *only* these names when forming decisions):
+You will review the following image files (use *only* these filenames when forming decisions):
 {{#each images}}- {{this}}
 {{/each}}
 
-### Per-image metadata available
+All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent. All named people are friends.
+
+{{!-- 
 Before each image you will be given a one-line JSON object like:
 {"filename":"<name>","people":["<First Last>", "..."]}
-Curators may use this to ground person names/roles/relationships/etc. Never invent names.
+You may use this to ground person names/roles/relationships/etc.
+--}}
 
 {{#if context}}
 Background for today's review:
@@ -59,8 +62,10 @@ Constraints:
 - In "decisions", include **every** filename from the list **exactly once**.
 - If uncertain, choose "aside" to omit from consideration for this show.
 - Use only the provided filenames; never invent filenames.
-- When referring to people, curators may use names/roles/relationships/etc present in the per‑image metadata.
+- When referring to people we know, we can use their names/roles/relationships/etc as we talk.
 - Do not include any text before or after the JSON.
+
+{{!--
 If you cannot produce the single JSON object, return the two fallback sections:
 
 === DECISIONS_JSON ===
@@ -68,3 +73,4 @@ If you cannot produce the single JSON object, return the two fallback sections:
 === END ===
 
 …but only when you cannot produce the single JSON object.
+--}}
