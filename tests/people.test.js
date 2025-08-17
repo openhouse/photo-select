@@ -11,8 +11,8 @@ describe('people sanitizer', () => {
     );
   });
 
-  it('sanitizes, trims, and dedupes', () => {
+  it('trims and drops placeholders only', () => {
     const raw = ['  Olivia J Mann ', '_UNKNOWN_', 'Beata (neighbor)', 'unknown #1', 'Olivia J Mann'];
-    expect(sanitizePeople(raw)).toEqual(['Olivia J Mann', 'Beata (neighbor)']);
+    expect(sanitizePeople(raw)).toEqual(['Olivia J Mann', 'Beata (neighbor)', 'Olivia J Mann']);
   });
 });

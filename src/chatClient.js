@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
 import { sanitizePeople, isPlaceholder } from "./lib/people.js";
+import { finalizeCurators } from "./core/finalizeCurators.js";
 import { delay } from "./config.js";
 import { scheduler } from "./scheduler.js";
 import {
@@ -488,6 +489,7 @@ export async function chatCompletion({
   responseFormat,
   minutesMin = 3,
   minutesMax = 12,
+  aliasMap = {},
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
   const allowedEffort = ["auto", "minimal", "low", "medium", "high"];
@@ -503,20 +505,25 @@ export async function chatCompletion({
   const effort = reasoningEffort === "auto" ? "" : reasoningEffort;
   const effortForTokens = effort || "low";
 
-  const clean = (n) => n.replace(/^and\s+/i, "").trim();
-  const rawExtras = (await curatorsFromTags(images)).map(clean);
-  const extras = sanitizePeople(rawExtras);
-  const baseCurators = curators.map(clean);
-  const added = extras.filter((n) => !baseCurators.includes(n));
-  const droppedExtras = rawExtras.filter((n) => isPlaceholder(n));
-  if (droppedExtras.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
-    const ctx = batchStore.getStore();
-    const prefix = ctx?.batch ? `Batch ${ctx.batch} ` : "";
-    console.log(
-      `⚠️  ${prefix}dropped placeholder people tags from curators: ${droppedExtras.join(", ")}`
-    );
+  const photos = [];
+  for (let idx = 0; idx < images.length; idx++) {
+    const file = images[idx];
+    const name = path.basename(file);
+    const peopleRaw = await getPeople(name);
+    const people = sanitizePeople(peopleRaw);
+    const dropped = peopleRaw.filter((p) => isPlaceholder(p));
+    if (dropped.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
+      const ctx = batchStore.getStore();
+      const prefix = ctx?.batch ? `Batch ${ctx.batch} ` : "";
+      console.log(
+        `⚠️  ${prefix}dropped placeholder people tags for ${name}: ${dropped.join(", ")}`
+      );
+    }
+    photos.push({ file: name, people });
   }
-  const finalCurators = Array.from(new Set([...baseCurators, ...extras]));
+  const { finalCurators, added } = finalizeCurators(curators, photos, {
+    aliasMap,
+  });
   if (added.length) {
     const info = batchStore.getStore();
     const prefix = info?.batch ? `Batch ${info.batch} ` : "";

@@ -121,6 +121,11 @@ through to the script unchanged.
 | `--verbose` | `false` | Print extra logs and save prompts/responses |
 | `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
 
+People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
+
+Set `PHOTO_SELECT_IDENTITY_POLICY=canonicalize` to enable the older normalization/alias behaviour, though the default (`passthrough`) is recommended.
+
 When `--field-notes` is enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message. During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
 
 See [docs/field-notes.md](docs/field-notes.md) for a description of how the notebook system works.
