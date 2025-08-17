@@ -202,7 +202,7 @@ async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
   }
 }
 
-async function getPeople(filename) {
+export async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
     const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
