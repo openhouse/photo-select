@@ -8,7 +8,7 @@ describe('buildPrompt', () => {
       images: ['DSCF1234.jpg', 'DSCF5678.jpg'],
     });
     expect(prompt).toMatch(
-      'Role play as Ingeborg Gerdes, Alexandra Munroe:\n - Inidicate who is speaking\n - Say what you think'
+      'Role play as Ingeborg Gerdes, Alexandra Munroe:\n - Indicate who is speaking\n - Say what you think'
     );
     expect(prompt).toMatch('Produce between 3 and 5 diarized items');
     expect(minutesMin).toBe(3);
