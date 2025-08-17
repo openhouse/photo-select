@@ -534,7 +534,14 @@ export async function chatCompletion({
   let finalPrompt = prompt;
   if (finalCurators.length) {
     const names = finalCurators.join(", ");
-    finalPrompt = prompt.replace(/\{\{curators\}\}/g, names);
+    if (/\{\{curators\}\}/.test(finalPrompt)) {
+      finalPrompt = finalPrompt.replace(/\{\{curators\}\}/g, names);
+    } else {
+      finalPrompt = finalPrompt.replace(
+        /^Curators:.*$/m,
+        `Curators: ${names}`
+      );
+    }
   }
 
   finalPrompt = ensureJsonMention(finalPrompt);
