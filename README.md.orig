@@ -118,7 +118,8 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
-| `--verbose` | `false` | Print extra logs and save prompts/responses |
+| `--verbose` | `false` | Print extra logs |
+| `--save-io` | `false` | Save prompts and responses for debugging |
 | `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
 
 People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.

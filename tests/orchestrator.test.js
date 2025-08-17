@@ -173,6 +173,34 @@ describe("triageDirectory", () => {
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
   });
 
+  it("saves prompts and responses when enabled", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      saveIo: true,
+    });
+    const levelDir = path.join(tmpDir, "_level-001");
+    const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
+    const responses = await fs.readdir(path.join(levelDir, "_responses"));
+    expect(prompts.length).toBe(1);
+    expect(responses.length).toBe(1);
+    const promptTxt = await fs.readFile(
+      path.join(levelDir, "_prompts", prompts[0]),
+      "utf8"
+    );
+    expect(promptTxt).toContain("prompt");
+    const respTxt = await fs.readFile(
+      path.join(levelDir, "_responses", responses[0]),
+      "utf8"
+    );
+    expect(respTxt).toContain("1.jpg");
+  });
+
   it('repairs zero-decision batch', async () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ minutes: [], decisions: [] }))

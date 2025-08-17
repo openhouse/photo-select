@@ -206,6 +206,7 @@ export async function triageDirectory({
   contextPath,
   fieldNotes = false,
   verbose = false,
+  saveIo = false,
   workers = 1,
   verbosity,
   reasoningEffort,
@@ -258,10 +259,9 @@ export async function triageDirectory({
   const totalImages = initImages.length;
   const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
   await mkdir(levelDir, { recursive: true });
-  if (verbose) {
+  if (saveIo) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
-    await mkdir(path.join(levelDir, '_payloads'), { recursive: true });
   }
   const failedArchives = [];
   const copyFileSafe = async (
@@ -366,6 +366,21 @@ export async function triageDirectory({
                 let unclassified = [];
                 let notes = new Map();
                 let minutes = [];
+                const saveText = async (kind, attempt, text) => {
+                  if (!saveIo) return;
+                  const dirName = kind === 'prompt' ? '_prompts' : '_responses';
+                  const attemptSuffix = attempt > 1 ? `-${attempt}` : '';
+                  const file = path.join(
+                    levelDir,
+                    dirName,
+                    `batch-${String(idx).padStart(3, '0')}${attemptSuffix}.txt`
+                  );
+                  try {
+                    await writeFile(file, text, 'utf8');
+                  } catch {
+                    /* ignore */
+                  }
+                };
 
                 const first = await buildPrompt(promptPath, {
                   curators,
@@ -375,6 +390,8 @@ export async function triageDirectory({
                   isSecondPass: false,
                 });
                 const meta = { model, verbosity, reasoningEffort };
+                let attemptNum = 1;
+                await saveText('prompt', attemptNum, first.prompt);
                 reply = await provider.chat({
                   prompt: first.prompt,
                   images: batch,
@@ -389,6 +406,7 @@ export async function triageDirectory({
                   },
                   stream: true,
                 });
+                await saveText('response', attemptNum, reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
                   batch,
@@ -409,6 +427,8 @@ export async function triageDirectory({
                       "Files (use each exactly once):",
                       ...batch.map((f) => `- ${path.basename(f)}`),
                     ].join("\n");
+                    attemptNum++;
+                    await saveText('prompt', attemptNum, repair);
                     reply = await provider.chat({
                       prompt: repair,
                       images: batch,
@@ -423,6 +443,7 @@ export async function triageDirectory({
                       },
                       stream: true,
                     });
+                    await saveText('response', attemptNum, reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
                       batch,
@@ -575,6 +596,7 @@ export async function triageDirectory({
         contextPath,
         fieldNotes,
         verbose,
+        saveIo,
         workers,
         verbosity,
         reasoningEffort,

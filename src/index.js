@@ -61,7 +61,11 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option("--field-notes", "Enable field notes workflow")
-  .option("-v, --verbose", "Store prompts and responses for debugging")
+  .option("-v, --verbose", "Print extra logs")
+  .option(
+    "--save-io",
+    "Save full prompts and responses for debugging"
+  )
   .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
@@ -81,6 +85,7 @@ let {
   parallel,
   fieldNotes,
   verbose,
+  saveIo,
   workers,
   verbosity,
   reasoningEffort,
@@ -168,6 +173,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       contextPath,
       fieldNotes,
       verbose,
+      saveIo,
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
