@@ -12,10 +12,11 @@ vi.mock("../src/chatClient.js", async () => {
   return {
     ...actual,
     chatCompletion: vi.fn(),
+    getPeople: vi.fn().mockResolvedValue([]),
   };
 });
 
-import { chatCompletion } from "../src/chatClient.js";
+import { chatCompletion, getPeople } from "../src/chatClient.js";
 import { triageDirectory } from "../src/orchestrator.js";
 
 let tmpDir;
@@ -199,6 +200,35 @@ describe("triageDirectory", () => {
       "utf8"
     );
     expect(respTxt).toContain("1.jpg");
+  });
+
+  it("includes additional curators from tags in saved prompt", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    getPeople
+      .mockResolvedValueOnce(["Alice", "Bob"])
+      .mockResolvedValueOnce(["Alice"]);
+    await fs.writeFile(promptFile, "Curators: {{curators}}");
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      saveIo: true,
+      curators: ["Bob"],
+    });
+    const levelDir = path.join(tmpDir, "_level-001");
+    const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
+    const promptTxt = await fs.readFile(
+      path.join(levelDir, "_prompts", prompts[0]),
+      "utf8"
+    );
+    expect(promptTxt).toContain("Curators: Bob, Alice");
+    expect(chatCompletion.mock.calls[0][0].curators).toEqual([
+      "Bob",
+      "Alice",
+    ]);
   });
 
   it('repairs zero-decision batch', async () => {

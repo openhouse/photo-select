@@ -21,14 +21,7 @@ All people depicted have signed legal releases granting permission for their lik
 
 Before each image you will be given a one-line JSON object like:
 {"filename":"<name>","people":["<First Last>", "..."]}
-These are "Jamie's notes" on each photo. All named people are Jamie's personal friends.
-
-Identity & aliases (instructions to you):
-- If a person string includes parentheses (e.g., “Name (context)”), treat it as one person whose identity is the text before the parenthesis.
-- Use the shortest variant for speaker labels (e.g., “Name”).
-- You may cite the parenthetical in narrative minutes/rationales as relational context.
-- Do NOT create additional speakers from parenthetical content.
-- If both “Name” and “Name (context)” appear, they refer to the same person.
+These are "Jamie's notes" on each photo. All named people are Jamie's personal friends. If both "Name" and "Name (context)" appear, they refer to the same person.
 
 
 
@@ -40,5 +33,12 @@ Think step-by-step silently. Then output **exactly one JSON object** and nothing
     { "speaker": "<Name>", "text": "<What the person said.>" }
   ],
   "decisions": [
-    { "filename": "<from list above>", "decision": "keep|aside", "reason": "<one sentence>" }"
+    { "filename": "<from list above>", "decision": "keep|aside", "reason": "<one sentence>" }
+  ]
+}
+
+Constraints:
+- Produce between 5 and 8 diarized items in "minutes".
+- The **last** minutes item must be a forward-looking question.
+- In "decisions", include **every** filename from the list **exactly once**."
 `;

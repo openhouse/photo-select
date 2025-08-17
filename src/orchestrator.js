@@ -6,10 +6,12 @@ import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
-import { parseReply } from "./chatClient.js";
+import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
+import { sanitizePeople } from "./lib/people.js";
+import { finalizeCurators } from "./core/finalizeCurators.js";
 
 const exec = promisify(execFile);
 
@@ -382,8 +384,20 @@ export async function triageDirectory({
                   }
                 };
 
+                const photos = [];
+                for (const file of batch) {
+                  const name = path.basename(file);
+                  const people = sanitizePeople(await getPeople(name));
+                  photos.push({ file: name, people });
+                }
+                const { finalCurators, added } = finalizeCurators(curators, photos);
+                if (added.length) {
+                  log(
+                    `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
+                  );
+                }
                 const first = await buildPrompt(promptPath, {
-                  curators,
+                  curators: finalCurators,
                   contextPath,
                   images: batch,
                   hasFieldNotes: false,
@@ -396,7 +410,7 @@ export async function triageDirectory({
                   prompt: first.prompt,
                   images: batch,
                   model,
-                  curators,
+                  curators: finalCurators,
                   verbosity,
                   reasoningEffort,
                   minutesMin: first.minutesMin,
@@ -416,7 +430,7 @@ export async function triageDirectory({
                   attempts++;
                   if (attempts <= maxStreak) {
                     const repair = [
-                      `role play as ${curators.join(", ")}:\n - inidicate who is speaking\n - say what you think`,
+                      `role play as ${finalCurators.join(", ")}:\n - inidicate who is speaking\n - say what you think`,
                       "You are continuing the same curatorial session.",
                       "Return only the block below. No minutes, no commentary.",
                       "",
@@ -433,7 +447,7 @@ export async function triageDirectory({
                       prompt: repair,
                       images: batch,
                       model,
-                      curators,
+                      curators: finalCurators,
                       verbosity: "low",
                       reasoningEffort,
                       minutesMin: 0,

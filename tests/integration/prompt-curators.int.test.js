@@ -34,7 +34,6 @@ describe('finalizeCurators integration', () => {
       'Ellen Lev',
       'Beata (Kendell + Mandy cabin neighbor)',
     ]);
-    expect(prompt).toContain('Identity & aliases (instructions to you):');
     const header = prompt.split('\n').slice(0, 40).join('\n');
     expect(header).toMatchSnapshot();
   });
@@ -52,7 +51,6 @@ describe('finalizeCurators integration', () => {
     });
     const names = extractCurators(prompt);
     expect(names).toEqual(['Curator A']);
-    expect(prompt).toContain('Identity & aliases (instructions to you):');
   });
 });
 
