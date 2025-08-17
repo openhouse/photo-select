@@ -1,9 +1,12 @@
 // src/core/finalizeCurators.js
 import { buildPrompt } from '../templates.js';
+<<<<<<< HEAD
+=======
 import { isPlaceholder } from '../lib/people.js';
 
 const IDENTITY_POLICY =
   process.env.PHOTO_SELECT_IDENTITY_POLICY || 'passthrough';
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 
 const HYPHENS = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
 
@@ -32,6 +35,60 @@ function cleanName(name) {
   return out.trim();
 }
 
+<<<<<<< HEAD
+export function finalizeCurators(cliCurators = [], photos = [], { aliasMap = {} } = {}) {
+  const alias = new Map();
+  for (const [k, v] of Object.entries(aliasMap)) {
+    alias.set(cleanName(k).toLowerCase(), cleanName(v));
+  }
+  const canonical = (raw) => {
+    if (!raw) return '';
+    let c = cleanName(raw);
+    const key = c.toLowerCase();
+    if (alias.has(key)) c = alias.get(key);
+    return c;
+  };
+
+  const cliSet = new Set();
+  const finalCurators = [];
+  for (const raw of cliCurators) {
+    const c = canonical(raw);
+    if (!c) continue;
+    const key = c.toLowerCase();
+    if (cliSet.has(key)) continue;
+    cliSet.add(key);
+    finalCurators.push(c);
+  }
+
+  const counts = new Map();
+  const lastIdx = new Map();
+  photos.forEach((p, idx) => {
+    for (const person of p.people || []) {
+      const c = canonical(person);
+      if (!c) continue;
+      counts.set(c, (counts.get(c) || 0) + 1);
+      lastIdx.set(c, idx);
+    }
+  });
+  const repeats = [...counts.entries()]
+    .filter(([, c]) => c >= 2)
+    .map(([n]) => n);
+  repeats.sort((a, b) => {
+    const la = lastIdx.get(a) ?? -1;
+    const lb = lastIdx.get(b) ?? -1;
+    if (la !== lb) return lb - la;
+    return a.localeCompare(b);
+  });
+  const added = [];
+  for (const n of repeats) {
+    const key = n.toLowerCase();
+    if (cliSet.has(key)) continue;
+    cliSet.add(key);
+    finalCurators.push(n);
+    added.push(n);
+  }
+  return { finalCurators, added };
+=======
 /**
  * Pass-through identity policy (default):
  * - Do not rewrite names (keep punctuation/parentheses).
@@ -121,6 +178,7 @@ export function finalizeCurators(
     .map(([name]) => name);
 
   return { finalCurators: final.concat(extras), added: extras };
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 }
 
 export async function buildFinalPrompt({
@@ -138,4 +196,7 @@ export async function buildFinalPrompt({
   });
   return { prompt, minutesMin, minutesMax, finalCurators };
 }
+<<<<<<< HEAD
+=======
 
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc

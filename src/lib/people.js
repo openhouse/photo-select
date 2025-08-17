@@ -8,17 +8,7 @@ export function isPlaceholder(name) {
 }
 
 export function sanitizePeople(input) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of Array.isArray(input) ? input : []) {
-    if (raw == null) continue;
-    const s = String(raw).trim();
-    if (!s) continue;
-    if (isPlaceholder(s)) continue;
-    if (!seen.has(s)) {
-      seen.add(s);
-      out.push(s);
-    }
-  }
-  return out;
+  return (Array.isArray(input) ? input : [])
+    .map((raw) => (raw == null ? '' : String(raw).trim()))
+    .filter((s) => s.length > 0 && !isPlaceholder(s));
 }

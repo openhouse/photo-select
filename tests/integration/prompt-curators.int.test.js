@@ -10,53 +10,49 @@ function extractCurators(text) {
 }
 
 describe('finalizeCurators integration', () => {
-  it('appends repeated names in back-to-front order', async () => {
-    const cli = ['Kathy Ryan', 'Teju Cole'];
+  it('appends repeated names verbatim and orders by last appearance', async () => {
+    const cli = ['Beata'];
     const photos = [
-      { file: 'a.jpg', people: ['Ray Harbin', 'Ellen Lev'] },
-      { file: 'b.jpg', people: ['Ray Harbin', 'Mandy Steinback'] },
-      { file: 'c.jpg', people: [' Ellen  Lev '] },
-      { file: 'd.jpg', people: ['George Markward'] },
+      {
+        file: 'a.jpg',
+        people: ['Beata (Kendell + Mandy cabin neighbor)', 'Ellen Lev'],
+      },
+      {
+        file: 'b.jpg',
+        people: ['Beata (Kendell + Mandy cabin neighbor)', 'Ray Harbin'],
+      },
+      { file: 'c.jpg', people: ['Ellen Lev'] },
     ];
-    const { prompt } = await buildFinalPrompt({ cliCurators: cli, photos, images: photos.map((p) => p.file) });
+    const { prompt } = await buildFinalPrompt({
+      cliCurators: cli,
+      photos,
+      images: photos.map((p) => p.file),
+    });
     const names = extractCurators(prompt);
-    expect(names).toEqual(['Kathy Ryan', 'Teju Cole', 'Ellen Lev', 'Ray Harbin']);
-    expect(names.every((n) => n.trim() === n && n)).toBe(true);
+    expect(names).toEqual([
+      'Beata',
+      'Ellen Lev',
+      'Beata (Kendell + Mandy cabin neighbor)',
+    ]);
+    expect(prompt).toContain('Identity & aliases (instructions to you):');
     const header = prompt.split('\n').slice(0, 40).join('\n');
     expect(header).toMatchSnapshot();
   });
 
-  it('falls back to CLI curators when no repeats', async () => {
+  it('ignores placeholders and falls back to CLI curators when no repeats', async () => {
     const cli = ['Curator A'];
     const photos = [
-      { file: 'a.jpg', people: ['Alice'] },
-      { file: 'b.jpg', people: ['Bob'] },
+      { file: 'a.jpg', people: ['_UNKNOWN_', 'Alice'] },
+      { file: 'b.jpg', people: ['unknown #2', 'Bob'] },
     ];
-    const { prompt } = await buildFinalPrompt({ cliCurators: cli, photos, images: photos.map((p) => p.file) });
+    const { prompt } = await buildFinalPrompt({
+      cliCurators: cli,
+      photos,
+      images: photos.map((p) => p.file),
+    });
     const names = extractCurators(prompt);
     expect(names).toEqual(['Curator A']);
-  });
-
-  it('coalesces hyphen and whitespace variants', async () => {
-    const cli = [];
-    const photos = [
-      { file: 'a.jpg', people: ['Mary - Jane'] },
-      { file: 'b.jpg', people: ['Mary‑Jane'] },
-    ];
-    const { prompt } = await buildFinalPrompt({ cliCurators: cli, photos, images: photos.map((p) => p.file) });
-    const names = extractCurators(prompt);
-    expect(names).toEqual(['Mary-Jane']);
-  });
-
-  it('applies alias map before counting', async () => {
-    const cli = [];
-    const photos = [
-      { file: 'a.jpg', people: ['Ray Harbineued'] },
-      { file: 'b.jpg', people: ['Ray Harbin'] },
-    ];
-    const aliasMap = { 'Ray Harbineued': 'Ray Harbin' };
-    const { prompt } = await buildFinalPrompt({ cliCurators: cli, photos, images: photos.map((p) => p.file), aliasMap });
-    const names = extractCurators(prompt);
-    expect(names).toEqual(['Ray Harbin']);
+    expect(prompt).toContain('Identity & aliases (instructions to you):');
   });
 });
+

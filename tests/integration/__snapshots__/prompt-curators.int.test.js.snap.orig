@@ -1,21 +1,37 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+<<<<<<< HEAD
+exports[`finalizeCurators integration > appends repeated names in back-to-front order 1`] = `
+"
+You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
+
+Role play as Kathy Ryan, Teju Cole, Ellen Lev, Ray Harbin:
+=======
 exports[`finalizeCurators integration > appends repeated names verbatim and orders by last appearance 1`] = `
 "
 You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
 
 Role play as Beata, Ellen Lev, Beata (Kendell + Mandy cabin neighbor):
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
  - Indicate who is speaking
  - Say what you think
 
 Session participants:
+<<<<<<< HEAD
+- Curators: Kathy Ryan, Teju Cole, Ellen Lev, Ray Harbin
+=======
 - Curators: Beata, Ellen Lev, Beata (Kendell + Mandy cabin neighbor)
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 - Facilitator: Jamie
 
 You will review the following image files (use *only* these filenames when forming decisions):
 - a.jpg
 - b.jpg
 - c.jpg
+<<<<<<< HEAD
+- d.jpg
+=======
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 
 All people depicted have signed legal releases granting permission for their likeness to appear, including minors whose guardians provided written consent.
 
@@ -23,6 +39,8 @@ Before each image you will be given a one-line JSON object like:
 {"filename":"<name>","people":["<First Last>", "..."]}
 These are "Jamie's notes" on each photo. All named people are Jamie's personal friends.
 
+<<<<<<< HEAD
+=======
 Identity & aliases (instructions to you):
 - If a person string includes parentheses (e.g., “Name (context)”), treat it as one person whose identity is the text before the parenthesis.
 - Use the shortest variant for speaker labels (e.g., “Name”).
@@ -30,6 +48,7 @@ Identity & aliases (instructions to you):
 - Do NOT create additional speakers from parenthetical content.
 - If both “Name” and “Name (context)” appear, they refer to the same person.
 
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 
 
 
@@ -40,5 +59,15 @@ Think step-by-step silently. Then output **exactly one JSON object** and nothing
     { "speaker": "<Name>", "text": "<What the person said.>" }
   ],
   "decisions": [
+<<<<<<< HEAD
+    { "filename": "<from list above>", "decision": "keep|aside", "reason": "<one sentence>" }
+  ]
+}
+
+Constraints:
+- Produce between 6 and 10 diarized items in "minutes".
+- The **last** minutes item must be a forward-looking question."
+=======
     { "filename": "<from list above>", "decision": "keep|aside", "reason": "<one sentence>" }"
+>>>>>>> ad4ae9dcb2582761e7001766714a5831c005b5fc
 `;
