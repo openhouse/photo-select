@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { batchStore } from "./batchContext.js";
+import { sanitizePeople, isPlaceholder } from "./lib/people.js";
 import { delay } from "./config.js";
 import { scheduler } from "./scheduler.js";
 import {
@@ -232,9 +233,8 @@ export async function curatorsFromTags(files) {
       counts.set(person, (counts.get(person) || 0) + 1);
     }
   }
-  const banned = new Set(["_UNKNOWN_"]);
   return [...counts.entries()]
-    .filter(([n, c]) => c > 1 && !banned.has(n))
+    .filter(([n, c]) => c > 1)
     .map(([n]) => n);
 }
 
@@ -381,10 +381,17 @@ export async function buildMessages(prompt, images, curators = []) {
     const base64 = buffer.toString("base64");
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
-    const people = await getPeople(name);
-    const info = people.length
-      ? { filename: name, people }
-      : { filename: name };
+    const peopleRaw = await getPeople(name);
+    const people = sanitizePeople(peopleRaw);
+    const dropped = peopleRaw.filter((p) => isPlaceholder(p));
+    if (dropped.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
+      const ctx = batchStore.getStore();
+      const prefix = ctx?.batch ? `Batch ${ctx.batch} ` : "";
+      console.log(
+        `⚠️  ${prefix}dropped placeholder people tags for ${name}: ${dropped.join(", ")}`
+      );
+    }
+    const info = people.length ? { filename: name, people } : { filename: name };
     userImageParts.push(
       { type: "text", text: JSON.stringify(info) },
       {
@@ -425,10 +432,17 @@ export async function buildInput(prompt, images, curators = []) {
     const base64 = buffer.toString("base64");
     const name = path.basename(file);
     const ext = path.extname(file).slice(1) || "jpeg";
-    const people = await getPeople(name);
-    const info = people.length
-      ? { filename: name, people }
-      : { filename: name };
+    const peopleRaw = await getPeople(name);
+    const people = sanitizePeople(peopleRaw);
+    const dropped = peopleRaw.filter((p) => isPlaceholder(p));
+    if (dropped.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
+      const ctx = batchStore.getStore();
+      const prefix = ctx?.batch ? `Batch ${ctx.batch} ` : "";
+      console.log(
+        `⚠️  ${prefix}dropped placeholder people tags for ${name}: ${dropped.join(", ")}`
+      );
+    }
+    const info = people.length ? { filename: name, people } : { filename: name };
     imageParts.push(
       { type: "input_text", text: JSON.stringify(info) },
       {
@@ -490,9 +504,18 @@ export async function chatCompletion({
   const effortForTokens = effort || "low";
 
   const clean = (n) => n.replace(/^and\s+/i, "").trim();
-  const extras = (await curatorsFromTags(images)).map(clean);
+  const rawExtras = (await curatorsFromTags(images)).map(clean);
+  const extras = sanitizePeople(rawExtras);
   const baseCurators = curators.map(clean);
   const added = extras.filter((n) => !baseCurators.includes(n));
+  const droppedExtras = rawExtras.filter((n) => isPlaceholder(n));
+  if (droppedExtras.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
+    const ctx = batchStore.getStore();
+    const prefix = ctx?.batch ? `Batch ${ctx.batch} ` : "";
+    console.log(
+      `⚠️  ${prefix}dropped placeholder people tags from curators: ${droppedExtras.join(", ")}`
+    );
+  }
   const finalCurators = Array.from(new Set([...baseCurators, ...extras]));
   if (added.length) {
     const info = batchStore.getStore();

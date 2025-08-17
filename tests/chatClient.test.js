@@ -320,13 +320,14 @@ describe("curatorsFromTags", () => {
     expect(names).toContain("Alice");
   });
 
-  it("filters placeholder names", async () => {
-    const imgs = ["/tmp/y1.jpg", "/tmp/y2.jpg"];
+  it("may return placeholders which callers must filter", async () => {
+    const imgs = ["/tmp/z1.jpg", "/tmp/z2.jpg"];
+    global.fetch.mockReset();
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) });
     const names = await curatorsFromTags(imgs);
-    expect(names).toHaveLength(0);
+    expect(names).toContain("_UNKNOWN_");
     global.fetch.mockReset();
   });
 });
@@ -469,17 +470,18 @@ describe("chatCompletion", () => {
 
   it("logs additional curators from tags", async () => {
     vi.resetModules();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const { chatCompletion } = await import("../src/chatClient.js");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-cur-"));
     const img1 = path.join(dir, "1.jpg");
     const img2 = path.join(dir, "2.jpg");
     await fs.writeFile(img1, "a");
     await fs.writeFile(img2, "b");
+    global.fetch.mockReset();
     global.fetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["Alice"] }) });
     chatSpy.mockResolvedValueOnce({ choices: [{ message: { content: "{}" } }] });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     await chatCompletion({
       prompt: "p {{curators}}",
       images: [img1, img2],
