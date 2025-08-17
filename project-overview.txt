@@ -1405,7 +1405,8 @@ through to the script unchanged.
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
-| `--verbose` | `false` | Print extra logs and save prompts/responses |
+| `--verbose` | `false` | Print extra logs |
+| `--save-io` | `false` | Save prompts and responses for debugging |
 | `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
 
 When `--field-notes` is enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message. During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
@@ -3854,7 +3855,11 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option("--field-notes", "Enable field notes workflow")
-  .option("-v, --verbose", "Store prompts and responses for debugging")
+  .option("-v, --verbose", "Print extra logs")
+  .option(
+    "--save-io",
+    "Save full prompts and responses for debugging"
+  )
   .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
