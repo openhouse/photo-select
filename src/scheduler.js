@@ -22,8 +22,13 @@ class Semaphore {
   }
   release() {
     this.inUse = Math.max(0, this.inUse - 1);
-    const next = this.q.shift();
-    if (next) next();
+    this._drain();
+  }
+  _drain() {
+    while (this.inUse < this.max && this.q.length) {
+      const next = this.q.shift();
+      if (next) next();
+    }
   }
 }
 
@@ -165,6 +170,23 @@ export class TokenScheduler {
       );
     }
     return this.models.get(model);
+  }
+
+  setConcurrency(n) {
+    if (Number.isFinite(n) && n >= 0) {
+      this.sem.max = n;
+      this.sem._drain();
+    }
+  }
+
+  getConcurrency() {
+    return this.sem.max;
+  }
+
+  async waitForIdle(interval = 50) {
+    while (this.sem.inUse > 0) {
+      await sleep(interval);
+    }
   }
 
   /** Reserve concurrency + RPM + TPM (based on estimated tokens). */

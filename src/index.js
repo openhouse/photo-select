@@ -6,7 +6,8 @@ import "./errorHandler.js";
 import { Command } from "commander";
 import path from "node:path";
 import { DEFAULT_PROMPT_PATH } from "./templates.js";
-import { configureHttpFromEnv } from "./net.js";
+import { configureHttpFromEnv, closeDispatcher } from "./net.js";
+import { scheduler } from "./scheduler.js";
 
 const program = new Command();
 program
@@ -71,6 +72,11 @@ program
     "Number of worker processes (each runs batches sequentially)",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option(
+    "--concurrency <n>",
+    "Maximum in-flight OpenAI requests",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
   .parse(process.argv);
 
 let {
@@ -90,6 +96,7 @@ let {
   verbosity,
   reasoningEffort,
   ollamaBaseUrl,
+  concurrency: concurrencyFlag,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -99,10 +106,23 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
 }
 if (!workers) workers = 1;
 
+const envConc = Number(process.env.CONCURRENCY);
+const envWorkers = Number(process.env.WORKERS);
+if (!workers && Number.isFinite(envWorkers)) workers = envWorkers;
+let concurrency = Number.isFinite(envConc)
+  ? envConc
+  : Number.isFinite(concurrencyFlag)
+  ? concurrencyFlag
+  : workers;
+if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+
 // Scale transport, filesystem, and batching with worker count
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 const maxSockets = clamp(workers * 2 + 2, 8, 64);
 const maxFreeSockets = clamp(Math.ceil(maxSockets / 2), 4, 32);
+process.env.UNDICI_CONNECTIONS = String(maxSockets);
+process.env.UNDICI_KEEPALIVE_MS = "10000";
+process.env.UNDICI_FREE_TIMEOUT_MS = "60000";
 process.env.PHOTO_SELECT_MAX_SOCKETS = String(maxSockets);
 process.env.PHOTO_SELECT_MAX_FREE_SOCKETS = String(maxFreeSockets);
 process.env.PHOTO_SELECT_KEEPALIVE_MS = "10000";
@@ -118,6 +138,25 @@ process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
 process.env.PHOTO_SELECT_BUMP_TOKENS = String(
   Math.min(4000 + 500 * (workers - 1), 8000)
 );
+
+const undiciConnections = Number(process.env.UNDICI_CONNECTIONS) || maxSockets;
+scheduler.setConcurrency(Math.min(concurrency, undiciConnections));
+console.log(
+  `⚙️  workers=${workers} concurrency=${concurrency} undici_connections=${undiciConnections}`
+);
+
+let shuttingDown = false;
+async function handleSignal(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n🛑  received ${sig}, shutting down…`);
+  scheduler.setConcurrency(0);
+  await scheduler.waitForIdle().catch(() => {});
+  await closeDispatcher().catch(() => {});
+  process.exit(0);
+}
+process.on('SIGINT', handleSignal);
+process.on('SIGTERM', handleSignal);
 
 // Early bootstrap log (helps confirm the process is alive).
 if (process.env.PHOTO_SELECT_VERBOSE === '1') {

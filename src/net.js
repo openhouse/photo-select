@@ -29,11 +29,11 @@ export async function configureHttpFromEnv() {
       ({ Agent, setGlobalDispatcher } = await import('undici'));
     }
 
-    const connections = num('PHOTO_SELECT_MAX_SOCKETS', 8);
-    const keepAliveTimeout = num('PHOTO_SELECT_KEEPALIVE_MS', 10_000);
-    const keepAliveMaxTimeout = num('PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS', 60_000);
-    const bodyTimeout = num('PHOTO_SELECT_TIMEOUT_MS', 600_000);
-    const headersTimeout = bodyTimeout;
+    const connections = num('UNDICI_CONNECTIONS', num('PHOTO_SELECT_MAX_SOCKETS', 8));
+    const keepAliveTimeout = num('UNDICI_KEEPALIVE_MS', 10_000);
+    const keepAliveMaxTimeout = num('UNDICI_FREE_TIMEOUT_MS', 60_000);
+    const bodyTimeout = num('UNDICI_BODY_TIMEOUT_MS', num('PHOTO_SELECT_TIMEOUT_MS', 300_000));
+    const headersTimeout = num('UNDICI_HEADERS_TIMEOUT_MS', 60_000);
 
     setGlobalDispatcher(new Agent({
       connections,
@@ -52,4 +52,28 @@ export async function configureHttpFromEnv() {
     console.warn('⚠️  HTTP: failed to configure undici dispatcher; continuing with defaults:', e?.message || e);
     return false;
   }
+}
+
+export async function drain(err) {
+  const res = err?.response;
+  if (!res?.body?.getReader) return;
+  try {
+    const reader = res.body.getReader();
+    while (!(await reader.read()).done) {}
+  } catch {}
+}
+
+export async function closeDispatcher() {
+  try {
+    let getGlobalDispatcher;
+    try {
+      const { createRequire } = await import('node:module');
+      const require = createRequire(import.meta.url);
+      ({ getGlobalDispatcher } = require('undici'));
+    } catch {
+      ({ getGlobalDispatcher } = await import('undici'));
+    }
+    const dispatcher = getGlobalDispatcher();
+    await dispatcher.close();
+  } catch {}
 }
