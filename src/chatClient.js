@@ -14,6 +14,8 @@ import {
   estimateInputTokens,
 } from "./tokenEstimate.js";
 import { enforceEffortGuard } from "./effortGuard.js";
+import { getSurrogateImage } from "./imagePreprocessor.js";
+import { drain } from "./net.js";
 
 function numEnv(name, fallback) {
   const v = process.env[name];
@@ -184,24 +186,6 @@ async function extractTextWithLogging(rsp) {
   return { text, json, hasMessage };
 }
 
-async function readFileSafe(file, attempt = 0, maxAttempts = 3) {
-  try {
-    return await readFile(file);
-  } catch (err) {
-    if (err?.code === "ECANCELED") {
-      if (attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`read canceled for ${file}. Retrying in ${wait}ms…`);
-        await delay(wait);
-        return readFileSafe(file, attempt + 1, maxAttempts);
-      }
-      console.warn(`⚠️  Skipping unreadable file ${file}`);
-      return null;
-    }
-    throw err;
-  }
-}
-
 export async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
   try {
@@ -217,6 +201,7 @@ export async function getPeople(filename) {
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
+    await drain(err);
     const msg = err?.message || err?.code || "unknown error";
     console.warn(`\u26A0\uFE0F  metadata fetch failed for ${filename}: ${msg}`);
     peopleCache.set(filename, []);
@@ -376,8 +361,12 @@ export async function buildMessages(prompt, images, curators = []) {
   const userImageParts = [];
   for (const file of images) {
     const abs = path.resolve(file);
-    const buffer = await readFileSafe(abs);
-    if (!buffer) continue;
+    let buffer;
+    try {
+      buffer = await getSurrogateImage(abs);
+    } catch {
+      continue;
+    }
     used.push(file);
     const base64 = buffer.toString("base64");
     const name = path.basename(file);
@@ -427,8 +416,12 @@ export async function buildInput(prompt, images, curators = []) {
   const imageParts = [];
   for (const file of images) {
     const abs = path.resolve(file);
-    const buffer = await readFileSafe(abs);
-    if (!buffer) continue;
+    let buffer;
+    try {
+      buffer = await getSurrogateImage(abs);
+    } catch {
+      continue;
+    }
     used.push(file);
     const base64 = buffer.toString("base64");
     const name = path.basename(file);
@@ -636,6 +629,7 @@ export async function chatCompletion({
             estTokens;
           scheduler.commit(handle, actual);
         } catch (e) {
+          await drain(e);
           scheduler.cancel(handle);
           throw e;
         }
@@ -663,6 +657,7 @@ export async function chatCompletion({
               estTokens2;
             scheduler.commit(handle2, actual2);
           } catch (e) {
+            await drain(e);
             scheduler.cancel(handle2);
             throw e;
           }
@@ -753,6 +748,7 @@ export async function chatCompletion({
           scheduler.commit(handle, actual);
         }
       } catch (e) {
+        await drain(e);
         scheduler.cancel(handle);
         throw e;
       }
@@ -760,6 +756,7 @@ export async function chatCompletion({
       onProgress("done");
       return text;
     } catch (err) {
+      await drain(err);
       const msg = String(err?.error?.message || err?.message || "");
       const code = err?.code || err?.cause?.code;
       const isNetwork =
@@ -848,6 +845,7 @@ export async function chatCompletion({
             estTokens;
           scheduler.commit(handle, actual);
         } catch (e) {
+          await drain(e);
           scheduler.cancel(handle);
           throw e;
         }
@@ -875,6 +873,7 @@ export async function chatCompletion({
               estTokens2;
             scheduler.commit(handle2, actual2);
           } catch (e) {
+            await drain(e);
             scheduler.cancel(handle2);
             throw e;
           }

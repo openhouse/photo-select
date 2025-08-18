@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 
 vi.mock("../src/config.js", () => ({ delay: vi.fn() }));
 
@@ -29,6 +30,14 @@ vi.mock("openai", () => {
     NotFoundError: MockNotFoundError,
   };
 });
+
+async function makeImg(fp) {
+  await sharp({
+    create: { width: 2, height: 2, channels: 3, background: { r: 0, g: 0, b: 0 } },
+  })
+    .jpeg()
+    .toFile(fp);
+}
 
 let parseReply,
   buildMessages,
@@ -256,8 +265,8 @@ describe("buildMessages", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-msg-"));
     const img1 = path.join(dir, "1.jpg");
     const img2 = path.join(dir, "2.jpg");
-    await fs.writeFile(img1, "a");
-    await fs.writeFile(img2, "b");
+    await makeImg(img1);
+    await makeImg(img2);
     const { messages } = await buildMessages("prompt", [img1, img2]);
     const [, user] = messages;
     expect(JSON.parse(user.content[1].text)).toEqual({ filename: "1.jpg" });
@@ -268,7 +277,7 @@ describe("buildMessages", () => {
   it("includes people names when available", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-msg-"));
     const img1 = path.join(dir, "a.jpg");
-    await fs.writeFile(img1, "a");
+    await makeImg(img1);
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: ["Alice", "Bob"] }),
@@ -286,7 +295,7 @@ describe("buildInput", () => {
   it("labels each image before the encoded data", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-in-"));
     const img1 = path.join(dir, "1.jpg");
-    await fs.writeFile(img1, "a");
+    await makeImg(img1);
     const { input } = await buildInput("prompt", [img1]);
     const meta = JSON.parse(input[0].content[1].text);
     expect(meta).toEqual({ filename: "1.jpg" });
@@ -296,7 +305,7 @@ describe("buildInput", () => {
   it("includes people names when available", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-in-"));
     const img1 = path.join(dir, "a.jpg");
-    await fs.writeFile(img1, "a");
+    await makeImg(img1);
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: ["Alice", "Bob"] }),

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 
 vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
 vi.mock('openai', () => ({ OpenAI: vi.fn(() => ({})), NotFoundError: class {} }));
@@ -20,7 +21,11 @@ describe('prompt people sanitization', () => {
   it('filters placeholder people from notes', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ps-prompt-'));
     const img = path.join(dir, 'A.jpg');
-    await fs.writeFile(img, 'a');
+    await sharp({
+      create: { width: 2, height: 2, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    })
+      .jpeg()
+      .toFile(img);
     global.fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ data: ['_UNKNOWN_', 'Olivia J Mann'] }),
