@@ -345,6 +345,20 @@ The following vision models are known to work:
 
 Specify one with `--provider ollama --model <tag>`.
 
+### Getting started with local models
+
+1. [Install Ollama](https://ollama.com/download) and launch the background
+   service (`ollama serve` on the command line or the desktop app on macOS).
+2. Pull the model you want to use. For example, `ollama pull qwen2.5vl:72b`.
+   The first download can take a while—wait until the command finishes before
+   starting Photo‑Select.
+3. Run `photo-select` with `--provider ollama --model <tag>`. If Ollama is
+   running on another machine, pass `--ollama-base-url http://host:11434` so
+   the CLI knows where to connect.
+
+When the CLI cannot reach Ollama it now prints the full remediation steps
+instead of a generic “fetch failed” message.
+
 ### Estimated costs
 
 The cost depends on the number of tokens generated from your images. Roughly
