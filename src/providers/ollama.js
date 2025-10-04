@@ -7,16 +7,72 @@ import path from 'node:path';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const client = new Ollama({ host: BASE_URL });
+const readinessCache = new Map();
 // Check for an environment override. When undefined we generate a JSON schema
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
 const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
 // Default to a long response (~32k tokens) matching the output limit of many
 // OpenAI models.
-const OLLAMA_NUM_PREDICT = Number.parseInt(
-  process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT,
-  10
-) || MAX_RESPONSE_TOKENS;
+const OLLAMA_NUM_PREDICT =
+  Number.parseInt(process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT, 10) ||
+  MAX_RESPONSE_TOKENS;
+
+function createConnectionHelpMessage(err) {
+  const hints = [
+    'Install Ollama from https://ollama.com/download if it is not already present.',
+    'Start the Ollama service with `ollama serve` or by launching the desktop app.',
+    'If the service runs on another machine, pass `--ollama-base-url http://host:11434` when invoking photo-select.'
+  ];
+  const parts = [
+    `Unable to reach Ollama at ${BASE_URL}.`,
+    err?.message ? `Original error: ${err.message}` : null,
+    'Steps to fix:',
+    ...hints.map((line) => `  • ${line}`),
+  ].filter(Boolean);
+  const error = new Error(parts.join('\n'));
+  error.cause = err;
+  return error;
+}
+
+function createMissingModelMessage(model) {
+  return [
+    `Model "${model}" is not available on the Ollama host (${BASE_URL}).`,
+    `Download it by running:`,
+    `  ollama pull ${model}`,
+  ].join('\n');
+}
+
+async function ensureModelReady(model) {
+  const cacheKey = `${BASE_URL}::${model}`;
+  if (!readinessCache.has(cacheKey)) {
+    const readiness = (async () => {
+      try {
+        await client.list();
+      } catch (err) {
+        throw createConnectionHelpMessage(err);
+      }
+
+      try {
+        await client.show({ model });
+      } catch (err) {
+        if (err?.name === 'ResponseError' && err?.status_code === 404) {
+          throw new Error(createMissingModelMessage(model));
+        }
+        throw err;
+      }
+    })();
+
+    readinessCache.set(cacheKey, readiness);
+  }
+
+  try {
+    await readinessCache.get(cacheKey);
+  } catch (err) {
+    readinessCache.delete(cacheKey);
+    throw err;
+  }
+}
 
 export default class OllamaProvider {
   async chat({
@@ -32,6 +88,8 @@ export default class OllamaProvider {
     minutesMin,
     minutesMax,
   } = {}) {
+    await ensureModelReady(model);
+
     let attempt = 0;
     while (true) {
       try {

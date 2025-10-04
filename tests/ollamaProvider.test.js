@@ -5,13 +5,18 @@ async function loadProvider() {
   return mod.default;
 }
 
-let chatMock;
 vi.hoisted(() => {
   globalThis.__chatMock = vi.fn(async () => ({ message: { content: 'ok' } }));
+  globalThis.__ollamaListMock = vi.fn(async () => ({}));
+  globalThis.__ollamaShowMock = vi.fn(async () => ({}));
 });
 
 vi.mock('ollama', () => ({
-  Ollama: vi.fn(() => ({ chat: globalThis.__chatMock })),
+  Ollama: vi.fn(() => ({
+    chat: globalThis.__chatMock,
+    list: globalThis.__ollamaListMock,
+    show: globalThis.__ollamaShowMock,
+  })),
 }));
 
 vi.mock('../src/chatClient.js', () => ({
@@ -40,6 +45,10 @@ describe('OllamaProvider', () => {
     vi.resetModules();
     delete process.env.PHOTO_SELECT_OLLAMA_FORMAT;
     globalThis.__chatMock.mockClear();
+    globalThis.__ollamaListMock.mockClear();
+    globalThis.__ollamaShowMock.mockClear();
+    globalThis.__ollamaListMock.mockResolvedValue({});
+    globalThis.__ollamaShowMock.mockResolvedValue({});
   });
 
   it('includes images within the user message', async () => {
@@ -50,6 +59,30 @@ describe('OllamaProvider', () => {
     const body = globalThis.__chatMock.mock.calls[0][0];
     expect(body.messages).toHaveLength(2);
     expect(body.messages[1].images).toEqual(['img.jpg']);
+  });
+
+  it('throws a helpful error when the Ollama daemon is unavailable', async () => {
+    const connectionError = new Error('fetch failed');
+    connectionError.cause = new Error('ECONNREFUSED');
+    globalThis.__ollamaListMock.mockRejectedValueOnce(connectionError);
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await expect(
+      provider.chat({ prompt: 'p', images: [], model: 'm' })
+    ).rejects.toThrow(/Unable to reach Ollama/);
+    expect(globalThis.__ollamaListMock).toHaveBeenCalled();
+  });
+
+  it('suggests pulling the model when it is missing', async () => {
+    const missingModelError = new Error('not found');
+    missingModelError.name = 'ResponseError';
+    missingModelError.status_code = 404;
+    globalThis.__ollamaShowMock.mockRejectedValueOnce(missingModelError);
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await expect(
+      provider.chat({ prompt: 'p', images: [], model: 'm' })
+    ).rejects.toThrow(/ollama pull m/);
   });
 
   it('saves the request payload when provided', async () => {
