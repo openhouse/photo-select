@@ -46,6 +46,18 @@ npm install
 chmod +x src/index.js    # fix permission error when running with npx
 ```
 
+### 4  Enable git hooks (optional but recommended)
+
+The repository ships with a pre-commit hook that blocks conflict markers and
+filenames ending in `.orig` or containing a space before `.js`. Opt in once per
+clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+You can disable it later with `git config --unset core.hooksPath`.
+
 Invoke the CLI from the project directory using `npx`:
 
 ```bash

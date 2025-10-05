@@ -17,6 +17,102 @@ const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
 const OLLAMA_NUM_PREDICT =
   Number.parseInt(process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT, 10) ||
   MAX_RESPONSE_TOKENS;
+const DEFAULT_HTTP_TIMEOUT_MS = 600_000;
+
+function resolveOllamaTimeoutMs() {
+  const candidates = [
+    process.env.OLLAMA_HTTP_TIMEOUT,
+    process.env.PHOTO_SELECT_TIMEOUT_MS,
+  ];
+  for (const raw of candidates) {
+    if (raw === undefined) continue;
+    const value = Number(raw);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return DEFAULT_HTTP_TIMEOUT_MS;
+}
+
+function formatError(err) {
+  if (!err) return 'unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return err.message;
+  if (err.cause) return formatError(err.cause);
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+async function chatWithTimeout(params, timeoutMs) {
+  const request = { ...params, stream: true };
+  let streamResponse;
+  try {
+    streamResponse = await client.chat(request);
+  } catch (err) {
+    throw err;
+  }
+
+  if (!streamResponse || typeof streamResponse[Symbol.asyncIterator] !== 'function') {
+    const direct = streamResponse?.message ? streamResponse : await client.chat(params);
+    return direct?.message?.content ?? '';
+  }
+
+  const stream = streamResponse;
+  let timedOut = false;
+  let timer;
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (typeof stream.abort === 'function') {
+        try {
+          stream.abort();
+        } catch {
+          // ignore abort errors
+        }
+      }
+    }, timeoutMs);
+  }
+
+  try {
+    let combined = '';
+    let snapshot = '';
+    let lastChunk;
+    for await (const chunk of stream) {
+      if (chunk?.message?.content && typeof chunk.message.content === 'string') {
+        const current = chunk.message.content;
+        if (snapshot && current.startsWith(snapshot)) {
+          combined += current.slice(snapshot.length);
+        } else if (!snapshot) {
+          combined += current;
+        } else {
+          combined += current;
+        }
+        snapshot = current;
+      }
+      lastChunk = chunk;
+    }
+
+    if (!combined && lastChunk?.message?.content && typeof lastChunk.message.content === 'string') {
+      combined = lastChunk.message.content;
+    }
+
+    return combined;
+  } catch (err) {
+    if (timedOut) {
+      const timeoutError = new Error(
+        `Ollama request exceeded ${timeoutMs}ms without completing. Increase OLLAMA_HTTP_TIMEOUT or PHOTO_SELECT_TIMEOUT_MS.`
+      );
+      timeoutError.cause = err;
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function createConnectionHelpMessage(err) {
   const hints = [
@@ -90,8 +186,10 @@ export default class OllamaProvider {
   } = {}) {
     await ensureModelReady(model);
 
+    const totalImages = Array.isArray(images) ? images.length : 0;
     let attempt = 0;
     while (true) {
+      const httpTimeoutMs = resolveOllamaTimeoutMs();
       try {
         onProgress('encoding');
         const { messages } = await buildMessages(prompt, images, curators);
@@ -149,12 +247,12 @@ export default class OllamaProvider {
           await savePayload(JSON.parse(JSON.stringify(params)));
         }
 
-        const data = await client.chat(params);
-        if (!data.message?.content) {
+        const content = await chatWithTimeout(params, httpTimeoutMs);
+        if (!content) {
           throw new Error('empty response');
         }
         onProgress('done');
-        return data.message.content;
+        return content;
       } catch (err) {
         if (process.env.PHOTO_SELECT_VERBOSE) {
           console.error('ollama fetch failure:', err);
@@ -162,7 +260,15 @@ export default class OllamaProvider {
         if (attempt >= maxRetries) throw err;
         attempt += 1;
         const wait = 2 ** attempt * 1000;
-        console.warn(`ollama error (${err.message}). Retrying in ${wait}ms…`);
+        const hint = [
+          `url=${BASE_URL}`,
+          `model=${model}`,
+          `images=${totalImages}`,
+          `timeout_ms=${httpTimeoutMs}`,
+          `attempt=${attempt}`,
+          `node=${process.version}`,
+        ].join(' ');
+        console.warn(`ollama error (${formatError(err)}). ${hint}. Retrying in ${wait}ms…`);
         await delay(wait);
       }
     }

@@ -180,6 +180,13 @@ if (ollamaBaseUrl) {
 
 const provider = providerName || 'openai';
 let finalModel = model;
+if (typeof finalModel === 'string' && finalModel.length > 0) {
+  const trimmed = finalModel.replace(/^\s+|\s+$/g, '').replace(/^['"]+|['"]+$/g, '');
+  if (trimmed !== finalModel) {
+    console.warn('[WARN] trimmed quotes from --model:', finalModel, '→', trimmed);
+    finalModel = trimmed;
+  }
+}
 if (!finalModel) {
   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
 }
