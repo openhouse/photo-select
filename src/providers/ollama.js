@@ -1,20 +1,20 @@
-import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
-import { delay } from '../config.js';
-import { buildReplySchema } from '../replySchema.js';
-import { parseFormatEnv } from '../formatOverride.js';
-import path from 'node:path';
-import { getSurrogateImage } from '../imagePreprocessor.js';
+import { buildMessages, MAX_RESPONSE_TOKENS } from "../chatClient.js";
+import { delay } from "../config.js";
+import { buildReplySchema } from "../replySchema.js";
+import { parseFormatEnv } from "../formatOverride.js";
+import path from "node:path";
+import { getSurrogateImage } from "../imagePreprocessor.js";
 
-const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const BASE_URL = process.env.OLLAMA_BASE_URL || "http://localhost:11434";
 const readinessCache = new Map();
-const CHAT_ENDPOINT = new URL('/api/chat', BASE_URL).toString();
-const TAGS_ENDPOINT = new URL('/api/tags', BASE_URL).toString();
-const SHOW_ENDPOINT = new URL('/api/show', BASE_URL).toString();
-const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '2h';
+const CHAT_ENDPOINT = new URL("/api/chat", BASE_URL).toString();
+const TAGS_ENDPOINT = new URL("/api/tags", BASE_URL).toString();
+const SHOW_ENDPOINT = new URL("/api/show", BASE_URL).toString();
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || "2h";
 // Check for an environment override. When undefined we generate a JSON schema
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
-const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
+const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv("PHOTO_SELECT_OLLAMA_FORMAT");
 // Default to a long response (~32k tokens) matching the output limit of many
 // OpenAI models.
 function parseInteger(value) {
@@ -55,8 +55,8 @@ function resolveOllamaTimeoutMs() {
 }
 
 function formatError(err) {
-  if (!err) return 'unknown error';
-  if (typeof err === 'string') return err;
+  if (!err) return "unknown error";
+  if (typeof err === "string") return err;
   if (err.message) return err.message;
   if (err.cause) return formatError(err.cause);
   try {
@@ -68,17 +68,17 @@ function formatError(err) {
 
 function createConnectionHelpMessage(err) {
   const hints = [
-    'Install Ollama from https://ollama.com/download if it is not already present.',
-    'Start the Ollama service with `ollama serve` or by launching the desktop app.',
-    'If the service runs on another machine, pass `--ollama-base-url http://host:11434` when invoking photo-select.'
+    "Install Ollama from https://ollama.com/download if it is not already present.",
+    "Start the Ollama service with `ollama serve` or by launching the desktop app.",
+    "If the service runs on another machine, pass `--ollama-base-url http://host:11434` when invoking photo-select.",
   ];
   const parts = [
     `Unable to reach Ollama at ${BASE_URL}.`,
     err?.message ? `Original error: ${err.message}` : null,
-    'Steps to fix:',
+    "Steps to fix:",
     ...hints.map((line) => `  • ${line}`),
   ].filter(Boolean);
-  const error = new Error(parts.join('\n'));
+  const error = new Error(parts.join("\n"));
   error.cause = err;
   return error;
 }
@@ -88,7 +88,7 @@ function createMissingModelMessage(model) {
     `Model "${model}" is not available on the Ollama host (${BASE_URL}).`,
     `Download it by running:`,
     `  ollama pull ${model}`,
-  ].join('\n');
+  ].join("\n");
 }
 
 async function ensureModelReady(model) {
@@ -96,7 +96,9 @@ async function ensureModelReady(model) {
   if (!readinessCache.has(cacheKey)) {
     const readiness = (async () => {
       try {
-        const res = await fetch(TAGS_ENDPOINT, { signal: AbortSignal.timeout?.(30_000) });
+        const res = await fetch(TAGS_ENDPOINT, {
+          signal: AbortSignal.timeout?.(30_000),
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         // Drain body to surface fetch errors; content unused.
         await res.arrayBuffer();
@@ -106,8 +108,8 @@ async function ensureModelReady(model) {
 
       try {
         const res = await fetch(SHOW_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model }),
         });
         if (res.status === 404) {
@@ -137,7 +139,7 @@ async function encodeMessageImages(messages) {
   if (!Array.isArray(messages)) return messages;
   const results = [];
   for (const message of messages) {
-    if (!message || typeof message !== 'object') {
+    if (!message || typeof message !== "object") {
       results.push(message);
       continue;
     }
@@ -148,7 +150,7 @@ async function encodeMessageImages(messages) {
         if (!file) continue;
         try {
           const buffer = await getSurrogateImage(path.resolve(file));
-          encoded.push(buffer.toString('base64'));
+          encoded.push(buffer.toString("base64"));
         } catch (err) {
           const msg = err?.message || err;
           console.warn(`⚠️  Failed to encode image ${file}: ${msg}`);
@@ -176,40 +178,42 @@ async function postChatRequest(params, timeoutMs) {
 
   try {
     const res = await fetch(CHAT_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
       signal: controller.signal,
     });
 
     if (!res.ok) {
-      let detail = '';
+      let detail = "";
       try {
         detail = await res.text();
       } catch {}
       const err = new Error(
-        `Ollama chat failed with HTTP ${res.status}${detail ? `: ${detail}` : ''}`
+        `Ollama chat failed with HTTP ${res.status}${
+          detail ? `: ${detail}` : ""
+        }`
       );
       err.status = res.status;
       throw err;
     }
 
     const raw = await res.text();
-    if (!raw) return '';
+    if (!raw) return "";
     try {
       const json = JSON.parse(raw);
       if (json?.message?.content) return json.message.content;
-      if (typeof json?.response === 'string') return json.response;
-      if (typeof json?.content === 'string') return json.content;
-      return '';
+      if (typeof json?.response === "string") return json.response;
+      if (typeof json?.content === "string") return json.content;
+      return "";
     } catch (err) {
-      const parseError = new Error('Failed to parse Ollama response as JSON');
+      const parseError = new Error("Failed to parse Ollama response as JSON");
       parseError.cause = err;
       parseError.responseText = raw;
       throw parseError;
     }
   } catch (err) {
-    if (err.name === 'AbortError') {
+    if (err.name === "AbortError") {
       const timeoutError = new Error(
         `Ollama request exceeded ${timeoutMs}ms without completing. Increase OLLAMA_HTTP_TIMEOUT or PHOTO_SELECT_TIMEOUT_MS.`
       );
@@ -243,7 +247,7 @@ export default class OllamaProvider {
     while (true) {
       const httpTimeoutMs = resolveOllamaTimeoutMs();
       try {
-        onProgress('encoding');
+        onProgress("encoding");
         const { messages } = await buildMessages(prompt, images, curators);
         const [system, user] = messages;
         const injectedText = system.content.trim();
@@ -253,8 +257,8 @@ export default class OllamaProvider {
         if (Array.isArray(user.content)) {
           let idx = 0;
           for (const part of user.content) {
-            if (part.type === 'text') textParts.push(part.text);
-            if (part.type === 'image_url') {
+            if (part.type === "text") textParts.push(part.text);
+            if (part.type === "image_url") {
               const file = images[idx++];
               if (file) imagePaths.push(file);
             }
@@ -262,11 +266,11 @@ export default class OllamaProvider {
         } else {
           textParts.push(String(user.content));
         }
-        user.content = textParts.join('\n');
+        user.content = textParts.join("\n");
         if (imagePaths.length) user.images = imagePaths;
         const finalMessages = [system, user];
         const encodedMessages = await encodeMessageImages(finalMessages);
-        onProgress('request');
+        onProgress("request");
 
         const params = {
           model,
@@ -276,7 +280,7 @@ export default class OllamaProvider {
           options: {
             num_predict: OLLAMA_NUM_PREDICT,
             num_ctx: OLLAMA_NUM_CTX,
-            num_keep: OLLAMA_NUM_KEEP,
+            // num_keep: OLLAMA_NUM_KEEP,
           },
         };
 
@@ -295,25 +299,25 @@ export default class OllamaProvider {
           });
         }
         if (format !== null) {
-          const isPlainJson = format === 'json';
+          const isPlainJson = format === "json";
           if (!(isPlainJson && imagePaths.length > 0)) {
             params.format = format;
           }
         }
 
-        if (typeof savePayload === 'function') {
+        if (typeof savePayload === "function") {
           await savePayload(JSON.parse(JSON.stringify(params)));
         }
 
         const content = await postChatRequest(params, httpTimeoutMs);
         if (!content) {
-          throw new Error('empty response');
+          throw new Error("empty response");
         }
-        onProgress('done');
+        onProgress("done");
         return content;
       } catch (err) {
         if (process.env.PHOTO_SELECT_VERBOSE) {
-          console.error('ollama fetch failure:', err);
+          console.error("ollama fetch failure:", err);
         }
         if (attempt >= maxRetries) throw err;
         attempt += 1;
@@ -326,8 +330,10 @@ export default class OllamaProvider {
           `attempt=${attempt}`,
           `node=${process.version}`,
           `keep_alive=${KEEP_ALIVE}`,
-        ].join(' ');
-        console.warn(`ollama error (${formatError(err)}). ${hint}. Retrying in ${wait}ms…`);
+        ].join(" ");
+        console.warn(
+          `ollama error (${formatError(err)}). ${hint}. Retrying in ${wait}ms…`
+        );
         await delay(wait);
       }
     }
