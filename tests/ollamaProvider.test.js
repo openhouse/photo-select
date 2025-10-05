@@ -93,6 +93,11 @@ describe('OllamaProvider', () => {
     const body = JSON.parse(init.body);
     expect(body.messages).toHaveLength(2);
     expect(body.messages[1].images).toEqual(['aW1hZ2UtYnl0ZXM=']);
+    expect(body.options).toEqual({
+      num_predict: 128,
+      num_ctx: 32_768,
+      num_keep: -1,
+    });
   });
 
   it('throws a helpful error when the Ollama daemon is unavailable', async () => {
