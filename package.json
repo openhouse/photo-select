@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "photo-select",
-    "test": "vitest run",
+    "lint:filenames": "node scripts/check-filenames.mjs",
+    "test": "npm run lint:filenames && vitest run",
     "undici:smoke": "node scripts/undici-smoke.mjs"
   },
   "engines": {
