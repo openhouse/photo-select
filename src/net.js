@@ -5,7 +5,7 @@
 
 function num(name, fallback) {
   const v = Number(process.env[name]);
-  return Number.isFinite(v) ? v : fallback;
+  return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
 export async function configureHttpFromEnv() {
@@ -32,8 +32,9 @@ export async function configureHttpFromEnv() {
     const connections = num('UNDICI_CONNECTIONS', num('PHOTO_SELECT_MAX_SOCKETS', 8));
     const keepAliveTimeout = num('UNDICI_KEEPALIVE_MS', 10_000);
     const keepAliveMaxTimeout = num('UNDICI_FREE_TIMEOUT_MS', 60_000);
-    const bodyTimeout = num('UNDICI_BODY_TIMEOUT_MS', num('PHOTO_SELECT_TIMEOUT_MS', 300_000));
-    const headersTimeout = num('UNDICI_HEADERS_TIMEOUT_MS', 60_000);
+    const defaultTimeout = num('PHOTO_SELECT_TIMEOUT_MS', 600_000);
+    const bodyTimeout = num('UNDICI_BODY_TIMEOUT_MS', defaultTimeout);
+    const headersTimeout = num('UNDICI_HEADERS_TIMEOUT_MS', defaultTimeout);
 
     setGlobalDispatcher(new Agent({
       connections,
@@ -45,7 +46,11 @@ export async function configureHttpFromEnv() {
     }));
 
     if (process.env.PHOTO_SELECT_VERBOSE === '1') {
-      console.log(`⚙️  HTTP: undici dispatcher set (connections=${connections}, keepAlive=${keepAliveTimeout}ms, freeTimeout=${keepAliveMaxTimeout}ms, bodyTimeout=${bodyTimeout}ms)`);
+      console.log(
+        `⚙️  HTTP: undici dispatcher set (connections=${connections}, ` +
+          `keepAlive=${keepAliveTimeout}ms, freeTimeout=${keepAliveMaxTimeout}ms, ` +
+          `headersTimeout=${headersTimeout}ms, bodyTimeout=${bodyTimeout}ms)`
+      );
     }
     return true;
   } catch (e) {

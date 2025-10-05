@@ -1,13 +1,16 @@
 import { buildMessages, MAX_RESPONSE_TOKENS } from '../chatClient.js';
 import { delay } from '../config.js';
-import { Ollama } from 'ollama';
 import { buildReplySchema } from '../replySchema.js';
 import { parseFormatEnv } from '../formatOverride.js';
 import path from 'node:path';
+import { getSurrogateImage } from '../imagePreprocessor.js';
 
 const BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const client = new Ollama({ host: BASE_URL });
 const readinessCache = new Map();
+const CHAT_ENDPOINT = new URL('/api/chat', BASE_URL).toString();
+const TAGS_ENDPOINT = new URL('/api/tags', BASE_URL).toString();
+const SHOW_ENDPOINT = new URL('/api/show', BASE_URL).toString();
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '2h';
 // Check for an environment override. When undefined we generate a JSON schema
 // dynamically for each request. Set the variable to "" to omit the parameter
 // entirely.
@@ -46,74 +49,6 @@ function formatError(err) {
   }
 }
 
-async function chatWithTimeout(params, timeoutMs) {
-  const request = { ...params, stream: true };
-  let streamResponse;
-  try {
-    streamResponse = await client.chat(request);
-  } catch (err) {
-    throw err;
-  }
-
-  if (!streamResponse || typeof streamResponse[Symbol.asyncIterator] !== 'function') {
-    const direct = streamResponse?.message ? streamResponse : await client.chat(params);
-    return direct?.message?.content ?? '';
-  }
-
-  const stream = streamResponse;
-  let timedOut = false;
-  let timer;
-  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-    timer = setTimeout(() => {
-      timedOut = true;
-      if (typeof stream.abort === 'function') {
-        try {
-          stream.abort();
-        } catch {
-          // ignore abort errors
-        }
-      }
-    }, timeoutMs);
-  }
-
-  try {
-    let combined = '';
-    let snapshot = '';
-    let lastChunk;
-    for await (const chunk of stream) {
-      if (chunk?.message?.content && typeof chunk.message.content === 'string') {
-        const current = chunk.message.content;
-        if (snapshot && current.startsWith(snapshot)) {
-          combined += current.slice(snapshot.length);
-        } else if (!snapshot) {
-          combined += current;
-        } else {
-          combined += current;
-        }
-        snapshot = current;
-      }
-      lastChunk = chunk;
-    }
-
-    if (!combined && lastChunk?.message?.content && typeof lastChunk.message.content === 'string') {
-      combined = lastChunk.message.content;
-    }
-
-    return combined;
-  } catch (err) {
-    if (timedOut) {
-      const timeoutError = new Error(
-        `Ollama request exceeded ${timeoutMs}ms without completing. Increase OLLAMA_HTTP_TIMEOUT or PHOTO_SELECT_TIMEOUT_MS.`
-      );
-      timeoutError.cause = err;
-      throw timeoutError;
-    }
-    throw err;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 function createConnectionHelpMessage(err) {
   const hints = [
     'Install Ollama from https://ollama.com/download if it is not already present.',
@@ -144,17 +79,28 @@ async function ensureModelReady(model) {
   if (!readinessCache.has(cacheKey)) {
     const readiness = (async () => {
       try {
-        await client.list();
+        const res = await fetch(TAGS_ENDPOINT, { signal: AbortSignal.timeout?.(30_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Drain body to surface fetch errors; content unused.
+        await res.arrayBuffer();
       } catch (err) {
         throw createConnectionHelpMessage(err);
       }
 
       try {
-        await client.show({ model });
-      } catch (err) {
-        if (err?.name === 'ResponseError' && err?.status_code === 404) {
+        const res = await fetch(SHOW_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model }),
+        });
+        if (res.status === 404) {
           throw new Error(createMissingModelMessage(model));
         }
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        await res.arrayBuffer();
+      } catch (err) {
         throw err;
       }
     })();
@@ -167,6 +113,95 @@ async function ensureModelReady(model) {
   } catch (err) {
     readinessCache.delete(cacheKey);
     throw err;
+  }
+}
+
+async function encodeMessageImages(messages) {
+  if (!Array.isArray(messages)) return messages;
+  const results = [];
+  for (const message of messages) {
+    if (!message || typeof message !== 'object') {
+      results.push(message);
+      continue;
+    }
+    const next = { ...message };
+    if (Array.isArray(message.images) && message.images.length) {
+      const encoded = [];
+      for (const file of message.images) {
+        if (!file) continue;
+        try {
+          const buffer = await getSurrogateImage(path.resolve(file));
+          encoded.push(buffer.toString('base64'));
+        } catch (err) {
+          const msg = err?.message || err;
+          console.warn(`⚠️  Failed to encode image ${file}: ${msg}`);
+        }
+      }
+      if (encoded.length) {
+        next.images = encoded;
+      } else {
+        delete next.images;
+      }
+    }
+    results.push(next);
+  }
+  return results;
+}
+
+async function postChatRequest(params, timeoutMs) {
+  const controller = new AbortController();
+  let timer;
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  try {
+    const res = await fetch(CHAT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      let detail = '';
+      try {
+        detail = await res.text();
+      } catch {}
+      const err = new Error(
+        `Ollama chat failed with HTTP ${res.status}${detail ? `: ${detail}` : ''}`
+      );
+      err.status = res.status;
+      throw err;
+    }
+
+    const raw = await res.text();
+    if (!raw) return '';
+    try {
+      const json = JSON.parse(raw);
+      if (json?.message?.content) return json.message.content;
+      if (typeof json?.response === 'string') return json.response;
+      if (typeof json?.content === 'string') return json.content;
+      return '';
+    } catch (err) {
+      const parseError = new Error('Failed to parse Ollama response as JSON');
+      parseError.cause = err;
+      parseError.responseText = raw;
+      throw parseError;
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const timeoutError = new Error(
+        `Ollama request exceeded ${timeoutMs}ms without completing. Increase OLLAMA_HTTP_TIMEOUT or PHOTO_SELECT_TIMEOUT_MS.`
+      );
+      timeoutError.cause = err;
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -213,12 +248,14 @@ export default class OllamaProvider {
         user.content = textParts.join('\n');
         if (imagePaths.length) user.images = imagePaths;
         const finalMessages = [system, user];
+        const encodedMessages = await encodeMessageImages(finalMessages);
         onProgress('request');
 
         const params = {
           model,
-          messages: finalMessages,
+          messages: encodedMessages,
           stream: false,
+          keep_alive: KEEP_ALIVE,
           options: { num_predict: OLLAMA_NUM_PREDICT },
         };
 
@@ -247,7 +284,7 @@ export default class OllamaProvider {
           await savePayload(JSON.parse(JSON.stringify(params)));
         }
 
-        const content = await chatWithTimeout(params, httpTimeoutMs);
+        const content = await postChatRequest(params, httpTimeoutMs);
         if (!content) {
           throw new Error('empty response');
         }
@@ -267,6 +304,7 @@ export default class OllamaProvider {
           `timeout_ms=${httpTimeoutMs}`,
           `attempt=${attempt}`,
           `node=${process.version}`,
+          `keep_alive=${KEEP_ALIVE}`,
         ].join(' ');
         console.warn(`ollama error (${formatError(err)}). ${hint}. Retrying in ${wait}ms…`);
         await delay(wait);

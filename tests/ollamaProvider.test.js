@@ -1,23 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 
 async function loadProvider() {
   const mod = await import('../src/providers/ollama.js');
   return mod.default;
 }
-
-vi.hoisted(() => {
-  globalThis.__chatMock = vi.fn(async () => ({ message: { content: 'ok' } }));
-  globalThis.__ollamaListMock = vi.fn(async () => ({}));
-  globalThis.__ollamaShowMock = vi.fn(async () => ({}));
-});
-
-vi.mock('ollama', () => ({
-  Ollama: vi.fn(() => ({
-    chat: globalThis.__chatMock,
-    list: globalThis.__ollamaListMock,
-    show: globalThis.__ollamaShowMock,
-  })),
-}));
 
 vi.mock('../src/chatClient.js', () => ({
   buildMessages: vi.fn(async () => ({
@@ -39,16 +25,61 @@ vi.mock('../src/chatClient.js', () => ({
 }));
 
 vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
+vi.mock('../src/imagePreprocessor.js', () => ({
+  getSurrogateImage: vi.fn(async () => Buffer.from('image-bytes')),
+}));
+
+const fetchMock = vi.fn();
+let originalFetch;
+
+function makeResponse(body, init = {}) {
+  const status = init.status ?? 200;
+  const ok = init.ok ?? (status >= 200 && status < 300);
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  const buffer = new TextEncoder().encode(text).buffer;
+  return {
+    ok,
+    status,
+    text: async () => text,
+    arrayBuffer: async () => buffer,
+  };
+}
+
+function setFetchHandlers(overrides = {}) {
+  const handlers = {
+    tags: () => Promise.resolve(makeResponse({})),
+    show: () => Promise.resolve(makeResponse({})),
+    chat: () => Promise.resolve(makeResponse({ message: { content: 'ok' } })),
+    ...overrides,
+  };
+  fetchMock.mockImplementation((input, init) => {
+    const url = typeof input === 'string' ? input : input?.url || String(input);
+    if (url.endsWith('/api/tags')) return handlers.tags(input, init);
+    if (url.endsWith('/api/show')) return handlers.show(input, init);
+    if (url.endsWith('/api/chat')) return handlers.chat(input, init);
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+}
+
+beforeAll(() => {
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchMock;
+});
+
+afterAll(() => {
+  if (originalFetch) {
+    globalThis.fetch = originalFetch;
+  } else {
+    delete globalThis.fetch;
+  }
+});
 
 describe('OllamaProvider', () => {
   beforeEach(() => {
     vi.resetModules();
     delete process.env.PHOTO_SELECT_OLLAMA_FORMAT;
-    globalThis.__chatMock.mockClear();
-    globalThis.__ollamaListMock.mockClear();
-    globalThis.__ollamaShowMock.mockClear();
-    globalThis.__ollamaListMock.mockResolvedValue({});
-    globalThis.__ollamaShowMock.mockResolvedValue({});
+    fetchMock.mockReset();
+    setFetchHandlers();
   });
 
   it('includes images within the user message', async () => {
@@ -56,28 +87,33 @@ describe('OllamaProvider', () => {
     const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
-    const body = globalThis.__chatMock.mock.calls[0][0];
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    expect(chatCall).toBeTruthy();
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
     expect(body.messages).toHaveLength(2);
-    expect(body.messages[1].images).toEqual(['img.jpg']);
+    expect(body.messages[1].images).toEqual(['aW1hZ2UtYnl0ZXM=']);
   });
 
   it('throws a helpful error when the Ollama daemon is unavailable', async () => {
     const connectionError = new Error('fetch failed');
     connectionError.cause = new Error('ECONNREFUSED');
-    globalThis.__ollamaListMock.mockRejectedValueOnce(connectionError);
+    setFetchHandlers({
+      tags: () => Promise.reject(connectionError),
+    });
     const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await expect(
       provider.chat({ prompt: 'p', images: [], model: 'm' })
     ).rejects.toThrow(/Unable to reach Ollama/);
-    expect(globalThis.__ollamaListMock).toHaveBeenCalled();
+    const tagsCalls = fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/tags'));
+    expect(tagsCalls.length).toBeGreaterThan(0);
   });
 
   it('suggests pulling the model when it is missing', async () => {
-    const missingModelError = new Error('not found');
-    missingModelError.name = 'ResponseError';
-    missingModelError.status_code = 404;
-    globalThis.__ollamaShowMock.mockRejectedValueOnce(missingModelError);
+    setFetchHandlers({
+      show: () => Promise.resolve(makeResponse({}, { status: 404 })),
+    });
     const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await expect(
@@ -107,7 +143,9 @@ describe('OllamaProvider', () => {
     const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
-    const body = globalThis.__chatMock.mock.calls[0][0];
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
     expect(body).not.toHaveProperty('format');
   });
 
@@ -116,7 +154,9 @@ describe('OllamaProvider', () => {
     const OllamaProvider = await loadProvider();
     const provider = new OllamaProvider();
     await provider.chat({ prompt: 'p', images: ['img.jpg'], model: 'm' });
-    const body = globalThis.__chatMock.mock.calls[0][0];
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
     expect(body.format).toEqual({ type: 'object' });
   });
 
@@ -129,7 +169,9 @@ describe('OllamaProvider', () => {
       model: 'm',
       expectFieldNotesInstructions: true,
     });
-    const body = globalThis.__chatMock.mock.calls[0][0];
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
     expect(body.format.properties).toHaveProperty('field_notes_instructions');
     expect(body.format.properties).toHaveProperty('minutes');
   });
