@@ -17,9 +17,26 @@ const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '2h';
 const OLLAMA_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OLLAMA_FORMAT');
 // Default to a long response (~32k tokens) matching the output limit of many
 // OpenAI models.
-const OLLAMA_NUM_PREDICT =
-  Number.parseInt(process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT, 10) ||
-  MAX_RESPONSE_TOKENS;
+function parseInteger(value) {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+const parsedNumPredict = parseInteger(
+  process.env.PHOTO_SELECT_OLLAMA_NUM_PREDICT
+);
+const OLLAMA_NUM_PREDICT = Number.isFinite(parsedNumPredict)
+  ? parsedNumPredict
+  : MAX_RESPONSE_TOKENS;
+const parsedNumCtx = parseInteger(
+  process.env.PHOTO_SELECT_OLLAMA_NUM_CTX ?? process.env.OLLAMA_NUM_CTX
+);
+const OLLAMA_NUM_CTX = Number.isFinite(parsedNumCtx) ? parsedNumCtx : 32_768;
+const parsedNumKeep = parseInteger(
+  process.env.PHOTO_SELECT_OLLAMA_NUM_KEEP ?? process.env.OLLAMA_NUM_KEEP
+);
+const OLLAMA_NUM_KEEP = Number.isFinite(parsedNumKeep) ? parsedNumKeep : -1;
 const DEFAULT_HTTP_TIMEOUT_MS = 600_000;
 
 function resolveOllamaTimeoutMs() {
@@ -256,7 +273,11 @@ export default class OllamaProvider {
           messages: encodedMessages,
           stream: false,
           keep_alive: KEEP_ALIVE,
-          options: { num_predict: OLLAMA_NUM_PREDICT },
+          options: {
+            num_predict: OLLAMA_NUM_PREDICT,
+            num_ctx: OLLAMA_NUM_CTX,
+            num_keep: OLLAMA_NUM_KEEP,
+          },
         };
 
         // Build the request format. If an environment override is not provided
