@@ -289,6 +289,21 @@ describe("buildMessages", () => {
     expect(meta.people).toEqual(["Alice", "Bob"]);
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it('accepts structured prompt parts', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ps-msg-'));
+    const img = path.join(dir, 'x.jpg');
+    await makeImg(img);
+    const { messages } = await buildMessages(
+      { systemPrompt: 'SYS json', userPreamble: 'PRE' },
+      [img],
+    );
+    const [system, user] = messages;
+    expect(system.content).toContain('SYS json');
+    expect(user.content[0].text).toContain('PRE');
+    expect(JSON.parse(user.content[1].text)).toEqual({ filename: 'x.jpg' });
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe("buildInput", () => {

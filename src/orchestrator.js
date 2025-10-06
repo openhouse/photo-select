@@ -6,7 +6,7 @@ import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
-import { parseReply, getPeople } from "./chatClient.js";
+import { parseReply, getPeople, formatPromptForLog } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
@@ -405,7 +405,11 @@ export async function triageDirectory({
                 });
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
-                await saveText('prompt', attemptNum, first.prompt);
+                await saveText(
+                  'prompt',
+                  attemptNum,
+                  formatPromptForLog(first.prompt, finalCurators),
+                );
                 reply = await provider.chat({
                   prompt: first.prompt,
                   images: batch,

@@ -280,7 +280,7 @@ export default class OllamaProvider {
           options: {
             num_predict: OLLAMA_NUM_PREDICT,
             num_ctx: OLLAMA_NUM_CTX,
-            // num_keep: OLLAMA_NUM_KEEP,
+            num_keep: OLLAMA_NUM_KEEP,
           },
         };
 

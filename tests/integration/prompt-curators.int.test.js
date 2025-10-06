@@ -28,13 +28,20 @@ describe('finalizeCurators integration', () => {
       photos,
       images: photos.map((p) => p.file),
     });
-    const names = extractCurators(prompt);
+    const names = extractCurators(prompt.systemPrompt);
     expect(names).toEqual([
       'Beata',
       'Ellen Lev',
       'Beata (Kendell + Mandy cabin neighbor)',
     ]);
-    const header = prompt.split('\n').slice(0, 40).join('\n');
+    const promptText = [
+      '--- system ---',
+      prompt.systemPrompt,
+      '',
+      '--- user ---',
+      prompt.userPreamble,
+    ].join('\n');
+    const header = promptText.split('\n').slice(0, 40).join('\n');
     expect(header).toMatchSnapshot();
   });
 
@@ -49,7 +56,7 @@ describe('finalizeCurators integration', () => {
       photos,
       images: photos.map((p) => p.file),
     });
-    const names = extractCurators(prompt);
+    const names = extractCurators(prompt.systemPrompt);
     expect(names).toEqual(['Curator A']);
   });
 });

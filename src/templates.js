@@ -1,19 +1,16 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import Handlebars from 'handlebars';
+import {
+  buildPromptParts,
+  DEFAULT_SYSTEM_TEMPLATE_PATH,
+  DEFAULT_USER_TEMPLATE_PATH,
+} from './core/promptBuilder.js';
 
 const fmin = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MIN || 1.5);
 const fmax = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MAX || 2.5);
 
-export const DEFAULT_PROMPT_PATH = path.resolve(
-  new URL('../prompts/default_prompt.hbs', import.meta.url).pathname
-);
-
-export async function renderTemplate(filePath = DEFAULT_PROMPT_PATH, data = {}) {
-  const source = await fs.readFile(filePath, 'utf8');
-  const template = Handlebars.compile(source, { noEscape: true });
-  return template(data);
-}
+export const DEFAULT_SYSTEM_PROMPT_PATH = DEFAULT_SYSTEM_TEMPLATE_PATH;
+export const DEFAULT_PROMPT_PATH = DEFAULT_USER_TEMPLATE_PATH;
 
 export async function buildPrompt(
   filePath,
@@ -37,7 +34,7 @@ export async function buildPrompt(
   const minutesMin = Math.ceil(fmin * base);
   const minutesMax = Math.ceil(fmax * base);
 
-  const prompt = await renderTemplate(filePath, {
+  const data = {
     curators: curators.join(', '),
     images: images.map((f) => path.basename(f)),
     context,
@@ -49,8 +46,13 @@ export async function buildPrompt(
     isSecondPass,
     minutesMin,
     minutesMax,
+  };
+
+  const { systemPrompt, userPreamble } = await buildPromptParts(data, {
+    systemTemplatePath: DEFAULT_SYSTEM_TEMPLATE_PATH,
+    userTemplatePath: filePath ? path.resolve(filePath) : DEFAULT_USER_TEMPLATE_PATH,
   });
 
-  return { prompt, minutesMin, minutesMax };
+  return { prompt: { systemPrompt, userPreamble }, minutesMin, minutesMax };
 }
 
