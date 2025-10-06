@@ -286,8 +286,59 @@ function ensureJsonMention(text) {
   return /\bjson\b/i.test(text) ? text : `${text}\nRespond in json format.`;
 }
 
+const DEFAULT_USER_PREAMBLE = "Here are the images:";
+const FILENAME_GUARD = "Only include these filenames; do not invent new ones.";
+
+function replaceCurators(text, curators) {
+  if (!text) return text || "";
+  if (!Array.isArray(curators) || curators.length === 0) return text;
+  const names = curators.join(", ");
+  let out = text.replace(/\{\{curators\}\}/g, names);
+  if (out === text) {
+    out = out.replace(/^Curators:.*$/m, `Curators: ${names}`);
+  }
+  return out;
+}
+
+function appendFilenamesGuard(text) {
+  const base = text && text.trim() ? text : DEFAULT_USER_PREAMBLE;
+  if (base.includes(FILENAME_GUARD)) return base;
+  const suffix = base.endsWith("\n") ? "" : "\n";
+  return `${base}${suffix}${FILENAME_GUARD}`;
+}
+
+function normalizePromptParts(prompt, curators = []) {
+  if (prompt && typeof prompt === "object" && !Array.isArray(prompt)) {
+    return {
+      systemPrompt: replaceCurators(prompt.systemPrompt ?? "", curators),
+      userPreamble: replaceCurators(prompt.userPreamble ?? "", curators),
+    };
+  }
+  return {
+    systemPrompt: replaceCurators(typeof prompt === "string" ? prompt : "", curators),
+    userPreamble: "",
+  };
+}
+
+function serializePromptParts(system, user) {
+  return `SYSTEM:\n${system}\n\nUSER:\n${user}`;
+}
+
+function materializePrompt(prompt, curators = []) {
+  const { systemPrompt, userPreamble } = normalizePromptParts(prompt, curators);
+  const system = ensureJsonMention(systemPrompt || "");
+  const guardedUser = appendFilenamesGuard(userPreamble);
+  const user = ensureJsonMention(guardedUser);
+  return { system, user, serialized: serializePromptParts(system, user) };
+}
+
+export function formatPromptForLog(prompt, curators = []) {
+  const { system, user } = materializePrompt(prompt, curators);
+  return `--- system ---\n${system}\n\n--- user ---\n${user}`;
+}
+
 const CACHE_DIR = path.resolve(".cache");
-const CACHE_KEY_PREFIX = "v5";
+const CACHE_KEY_PREFIX = "v6";
 
 function useColor() {
   return process.stdout.isTTY && process.env.NO_COLOR !== "1";
@@ -332,7 +383,8 @@ export async function cacheKey({
   const hash = crypto.createHash("sha256");
   hash.update(CACHE_KEY_PREFIX);
   hash.update(model);
-  hash.update(prompt);
+  const { serialized } = materializePrompt(prompt, curators);
+  hash.update(serialized);
   if (curators.length) hash.update(curators.join(","));
   if (verbosity) hash.update(verbosity);
   if (reasoningEffort) hash.update(reasoningEffort);
@@ -350,12 +402,8 @@ export async function cacheKey({
  * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
  */
 export async function buildMessages(prompt, images, curators = []) {
-  let content = prompt;
-  if (curators.length) {
-    const names = curators.join(", ");
-    content = content.replace(/\{\{curators\}\}/g, names);
-  }
-  const system = { role: "system", content };
+  const { system, user } = materializePrompt(prompt, curators);
+  const systemMessage = { role: "system", content: system };
 
   const used = [];
   const userImageParts = [];
@@ -397,21 +445,17 @@ export async function buildMessages(prompt, images, curators = []) {
   const userText = {
     role: "user",
     content: [
-      { type: "text", text: ensureJsonMention("Here are the images:") },
+      { type: "text", text: user },
       ...userImageParts,
     ],
   };
 
-  return { messages: [system, userText], used };
+  return { messages: [systemMessage, userText], used };
 }
 
 /** Build input array for the Responses API */
 export async function buildInput(prompt, images, curators = []) {
-  let instructions = prompt;
-  if (curators.length) {
-    const names = curators.join(", ");
-    instructions = instructions.replace(/\{\{curators\}\}/g, names);
-  }
+  const { system, user } = materializePrompt(prompt, curators);
   const used = [];
   const imageParts = [];
   for (const file of images) {
@@ -448,14 +492,14 @@ export async function buildInput(prompt, images, curators = []) {
   }
 
   return {
-    instructions,
+    instructions: system,
     input: [
       {
         role: "user",
         content: [
           {
             type: "input_text",
-            text: ensureJsonMention("Here are the images:"),
+            text: user,
           },
           ...imageParts,
         ],
@@ -524,21 +568,11 @@ export async function chatCompletion({
       `👥  ${prefix}additional curators from tags: ${added.join(", ")}`
     );
   }
-  let finalPrompt = prompt;
-  if (finalCurators.length) {
-    const names = finalCurators.join(", ");
-    if (/\{\{curators\}\}/.test(finalPrompt)) {
-      finalPrompt = finalPrompt.replace(/\{\{curators\}\}/g, names);
-    } else {
-      finalPrompt = finalPrompt.replace(
-        /^Curators:.*$/m,
-        `Curators: ${names}`
-      );
-    }
-  }
-
-  finalPrompt = ensureJsonMention(finalPrompt);
-  finalPrompt += "\nOnly include these filenames; do not invent new ones.";
+  const preparedPrompt = materializePrompt(prompt, finalCurators);
+  const finalPrompt = {
+    systemPrompt: preparedPrompt.system,
+    userPreamble: preparedPrompt.user,
+  };
 
   const isGpt5 = useResponses(model);
   let attempt = 0;
@@ -585,7 +619,7 @@ export async function chatCompletion({
           schemaJson,
           imageCount: used.length,
           imageDetail: "low",
-          extraText: "",
+          extraText: preparedPrompt.user,
         });
         onProgress("request");
         const baseOpts = {
@@ -694,11 +728,11 @@ export async function chatCompletion({
         effort: effortForTokens,
       });
       const estInputTokens = estimateInputTokens({
-        instructions: finalPrompt,
+        instructions: preparedPrompt.system,
         schemaJson: "",
         imageCount: used.length,
         imageDetail: "low",
-        extraText: "",
+        extraText: preparedPrompt.user,
       });
       onProgress("request");
       const baseParams = {
@@ -801,7 +835,7 @@ export async function chatCompletion({
           schemaJson,
           imageCount: used.length,
           imageDetail: "low",
-          extraText: "",
+          extraText: preparedPrompt.user,
         });
         onProgress("request");
         const baseOpts = {

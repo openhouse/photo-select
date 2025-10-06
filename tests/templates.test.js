@@ -7,10 +7,11 @@ describe('buildPrompt', () => {
       curators: ['Ingeborg Gerdes', 'Alexandra Munroe'],
       images: ['DSCF1234.jpg', 'DSCF5678.jpg'],
     });
-    expect(prompt).toMatch(
+    expect(prompt.systemPrompt).toContain(
       'Role play as Ingeborg Gerdes, Alexandra Munroe:\n - Indicate who is speaking\n - Say what you think'
     );
-    expect(prompt).toMatch('Produce between 3 and 5 diarized items');
+    expect(prompt.systemPrompt).toContain('Produce between 3 and 5 diarized items');
+    expect(prompt.userPreamble).toContain('- DSCF1234.jpg');
     expect(minutesMin).toBe(3);
     expect(minutesMax).toBe(5);
   });
