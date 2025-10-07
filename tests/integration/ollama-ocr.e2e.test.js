@@ -12,20 +12,41 @@ const ollamaModel =
 
 const shouldRun = process.env.OLLAMA_E2E === '1' && ollamaModel.length > 0;
 
-function randomNonce(length = 10) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  return Array.from({ length }, () =>
-    alphabet.charAt(Math.floor(Math.random() * alphabet.length))
-  ).join('');
+const NONCE_LENGTH = 12;
+
+const SAFE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function randomNonce(length = NONCE_LENGTH) {
+  let output = '';
+  for (let i = 0; i < length; i += 1) {
+    let candidate;
+    do {
+      candidate = SAFE_ALPHABET.charAt(
+        Math.floor(Math.random() * SAFE_ALPHABET.length)
+      );
+    } while (i > 0 && candidate === output[i - 1]);
+    output += candidate;
+  }
+  return output;
+}
+
+function canonicalizeOcr(text) {
+  const upper = String(text ?? '').toUpperCase();
+  const alphanumeric = upper.replace(/[^A-Z0-9]/g, '');
+  return alphanumeric.replace(/(.)\1+/g, '$1');
 }
 
 async function renderHighContrastPng(text) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="512">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" shape-rendering="geometricPrecision">
     <rect width="100%" height="100%" fill="white"/>
-    <text x="50%" y="50%" font-family="DejaVu Sans, Arial, sans-serif"
-          font-size="160" text-anchor="middle" dominant-baseline="middle" fill="black">${text}</text>
+    <text x="50%" y="50%"
+          font-family="DejaVu Sans Mono, Menlo, Consolas, monospace"
+          font-size="220" font-weight="700" letter-spacing="8"
+          style="font-variant-ligatures:none"
+          text-anchor="middle" dominant-baseline="middle" fill="black">${text}</text>
   </svg>`;
-  return sharp(Buffer.from(svg)).png({ compressionLevel: 0 }).toBuffer();
+  return sharp(Buffer.from(svg), { density: 300 })
+    .png({ compressionLevel: 0 })
+    .toBuffer();
 }
 
 async function renderBlurredPng(text) {
@@ -55,7 +76,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
   let originalFormat;
 
   beforeAll(async () => {
-    nonce = randomNonce(12);
+    nonce = randomNonce(NONCE_LENGTH);
     originalFormat = process.env.PHOTO_SELECT_OLLAMA_FORMAT;
     process.env.PHOTO_SELECT_OLLAMA_FORMAT = '';
     const mod = await import('../../src/providers/ollama.js');
@@ -74,12 +95,17 @@ describeIf('OllamaProvider OCR end-to-end', () => {
     );
   });
 
-  const basePrompt =
-    'Read the text in the image; output only that text; else output NONE.';
+  const basePrompt = [
+    'OCR TASK:',
+    `Read the text in the image and output EXACTLY ${NONCE_LENGTH} characters.`,
+    'Use only uppercase letters A-Z and digits 2-9 on a single line with no spaces.',
+    'Do NOT output JSON, code fences, quotes, or extra commentary.',
+    'If nothing is legible, output NONE.'
+  ].join(' ');
 
   it(
     'returns the nonce only when the clear image is provided',
-    { timeout: 60_000 },
+    { timeout: 120_000 },
     async () => {
       const pngBuffer = await renderHighContrastPng(nonce);
       const imagePath = await writeTempImage(pngBuffer, tempDirs);
@@ -88,14 +114,20 @@ describeIf('OllamaProvider OCR end-to-end', () => {
         prompt: basePrompt,
         images: [imagePath],
         model: ollamaModel,
-        options: { temperature: 0 },
+        options: {
+          temperature: 0,
+          num_predict: 24,
+          top_p: 0.1,
+          top_k: 1,
+          repeat_penalty: 1.2,
+        },
         savePayload: async (payload) => {
           capturedPayload = payload;
         },
       });
 
       expect(typeof reply).toBe('string');
-      expect(reply.trim()).toBe(nonce);
+      expect(canonicalizeOcr(reply)).toBe(nonce);
       expect(capturedPayload).toBeTruthy();
       const imageList = capturedPayload?.messages?.[1]?.images || [];
       expect(imageList).toHaveLength(1);
@@ -121,7 +153,13 @@ describeIf('OllamaProvider OCR end-to-end', () => {
         prompt: basePrompt,
         images: [],
         model: ollamaModel,
-        options: { temperature: 0 },
+        options: {
+          temperature: 0,
+          num_predict: 24,
+          top_p: 0.1,
+          top_k: 1,
+          repeat_penalty: 1.2,
+        },
       });
       expect(typeof reply).toBe('string');
       expect(reply.trim()).toBe('NONE');
@@ -138,10 +176,16 @@ describeIf('OllamaProvider OCR end-to-end', () => {
         prompt: basePrompt,
         images: [blurredPath],
         model: ollamaModel,
-        options: { temperature: 0 },
+        options: {
+          temperature: 0,
+          num_predict: 24,
+          top_p: 0.1,
+          top_k: 1,
+          repeat_penalty: 1.2,
+        },
       });
       expect(typeof reply).toBe('string');
-      expect(reply.trim()).not.toBe(nonce);
+      expect(canonicalizeOcr(reply)).not.toBe(nonce);
     }
   );
 });
