@@ -36,13 +36,19 @@ function canonicalizeOcr(text) {
 }
 
 async function renderHighContrastPng(text) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" shape-rendering="geometricPrecision">
+  const safeText = String(text ?? '');
+  const length = Math.max(safeText.length, 1);
+  const horizontalPadding = 160;
+  const charWidth = 180;
+  const width = Math.max(1280, length * charWidth + horizontalPadding * 2);
+  const height = 640;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="geometricPrecision">
     <rect width="100%" height="100%" fill="white"/>
-    <text x="50%" y="50%"
+    <text x="${width / 2}" y="${height / 2}"
           font-family="DejaVu Sans Mono, Menlo, Consolas, monospace"
           font-size="220" font-weight="700" letter-spacing="8"
           style="font-variant-ligatures:none"
-          text-anchor="middle" dominant-baseline="middle" fill="black">${text}</text>
+          text-anchor="middle" dominant-baseline="middle" fill="black">${safeText}</text>
   </svg>`;
   return sharp(Buffer.from(svg), { density: 300 })
     .png({ compressionLevel: 0 })
