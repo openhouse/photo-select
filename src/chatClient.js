@@ -56,11 +56,28 @@ if (!USE_UNDICI) {
   });
 }
 
-const openai = new OpenAI({
-  ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
-  timeout: DEFAULT_TIMEOUT,
-  maxRetries: MAX_RETRIES,
-});
+let openaiClient;
+let openaiInitError;
+
+function createOpenAIClient() {
+  return new OpenAI({
+    ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
+    timeout: DEFAULT_TIMEOUT,
+    maxRetries: MAX_RETRIES,
+  });
+}
+
+export function getOpenAIClient() {
+  if (openaiClient) return openaiClient;
+  if (openaiInitError) throw openaiInitError;
+  try {
+    openaiClient = createOpenAIClient();
+    return openaiClient;
+  } catch (err) {
+    openaiInitError = err;
+    throw err;
+  }
+}
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
@@ -497,6 +514,8 @@ export async function chatCompletion({
   }
   const effort = reasoningEffort === "auto" ? "" : reasoningEffort;
   const effortForTokens = effort || "low";
+
+  const openai = getOpenAIClient();
 
   const photos = [];
   for (let idx = 0; idx < images.length; idx++) {
