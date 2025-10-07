@@ -1,4 +1,20 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const fixturePath = path.join(
+  __dirname,
+  'fixtures',
+  'images',
+  'ocr-challenge.png'
+);
+// Small 1x1 opaque PNG used to assert outbound payload encoding without
+// requiring a binary fixture in the repository.
+const fixtureBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==';
+const fixtureBytes = Buffer.from(fixtureBase64, 'base64');
+const resolvedFixturePath = path.resolve(fixturePath);
 
 async function loadProvider() {
   const mod = await import('../src/providers/ollama.js');
@@ -26,7 +42,12 @@ vi.mock('../src/chatClient.js', () => ({
 
 vi.mock('../src/config.js', () => ({ delay: vi.fn() }));
 vi.mock('../src/imagePreprocessor.js', () => ({
-  getSurrogateImage: vi.fn(async () => Buffer.from('image-bytes')),
+  getSurrogateImage: vi.fn(async (file) => {
+    if (path.resolve(file) === resolvedFixturePath) {
+      return fixtureBytes;
+    }
+    return Buffer.from('image-bytes');
+  }),
 }));
 
 const fetchMock = vi.fn();
@@ -97,6 +118,42 @@ describe('OllamaProvider', () => {
       num_predict: 128,
       num_ctx: 32_768,
       num_keep: -1,
+    });
+  });
+
+  it('encodes the exact bytes for provided image paths', async () => {
+    process.env.PHOTO_SELECT_OLLAMA_FORMAT = 'json';
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({ prompt: 'p', images: [fixturePath], model: 'm' });
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    expect(chatCall).toBeTruthy();
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
+    expect(body.messages[1].images).toEqual([fixtureBase64]);
+    const userContent = body.messages[1].content;
+    expect(userContent).not.toContain(path.basename(fixturePath));
+    expect(userContent).not.toContain(resolvedFixturePath);
+  });
+
+  it('merges provided options while preserving defaults', async () => {
+    const OllamaProvider = await loadProvider();
+    const provider = new OllamaProvider();
+    await provider.chat({
+      prompt: 'p',
+      images: [],
+      model: 'm',
+      options: { temperature: 0.1, num_predict: 42, top_p: undefined },
+    });
+    const chatCall = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/chat'));
+    expect(chatCall).toBeTruthy();
+    const [, init] = chatCall;
+    const body = JSON.parse(init.body);
+    expect(body.options).toEqual({
+      num_predict: 42,
+      num_ctx: 32_768,
+      num_keep: -1,
+      temperature: 0.1,
     });
   });
 
