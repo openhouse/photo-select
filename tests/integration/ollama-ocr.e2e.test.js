@@ -1,11 +1,16 @@
+import 'dotenv/config';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import sharp from 'sharp';
 
-const shouldRun =
-  process.env.OLLAMA_E2E === '1' && typeof process.env.OLLAMA_MODEL === 'string';
+const ollamaModel =
+  typeof process.env.OLLAMA_MODEL === 'string'
+    ? process.env.OLLAMA_MODEL.trim()
+    : '';
+
+const shouldRun = process.env.OLLAMA_E2E === '1' && ollamaModel.length > 0;
 
 function randomNonce(length = 10) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -82,7 +87,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
       const reply = await provider.chat({
         prompt: basePrompt,
         images: [imagePath],
-        model: process.env.OLLAMA_MODEL,
+        model: ollamaModel,
         options: { temperature: 0 },
         savePayload: async (payload) => {
           capturedPayload = payload;
@@ -115,7 +120,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
       const reply = await provider.chat({
         prompt: basePrompt,
         images: [],
-        model: process.env.OLLAMA_MODEL,
+        model: ollamaModel,
         options: { temperature: 0 },
       });
       expect(typeof reply).toBe('string');
@@ -132,7 +137,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
       const reply = await provider.chat({
         prompt: basePrompt,
         images: [blurredPath],
-        model: process.env.OLLAMA_MODEL,
+        model: ollamaModel,
         options: { temperature: 0 },
       });
       expect(typeof reply).toBe('string');

@@ -5,7 +5,14 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { applyPatch } from 'diff';
+let diffModule;
+
+async function loadDiff() {
+  if (!diffModule) {
+    diffModule = import('diff');
+  }
+  return diffModule;
+}
 
 const exec = promisify(execFile);
 
@@ -93,6 +100,7 @@ export default class FieldNotesWriter {
       await this._exec('patch', [oldPath, patchPath], { cwd: dir });
       updated = await fs.readFile(oldPath, 'utf8');
     } catch (err) {
+      const { applyPatch } = await loadDiff();
       updated = applyPatch(old, diffText);
       if (updated === false) {
         await fs.rm(dir, { recursive: true, force: true });

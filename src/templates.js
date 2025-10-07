@@ -1,6 +1,13 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import Handlebars from 'handlebars';
+let handlebarsModule;
+
+async function loadHandlebars() {
+  if (!handlebarsModule) {
+    handlebarsModule = import('handlebars').then((mod) => mod.default ?? mod);
+  }
+  return handlebarsModule;
+}
 
 const fmin = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MIN || 1.5);
 const fmax = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MAX || 2.5);
@@ -11,6 +18,7 @@ export const DEFAULT_PROMPT_PATH = path.resolve(
 
 export async function renderTemplate(filePath = DEFAULT_PROMPT_PATH, data = {}) {
   const source = await fs.readFile(filePath, 'utf8');
+  const Handlebars = await loadHandlebars();
   const template = Handlebars.compile(source, { noEscape: true });
   return template(data);
 }
