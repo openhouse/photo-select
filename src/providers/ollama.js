@@ -107,10 +107,13 @@ async function ensureModelReady(model) {
       }
 
       try {
+        if (typeof model !== "string" || !model.trim()) {
+          throw new Error("An Ollama model name must be provided");
+        }
         const res = await fetch(SHOW_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model }),
+          body: JSON.stringify({ name: model }),
         });
         if (res.status === 404) {
           throw new Error(createMissingModelMessage(model));
