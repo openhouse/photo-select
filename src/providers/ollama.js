@@ -239,6 +239,7 @@ export default class OllamaProvider {
     expectFieldNotesMd = false,
     minutesMin,
     minutesMax,
+    options: requestOptions = {},
   } = {}) {
     await ensureModelReady(model);
 
@@ -272,16 +273,20 @@ export default class OllamaProvider {
         const encodedMessages = await encodeMessageImages(finalMessages);
         onProgress("request");
 
+        const baseOptions = {
+          num_predict: OLLAMA_NUM_PREDICT,
+          num_ctx: OLLAMA_NUM_CTX,
+          num_keep: OLLAMA_NUM_KEEP,
+        };
+        const filteredOverrides = Object.fromEntries(
+          Object.entries(requestOptions || {}).filter(([, value]) => value !== undefined)
+        );
         const params = {
           model,
           messages: encodedMessages,
           stream: false,
           keep_alive: KEEP_ALIVE,
-          options: {
-            num_predict: OLLAMA_NUM_PREDICT,
-            num_ctx: OLLAMA_NUM_CTX,
-            // num_keep: OLLAMA_NUM_KEEP,
-          },
+          options: { ...baseOptions, ...filteredOverrides },
         };
 
         // Build the request format. If an environment override is not provided
