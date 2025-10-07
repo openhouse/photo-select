@@ -229,6 +229,32 @@ async function postChatRequest(params, timeoutMs) {
   }
 }
 
+function normalizeContent(content) {
+  if (typeof content !== "string") return content;
+  let trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\n?([\s\S]*?)\n?```$/i);
+  if (fenced) {
+    trimmed = fenced[1].trim();
+  }
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.text === "string") {
+          return parsed.text.trim();
+        }
+        if (typeof parsed.response === "string") {
+          return parsed.response.trim();
+        }
+      }
+    } catch {
+      /* ignore parse errors */
+    }
+  }
+  return trimmed;
+}
+
 export default class OllamaProvider {
   async chat({
     prompt,
@@ -322,7 +348,7 @@ export default class OllamaProvider {
           throw new Error("empty response");
         }
         onProgress("done");
-        return content;
+        return normalizeContent(content);
       } catch (err) {
         if (process.env.PHOTO_SELECT_VERBOSE) {
           console.error("ollama fetch failure:", err);
