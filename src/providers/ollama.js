@@ -269,6 +269,7 @@ export default class OllamaProvider {
     minutesMin,
     minutesMax,
     options: requestOptions = {},
+    structuredOutput = true,
   } = {}) {
     await ensureModelReady(model);
 
@@ -322,20 +323,22 @@ export default class OllamaProvider {
         // generate a structured-output schema matching the expected reply
         // shape. Legacy "json" mode remains available but is unreliable with
         // images.
-        let format = OLLAMA_FORMAT_OVERRIDE;
-        if (format === undefined) {
-          format = buildReplySchema({
-            instructions: expectFieldNotesInstructions,
-            fullNotes: expectFieldNotesMd,
-            minutesMin,
-            minutesMax,
-            images: (images || []).map((f) => path.basename(f)),
-          });
-        }
-        if (format !== null) {
-          const isPlainJson = format === "json";
-          if (!(isPlainJson && imagePaths.length > 0)) {
-            params.format = format;
+        if (structuredOutput !== false) {
+          let format = OLLAMA_FORMAT_OVERRIDE;
+          if (format === undefined) {
+            format = buildReplySchema({
+              instructions: expectFieldNotesInstructions,
+              fullNotes: expectFieldNotesMd,
+              minutesMin,
+              minutesMax,
+              images: (images || []).map((f) => path.basename(f)),
+            });
+          }
+          if (format !== null) {
+            const isPlainJson = format === "json";
+            if (!(isPlainJson && imagePaths.length > 0)) {
+              params.format = format;
+            }
           }
         }
 

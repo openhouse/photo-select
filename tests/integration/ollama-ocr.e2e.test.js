@@ -35,18 +35,41 @@ function canonicalizeOcr(text) {
   return alphanumeric.replace(/(.)\1+/g, '$1');
 }
 
+function escapeForSvg(text) {
+  return String(text ?? '').replace(/[&<>'"]/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&#39;';
+      default:
+        return char;
+    }
+  });
+}
+
 async function renderHighContrastPng(text) {
-  const safeText = String(text ?? '');
-  const length = Math.max(safeText.length, 1);
-  const horizontalPadding = 160;
-  const charWidth = 180;
-  const width = Math.max(1280, length * charWidth + horizontalPadding * 2);
+  const rawText = String(text ?? '');
+  const safeText = escapeForSvg(rawText);
+  const length = rawText.length || 1;
+  const fontSize = 220;
+  const letterSpacing = 8;
+  const minWidth = 1280;
+  const padding = fontSize * 2;
+  const estimatedCharWidth = fontSize + letterSpacing;
+  const width = Math.max(minWidth, Math.ceil(length * estimatedCharWidth + padding));
   const height = 640;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="geometricPrecision">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
     <rect width="100%" height="100%" fill="white"/>
-    <text x="${width / 2}" y="${height / 2}"
+    <text x="50%" y="50%"
           font-family="DejaVu Sans Mono, Menlo, Consolas, monospace"
-          font-size="220" font-weight="700" letter-spacing="8"
+          font-size="${fontSize}" font-weight="700" letter-spacing="${letterSpacing}"
           style="font-variant-ligatures:none"
           text-anchor="middle" dominant-baseline="middle" fill="black">${safeText}</text>
   </svg>`;
@@ -127,6 +150,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
           top_k: 1,
           repeat_penalty: 1.2,
         },
+        structuredOutput: false,
         savePayload: async (payload) => {
           capturedPayload = payload;
         },
@@ -166,6 +190,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
           top_k: 1,
           repeat_penalty: 1.2,
         },
+        structuredOutput: false,
       });
       expect(typeof reply).toBe('string');
       expect(reply.trim()).toBe('NONE');
@@ -189,6 +214,7 @@ describeIf('OllamaProvider OCR end-to-end', () => {
           top_k: 1,
           repeat_penalty: 1.2,
         },
+        structuredOutput: false,
       });
       expect(typeof reply).toBe('string');
       expect(canonicalizeOcr(reply)).not.toBe(nonce);
