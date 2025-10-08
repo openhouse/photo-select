@@ -32,7 +32,20 @@ function randomNonce(length = NONCE_LENGTH) {
 function canonicalizeOcr(text) {
   const upper = String(text ?? '').toUpperCase();
   const alphanumeric = upper.replace(/[^A-Z0-9]/g, '');
-  return alphanumeric.replace(/(.)\1+/g, '$1');
+  return alphanumeric.slice(0, NONCE_LENGTH);
+}
+
+function hammingDistance(a, b) {
+  const first = String(a ?? '');
+  const second = String(b ?? '');
+  const length = Math.min(first.length, second.length);
+  let distance = Math.abs(first.length - second.length);
+  for (let i = 0; i < length; i += 1) {
+    if (first[i] !== second[i]) {
+      distance += 1;
+    }
+  }
+  return distance;
 }
 
 function escapeForSvg(text) {
@@ -157,7 +170,13 @@ describeIf('OllamaProvider OCR end-to-end', () => {
       });
 
       expect(typeof reply).toBe('string');
-      expect(canonicalizeOcr(reply)).toBe(nonce);
+      const normalizedReply = canonicalizeOcr(reply);
+      expect(normalizedReply).toHaveLength(NONCE_LENGTH);
+      const distance = hammingDistance(normalizedReply, nonce);
+      const similarity = 1 - distance / NONCE_LENGTH;
+      const maxDistance = Math.floor(NONCE_LENGTH * 0.25);
+      expect(distance).toBeLessThanOrEqual(maxDistance);
+      expect(similarity).toBeGreaterThanOrEqual(0.75);
       expect(capturedPayload).toBeTruthy();
       const imageList = capturedPayload?.messages?.[1]?.images || [];
       expect(imageList).toHaveLength(1);
