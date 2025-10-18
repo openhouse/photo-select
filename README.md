@@ -3,6 +3,13 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+You can run sessions in two “gears”:
+
+- **Realtime (`openai`)** – submit a request and stream the reply immediately.
+- **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
+  then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
+  Batch offers separate rate limits and lower per-token pricing than realtime calls.
+
 ---
 
 ## Requirements
@@ -51,7 +58,7 @@ Invoke the CLI from the project directory using `npx`:
 ```bash
 npx photo-select \
   [--dir /path/to/images] \
-  [--provider ollama] \
+  [--provider openai|openai-batch|ollama] \
   [--model qwen2.5vl:32b] \
   [--api-key sk-...] \
   [--context /path/to/context.txt]
@@ -64,14 +71,49 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 ```bash
 # run from the project directory
 npx photo-select --provider openai --model gpt-4o [other flags]
+# enqueue a batch job for the current level
+npx photo-select --provider openai-batch --model gpt-5 [other flags]
 # or, if installed globally:
 photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
 
 Run `photo-select --help` to see all options.
 
+The OpenAI providers both generate multimodal, structured responses; the batch
+transport simply defers collection until the job completes. Use `photo-select
+batch watch` to poll for finished jobs and apply their minutes/decisions.
+
 The Ollama provider uses the official `ollama` JavaScript library. Images are
 sent by file path so no base64 encoding step is required.
+
+### Gears & durable state
+
+Each recursion level stores its provider “gear” in
+`<level>/.photo-select/gear.json`. Switch gears without restarting by running:
+
+```bash
+photo-select gear openai        # realtime
+photo-select gear openai-batch  # batch
+```
+
+In-flight sessions finish on the gear they started with. Batch mode writes
+JSONL inputs, tickets, and results to `<level>/.photo-select/` alongside the
+minutes/decisions files so you can pause, resume, or audit progress later.
+
+To check progress or apply finished jobs manually:
+
+```bash
+photo-select batch watch --dir /path/to/story   # poll & apply results
+photo-select batch ls                           # list known batch jobs
+photo-select batch cancel <batch_id>            # best-effort cancel
+photo-select probe --n 3                        # realtime, read-only tasting
+```
+
+Batch-specific environment variables mirror these flags:
+
+- `PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS` – override the polling cadence.
+- `PHOTO_SELECT_BATCH_MAX_IN_FLIGHT` – cap concurrent batch jobs per level.
+- `PHOTO_SELECT_BATCH_SQLITE=1` – ensure the per-level SQLite ledger is created.
 
 ### photo-select-here.sh
 
@@ -107,7 +149,7 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--provider` | `openai` | `openai` or `ollama` |
+| `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
 | `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
@@ -120,7 +162,10 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
 | `--save-io` | `false` | Save prompts and responses for debugging |
-| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
+| `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
+| `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
+| `--batch-window` | `24h` | Completion window requested for batch jobs |
+| `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
 People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
@@ -287,7 +332,7 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
 
 ## Supported OpenAI models
 
-The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
+The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. In batch mode, each session is serialized to a single JSONL line and submitted to the Batch API with the same structured-output schema. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
 * **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, and `gpt-5-chat-latest`
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
