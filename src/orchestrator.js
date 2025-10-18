@@ -256,6 +256,13 @@ export async function triageDirectory({
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const runSession = async (payload) => {
+    const handle = await provider.submit({
+      levelDir,
+      ...payload,
+    });
+    return provider.collect(handle);
+  };
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
@@ -406,7 +413,7 @@ export async function triageDirectory({
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
                 await saveText('prompt', attemptNum, first.prompt);
-                reply = await provider.chat({
+                const { raw: firstRaw } = await runSession({
                   prompt: first.prompt,
                   images: batch,
                   model,
@@ -420,6 +427,7 @@ export async function triageDirectory({
                   },
                   stream: true,
                 });
+                reply = firstRaw;
                 await saveText('response', attemptNum, reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
@@ -443,7 +451,7 @@ export async function triageDirectory({
                     ].join("\n");
                     attemptNum++;
                     await saveText('prompt', attemptNum, repair);
-                    reply = await provider.chat({
+                    const { raw: repairRaw } = await runSession({
                       prompt: repair,
                       images: batch,
                       model,
@@ -457,6 +465,7 @@ export async function triageDirectory({
                       },
                       stream: true,
                     });
+                    reply = repairRaw;
                     await saveText('response', attemptNum, reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
