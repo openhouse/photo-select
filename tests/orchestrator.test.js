@@ -254,4 +254,34 @@ describe("triageDirectory", () => {
     await expect(fs.stat(path.join(tmpDir, '_keep', '1.jpg'))).resolves.toBeTruthy();
   });
 
+  it("stops processing when billing limit is reached", async () => {
+    const provider = {
+      submit: vi.fn(async () => ({})),
+      collect: vi.fn(async () => {
+        const err = new Error("Billing hard limit has been reached");
+        err.response = {
+          data: { error: { message: "Billing hard limit has been reached" } },
+        };
+        throw err;
+      }),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "test-model",
+          recurse: false,
+          provider,
+        })
+      ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+  });
+
 });
