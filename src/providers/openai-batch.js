@@ -7,6 +7,7 @@ import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
 import { buildReplySchema } from '../replySchema.js';
 import { computeMaxOutputTokens } from '../tokenEstimate.js';
 import { delay } from '../config.js';
+import { debugBatch } from '../../scripts/debug-batch.mjs';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
@@ -220,6 +221,11 @@ export default class OpenAIBatchProvider {
           input_file_id: inputFile.id,
           endpoint,
           completion_window: this.completionWindow,
+          metadata: {
+            custom_id: customId,
+            model,
+            level: levelKey(levelDir),
+          },
         });
         endpointUsed = endpoint;
         break;
@@ -304,6 +310,14 @@ export default class OpenAIBatchProvider {
       });
       if (job.status === 'completed') {
         if (!job.output_file_id) {
+          console.error(
+            `⚠️  Batch ${handle.batchId} completed without output — running diagnostics…`
+          );
+          try {
+            await debugBatch(handle.batchId);
+          } catch (diagErr) {
+            console.error('❌ debugBatch helper failed:', diagErr);
+          }
           throw new Error(`Batch ${handle.batchId} completed without output`);
         }
         const resp = await this.client.files.content(job.output_file_id);
