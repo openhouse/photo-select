@@ -222,6 +222,32 @@ export async function triageDirectory({
   const indent = "  ".repeat(depth);
   let notesWriter;
 
+  function isBillingLimitError(err) {
+    if (!err) return false;
+    const candidates = [
+      err?.message,
+      err?.error?.message,
+      err?.cause?.message,
+      err?.response?.data?.error?.message,
+      err?.response?.data?.message,
+      err?.response?.error?.message,
+      err?.response?.message,
+      err?.body?.error?.message,
+      err?.body?.message,
+    ]
+      .flat()
+      .filter(Boolean)
+      .map((msg) => String(msg));
+    return candidates.some((message) => /billing (hard )?limit/i.test(message));
+  }
+
+  function createBillingLimitError(err) {
+    const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
+    wrapped.code = "BILLING_LIMIT";
+    wrapped.cause = err;
+    return wrapped;
+  }
+
   let dynamicWorkers = workers;
   let consecutiveGatewayErrors = 0;
   function isGatewayError(e) {
@@ -355,7 +381,9 @@ export async function triageDirectory({
           }
         };
         let batchIdx = 0;
-        const nextBatch = () => (queue.length ? queue.splice(0, BATCH_SIZE) : null);
+        let abortProcessing = false;
+        const nextBatch = () =>
+          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
 
         async function workerFn() {
           while (true) {
@@ -572,6 +600,12 @@ export async function triageDirectory({
                 bar.stop();
                 multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                if (isBillingLimitError(err) && !abortProcessing) {
+                  abortProcessing = true;
+                  queue.length = 0;
+                  log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                  throw createBillingLimitError(err);
+                }
               }
             });
           }

@@ -219,6 +219,15 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
+    if (err?.code === "BILLING_LIMIT") {
+      console.error(
+        "🛑  Billing limit reached. Please review your provider usage before retrying."
+      );
+      if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+        console.error("  ↳ cause:", err.cause);
+      }
+      process.exit(1);
+    }
     console.error("❌  Error:", err);
     process.exit(1);
   }
