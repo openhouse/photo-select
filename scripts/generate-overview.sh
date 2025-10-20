@@ -166,7 +166,7 @@ echo ""
 SKIP_DIRS=(.git node_modules dist .vscode .cache .debug)
 
 # File patterns to skip
-SKIP_FILES=("*.lock" "yarn.lock" "package-lock.json" "project-overview*")
+SKIP_FILES=("*.lock" "yarn.lock" "package-lock.json" "project-overview*" ".env")
 
 FIND_CMD=(find .)
 
