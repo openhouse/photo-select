@@ -183,6 +183,42 @@ function formatDuration(ms) {
   return `${s}s`;
 }
 
+async function dirExists(p) {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch (err) {
+    if (err?.code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Follow the _keep chain until we find a directory with unclassified images or
+ * run out of nested _keep folders.
+ *
+ * @param {string} startDir
+ * @returns {Promise<{dir: string, hops: number}>}
+ */
+export async function resolveResumeLevel(startDir) {
+  let current = startDir;
+  let hops = 0;
+
+  while (true) {
+    const imagesHere = await listImages(current);
+    if (imagesHere.length > 0) {
+      return { dir: current, hops };
+    }
+
+    const next = path.join(current, "_keep");
+    if (!(await dirExists(next))) {
+      return { dir: current, hops };
+    }
+
+    current = next;
+    hops += 1;
+  }
+}
+
 /**
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
@@ -198,23 +234,24 @@ function formatDuration(ms) {
 * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
 * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
-export async function triageDirectory({
-  dir,
-  promptPath,
-  provider,
-  model,
-  recurse = true,
-  curators = [],
-  contextPath,
-  fieldNotes = false,
-  verbose = false,
-  saveIo = false,
-  workers = 1,
-  verbosity,
-  reasoningEffort,
-  depth = 0,
-  gitRoot,
-}) {
+export async function triageDirectory(options) {
+  let {
+    dir,
+    promptPath,
+    provider,
+    model,
+    recurse = true,
+    curators = [],
+    contextPath,
+    fieldNotes = false,
+    verbose = false,
+    saveIo = false,
+    workers = 1,
+    verbosity,
+    reasoningEffort,
+    depth = 0,
+    gitRoot,
+  } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
@@ -274,6 +311,25 @@ export async function triageDirectory({
   }
 
   if (!gitRoot) gitRoot = dir;
+
+  if (recurse) {
+    const { dir: workDir, hops } = await resolveResumeLevel(dir);
+    if (workDir !== dir) {
+      const relative = path.relative(dir, workDir) || ".";
+      const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+      console.log(
+        `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+      );
+      return triageDirectory({
+        ...options,
+        dir: workDir,
+        depth: depth + hops,
+        provider,
+        gitRoot,
+      });
+    }
+  }
+
   if (fieldNotes && depth === 0) {
     await ensureGitRepo(gitRoot);
   }
@@ -645,12 +701,14 @@ export async function triageDirectory({
       }
     };
 
-    const [keepCount, asideCount] = await Promise.all([
+    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
       countImages(keepDir),
       countImages(asideDir),
+      dirExists(path.join(keepDir, "_keep")),
     ]);
 
-    if (keepCount > 0 && asideCount > 0) {
+    const keepHasWork = keepCount > 0 || hasDeeperKeep;
+    if (keepHasWork) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
