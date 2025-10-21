@@ -100,6 +100,26 @@ describe('OpenAIBatchProvider', () => {
     expect(ticket.used_images).toEqual(['1.jpg']);
   });
 
+  it('limits safeId length for deeply nested level directories', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
+    let longDir = tmpDir;
+    for (let i = 0; i < 5; i += 1) {
+      longDir = path.join(longDir, `segment-${i}-${'x'.repeat(40)}`);
+    }
+    await fs.mkdir(longDir, { recursive: true });
+    const imagePath = path.join(longDir, 'image.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({
+      levelDir: longDir,
+      prompt: 'prompt',
+      images: [imagePath],
+      model: 'gpt-5',
+    });
+    expect(handle.safeId.length).toBeLessThanOrEqual(200);
+    const ticketPath = path.join(longDir, '.batch', 'tickets', `${handle.safeId}.ticket.json`);
+    await expect(fs.stat(ticketPath)).resolves.toBeTruthy();
+  });
+
   it('collects completed batch results', async () => {
     const provider = new OpenAIBatchProvider({
       client,

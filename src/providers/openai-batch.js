@@ -16,8 +16,20 @@ const FALLBACK_ENDPOINT = '/v1/chat/completions';
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
 
+const MAX_SAFE_ID_LENGTH = 200;
+
 function safeId(customId) {
-  return customId.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const sanitized = customId.replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (sanitized.length <= MAX_SAFE_ID_LENGTH) {
+    return sanitized;
+  }
+  const digest = crypto.createHash('sha256').update(sanitized).digest('hex');
+  const suffix = `_${digest.slice(0, 16)}`;
+  const sliceLength = Math.max(1, MAX_SAFE_ID_LENGTH - suffix.length);
+  const base = sanitized.slice(0, sliceLength);
+  const trimmed = base.replace(/[_-]+$/g, '');
+  const prefix = trimmed || base;
+  return `${prefix}${suffix}`;
 }
 
 function levelKey(levelDir) {

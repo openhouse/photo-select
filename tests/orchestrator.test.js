@@ -90,6 +90,39 @@ describe("triageDirectory", () => {
     await expect(fs.stat(aside2)).resolves.toBeTruthy();
   });
 
+  it("resumes into deepest _keep when parent has no images", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    const deep = path.join(tmpDir, "_keep", "_keep");
+    await fs.mkdir(deep, { recursive: true });
+    await fs.writeFile(path.join(deep, "1.jpg"), "a");
+    await fs.writeFile(path.join(deep, "2.jpg"), "b");
+
+    chatCompletion
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+      )
+      .mockResolvedValue(
+        JSON.stringify({ keep: [], aside: ["1.jpg"] })
+      );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    await expect(
+      fs.stat(path.join(deep, "_keep", "_aside", "1.jpg"))
+    ).resolves.toBeTruthy();
+    await expect(
+      fs.stat(path.join(deep, "_aside", "2.jpg"))
+    ).resolves.toBeTruthy();
+
+    chatCompletion.mockReset();
+  });
+
   it("processes batches in parallel", async () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
