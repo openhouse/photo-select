@@ -77,6 +77,24 @@ program
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option(
+    "--strategy <mode>",
+    "Materialization strategy (auto|clone|hardlink|copy|move)",
+    process.env.COPY_STRATEGY || "auto"
+  )
+  .option(
+    "--materialize-concurrency <n>",
+    "Maximum concurrent materialization operations",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
+  .option("--dry-run", "Plan materialization without writing files")
+  .option("--apfs-required", "Fail if copy-on-write clone is unavailable")
+  .option(
+    "--journal <file>",
+    "Path to the materialization journal",
+    process.env.PHOTO_SELECT_JOURNAL
+  )
+  .option("--log-json", "Emit JSON entries for materialization events")
   .parse(process.argv);
 
 let {
@@ -97,6 +115,12 @@ let {
   reasoningEffort,
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
+  strategy: strategyFlag,
+  materializeConcurrency: materializeConcurrencyFlag,
+  dryRun: dryRunFlag,
+  apfsRequired,
+  journal: journalPathFlag,
+  logJson,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -144,6 +168,24 @@ scheduler.setConcurrency(Math.min(concurrency, undiciConnections));
 console.log(
   `⚙️  workers=${workers} concurrency=${concurrency} undici_connections=${undiciConnections}`
 );
+
+const finalCopyStrategy = (strategyFlag || process.env.COPY_STRATEGY || "auto").toLowerCase();
+process.env.COPY_STRATEGY = finalCopyStrategy;
+const materializeDryRun = !!dryRunFlag;
+const requireCloneFlag = !!apfsRequired;
+const materializeLogJsonFlag = !!logJson;
+if (materializeLogJsonFlag) {
+  process.env.PHOTO_SELECT_LOG_JSON = "1";
+}
+const finalJournalPath = journalPathFlag || process.env.PHOTO_SELECT_JOURNAL || undefined;
+if (finalJournalPath) {
+  process.env.PHOTO_SELECT_JOURNAL = finalJournalPath;
+}
+const materializeConcurrencyValue =
+  materializeConcurrencyFlag ??
+  (process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY
+    ? Math.max(1, parseInt(process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY, 10))
+    : undefined);
 
 let shuttingDown = false;
 async function handleSignal(sig) {
@@ -216,6 +258,12 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
+      copyStrategy: finalCopyStrategy,
+      materializeDryRun,
+      materializeConcurrency: materializeConcurrencyValue,
+      requireClone: requireCloneFlag,
+      materializeLogJson: materializeLogJsonFlag,
+      journalPath: finalJournalPath,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

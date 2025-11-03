@@ -22,6 +22,16 @@ import { triageDirectory } from "../src/orchestrator.js";
 let tmpDir;
 let promptFile;
 
+function buildOptions(overrides = {}) {
+  return {
+    dir: tmpDir,
+    promptPath: promptFile,
+    model: "test-model",
+    journalPath: path.join(tmpDir, "journal.ndjson"),
+    ...overrides,
+  };
+}
+
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-test-"));
   await fs.writeFile(path.join(tmpDir, "1.jpg"), "a");
@@ -40,12 +50,7 @@ describe("triageDirectory", () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
     );
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-    });
+    await triageDirectory(buildOptions({ recurse: false }));
     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
@@ -58,12 +63,7 @@ describe("triageDirectory", () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }))
       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["1.jpg"] }));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: true,
-    });
+    await triageDirectory(buildOptions({ recurse: true }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const aside2 = path.join(tmpDir, "_keep", "_aside", "1.jpg");
     await expect(fs.stat(aside2)).resolves.toBeTruthy();
@@ -79,12 +79,7 @@ describe("triageDirectory", () => {
       .mockResolvedValueOnce(
         JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
       );
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: true,
-    });
+    await triageDirectory(buildOptions({ recurse: true }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
     await expect(fs.stat(aside2)).resolves.toBeTruthy();
@@ -106,12 +101,7 @@ describe("triageDirectory", () => {
         JSON.stringify({ keep: [], aside: ["1.jpg"] })
       );
 
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: true,
-    });
+    await triageDirectory(buildOptions({ recurse: true }));
 
     await expect(
       fs.stat(path.join(deep, "_keep", "_aside", "1.jpg"))
@@ -127,13 +117,7 @@ describe("triageDirectory", () => {
     chatCompletion
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-      parallel: 2,
-    });
+    await triageDirectory(buildOptions({ recurse: false, parallel: 2 }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
@@ -146,13 +130,7 @@ describe("triageDirectory", () => {
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-      workers: 2,
-    });
+    await triageDirectory(buildOptions({ recurse: false, workers: 2 }));
     const etaLogs = logSpy.mock.calls.filter(([m]) =>
       m.includes("ETA to finish level")
     );
@@ -171,13 +149,7 @@ describe("triageDirectory", () => {
       .mockResolvedValueOnce(
         JSON.stringify({ keep: [], aside: ["2.jpg", "3.jpg"] })
       );
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-      workers: 2,
-    });
+    await triageDirectory(buildOptions({ recurse: false, workers: 2 }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     await expect(
       fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
@@ -194,12 +166,7 @@ describe("triageDirectory", () => {
     chatCompletion
       .mockRejectedValueOnce(new Error("timeout"))
       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-    });
+    await triageDirectory(buildOptions({ recurse: false }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
@@ -211,13 +178,7 @@ describe("triageDirectory", () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
     );
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-      saveIo: true,
-    });
+    await triageDirectory(buildOptions({ recurse: false, saveIo: true }));
     const levelDir = path.join(tmpDir, "_level-001");
     const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
     const responses = await fs.readdir(path.join(levelDir, "_responses"));
@@ -243,14 +204,9 @@ describe("triageDirectory", () => {
       .mockResolvedValueOnce(["Alice", "Bob"])
       .mockResolvedValueOnce(["Alice"]);
     await fs.writeFile(promptFile, "Curators: {{curators}}");
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: "test-model",
-      recurse: false,
-      saveIo: true,
-      curators: ["Bob"],
-    });
+    await triageDirectory(
+      buildOptions({ recurse: false, saveIo: true, curators: ["Bob"] })
+    );
     const levelDir = path.join(tmpDir, "_level-001");
     const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
     const promptTxt = await fs.readFile(
@@ -271,12 +227,7 @@ describe("triageDirectory", () => {
         '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
       );
     await fs.unlink(path.join(tmpDir, '2.jpg'));
-    await triageDirectory({
-      dir: tmpDir,
-      promptPath: promptFile,
-      model: 'test-model',
-      recurse: false,
-    });
+    await triageDirectory(buildOptions({ recurse: false }));
     expect(chatCompletion).toHaveBeenCalledTimes(2);
     const secondCall = chatCompletion.mock.calls[1][0];
     expect(secondCall.prompt).toMatch(/Return only the block below/);
@@ -301,13 +252,7 @@ describe("triageDirectory", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await expect(
-        triageDirectory({
-          dir: tmpDir,
-          promptPath: promptFile,
-          model: "test-model",
-          recurse: false,
-          provider,
-        })
+        triageDirectory(buildOptions({ recurse: false, provider }))
       ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
     } finally {
       logSpy.mockRestore();
