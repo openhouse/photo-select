@@ -1,5 +1,5 @@
 # Project Overview
-Generated on: Thu Oct  9 12:08:05 EDT 2025
+Generated on: Tue Oct 21 09:18:26 EDT 2025
 
 This script produces a comprehensive snapshot of all files in the ranked-choice project.
 Sensitive data could be exposed, so protect 'project-overview.txt' accordingly.
@@ -22,7 +22,10 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   ├── other-branch-snapshots
 │   │   ├── develop (latest-stable)
 │   │   └── field-notes-c01 (earlier attempt at field notes feature)
-│   └── parallel-playbook.md
+│   ├── parallel-playbook.md
+│   └── rfcs
+│       ├── 0008-openai-batch-provider.md
+│       └── 0009-openai-batch-provider.md
 ├── package-lock.json
 ├── package.json
 ├── photo-select-here.sh
@@ -33,6 +36,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 ├── README.md
 ├── README.md.orig
 ├── scripts
+│   ├── debug-batch.mjs
 │   ├── demote-thumb.js
 │   ├── generate-overview.sh
 │   ├── migrate-notes.js
@@ -60,6 +64,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
 │   ├── providers
 │   │   ├── index.js
 │   │   ├── ollama.js
+│   │   ├── openai-batch.js
 │   │   └── openai.js
 │   ├── replySchema.js
 │   ├── scheduler 2.js
@@ -80,6 +85,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     │   ├── prompt-curators.int.test.js
     │   └── prompt-curators.int.test.js.orig
     ├── ollamaProvider.test.js
+    ├── openaiBatchProvider.test.js
     ├── openaiProvider.test.js
     ├── orchestrator.test.js
     ├── people.test.js
@@ -90,7 +96,7 @@ Below is the tree of files/folders (excluding .git, node_modules, dist, project-
     ├── tokenEstimate.test 2.js
     └── tokenEstimate.test.js
 
-14 directories, 66 files
+15 directories, 71 files
 ```
 
 ---
@@ -195,7 +201,8 @@ describe('OpenAIProvider', () => {
   it('generates schema when env is unset', async () => {
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat({ expectFieldNotesInstructions: true });
+    const handle = await provider.submit({ expectFieldNotesInstructions: true });
+    await provider.collect(handle);
     expect(callArgs.responseFormat.schema.properties).toHaveProperty(
       'field_notes_instructions'
     );
@@ -205,7 +212,8 @@ describe('OpenAIProvider', () => {
     process.env.PHOTO_SELECT_OPENAI_FORMAT = 'json_object';
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat();
+    const handle = await provider.submit();
+    await provider.collect(handle);
     expect(callArgs.responseFormat).toEqual({ type: 'json_object' });
   });
 
@@ -213,7 +221,8 @@ describe('OpenAIProvider', () => {
     process.env.PHOTO_SELECT_OPENAI_FORMAT = '';
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat();
+    const handle = await provider.submit();
+    await provider.collect(handle);
     expect(callArgs.responseFormat).toBeUndefined();
   });
 });
@@ -475,6 +484,36 @@ describe("triageDirectory", () => {
     expect(secondCall.minutesMin).toBe(0);
     expect(secondCall.minutesMax).toBe(0);
     await expect(fs.stat(path.join(tmpDir, '_keep', '1.jpg'))).resolves.toBeTruthy();
+  });
+
+  it("stops processing when billing limit is reached", async () => {
+    const provider = {
+      submit: vi.fn(async () => ({})),
+      collect: vi.fn(async () => {
+        const err = new Error("Billing hard limit has been reached");
+        err.response = {
+          data: { error: { message: "Billing hard limit has been reached" } },
+        };
+        throw err;
+      }),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "test-model",
+          recurse: false,
+          provider,
+        })
+      ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
   });
 
 });
@@ -1502,6 +1541,170 @@ describe("adaptive tokens", () => {
 });
 ```
 
+### File: ./tests/openaiBatchProvider.test.js
+```
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('handlebars', () => ({
+  default: {
+    compile: () => () => '',
+  },
+}));
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+
+const createClient = () => {
+  const files = {
+    create: vi.fn(async () => ({ id: 'file_123' })),
+    content: vi.fn(),
+  };
+  const batches = {
+    create: vi.fn(async () => ({ id: 'batch_123', status: 'validating' })),
+    retrieve: vi.fn(),
+    cancel: vi.fn(async () => ({})),
+  };
+  return { files, batches };
+};
+
+describe('OpenAIBatchProvider', () => {
+  let tmpDir;
+  let client;
+  let OpenAIBatchProvider;
+  let helpers;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ps-batch-'));
+    client = createClient();
+    process.env.OPENAI_API_KEY = 'test-key';
+    helpers = {
+      buildInput: vi.fn(async (prompt, images) => ({
+        instructions: prompt,
+        input: [
+          {
+            role: 'user',
+            content: [],
+          },
+        ],
+        used: images,
+      })),
+      buildMessages: vi.fn(async (prompt) => ({
+        messages: [{ role: 'user', content: prompt }],
+        used: [],
+      })),
+      schemaForBatch: vi.fn((used) => ({
+        name: 'PhotoSelectPanelV1',
+        schema: {
+          type: 'object',
+          properties: {
+            minutes: { type: 'array' },
+            decisions: { type: 'array' },
+          },
+        },
+      })),
+      buildReplySchema: vi.fn(() => ({
+        type: 'object',
+        properties: {
+          minutes: { type: 'array' },
+          decisions: { type: 'array' },
+        },
+      })),
+    };
+    ({ default: OpenAIBatchProvider } = await import('../src/providers/openai-batch.js'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    vi.clearAllMocks();
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it('writes JSONL input and ticket on submit', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
+    const imagePath = path.join(tmpDir, '1.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({
+      levelDir: tmpDir,
+      prompt: 'prompt',
+      images: [imagePath],
+      model: 'gpt-5',
+      curators: ['Curator'],
+    });
+    expect(handle.customId).toMatch(/^ps:/);
+    expect(client.files.create).toHaveBeenCalledTimes(1);
+    expect(client.batches.create).toHaveBeenCalledTimes(1);
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    expect(files.length).toBe(1);
+    const jsonl = await fs.readFile(path.join(inputsDir, files[0]), 'utf8');
+    const line = JSON.parse(jsonl.trim());
+    expect(line.custom_id).toBe(handle.customId);
+    expect(line.url).toBe('/v1/responses');
+    const ticketPath = path.join(tmpDir, '.batch', 'tickets', `${handle.safeId}.ticket.json`);
+    const ticket = JSON.parse(await fs.readFile(ticketPath, 'utf8'));
+    expect(ticket.batch_id).toBe('batch_123');
+    expect(ticket.used_images).toEqual(['1.jpg']);
+  });
+
+  it('collects completed batch results', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      pollIntervalMs: 0,
+      helpers,
+    });
+    const imagePath = path.join(tmpDir, '1.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({
+      levelDir: tmpDir,
+      prompt: 'prompt',
+      images: [imagePath],
+      model: 'gpt-5',
+    });
+    client.batches.retrieve
+      .mockResolvedValueOnce({ status: 'in_progress', id: 'batch_123' })
+      .mockResolvedValueOnce({
+        status: 'completed',
+        id: 'batch_123',
+        output_file_id: 'out_1',
+      });
+    const payload = JSON.stringify({
+      id: 'item_1',
+      custom_id: handle.customId,
+      response: {
+        status_code: 200,
+        body: JSON.stringify({
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_json',
+                  json: { minutes: [], decisions: [] },
+                },
+              ],
+            },
+          ],
+        }),
+        usage: { total_tokens: 12 },
+      },
+    });
+    client.files.content.mockResolvedValue({
+      text: async () => payload + '\n',
+    });
+    const result = await provider.collect(handle);
+    expect(result.raw).toBe(JSON.stringify({ minutes: [], decisions: [] }));
+    expect(result.json).toEqual({ minutes: [], decisions: [] });
+    expect(client.batches.retrieve).toHaveBeenCalledTimes(2);
+    expect(client.files.content).toHaveBeenCalledWith('out_1');
+    const ticketPath = path.join(tmpDir, '.batch', 'tickets', `${handle.safeId}.ticket.json`);
+    const ticket = JSON.parse(await fs.readFile(ticketPath, 'utf8'));
+    expect(ticket.status).toBe('completed');
+    const resultsPath = path.join(tmpDir, '.batch', 'results', `${handle.batchId}.jsonl`);
+    await expect(fs.stat(resultsPath)).resolves.toBeTruthy();
+  });
+});
+```
+
 ### File: ./tests/people.test.js
 ```
 import { describe, it, expect } from 'vitest';
@@ -2412,6 +2615,765 @@ Run a short dry pass with the chosen value and watch CPU usage and any `Rate lim
 
 ```
 
+### File: ./docs/rfcs
+```
+(File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./docs/rfcs/0008-openai-batch-provider.md
+```
+# RFC 0008 — OpenAI Batch Provider (MVP)
+
+**Status:** Proposed  
+**Authors:** Jamie Burkart et al.  
+**Reviewers:** Matteo Collina, Simon Willison, Evgeny Poberezkin, James M. Snell, Logan Kilpatrick, Yehuda Katz, Erik Bernhardsson, Deborah Treisman  
+**Created:** 2025‑10‑18  
+**Target Version:** v0.2.x
+
+## 0. Summary
+
+Add a new provider, **`openai-batch`**, that runs each *curatorial session* as a single **OpenAI Batch API** job. 
+We preserve all current invariants of `photo-select`: one session per recursion level, the same *minutes + decisions* artifacts, and identical on‑disk choreography (`_keep` / `_aside`, then descend).  
+Users can hot‑switch gears between realtime (`openai`) and batch (`openai-batch`), “taste the soup” with read‑only probe minutes, and pause/resume safely thanks to per‑level durable state.
+
+**Why Batch:**  
+- ~**50% lower cost** than synchronous APIs, per OpenAI pricing/FAQ. :contentReference[oaicite:3]{index=3}  
+- **Asynchronous** processing with a **24‑hour target window**; **no streaming**; **images supported**; **separate rate limits**. :contentReference[oaicite:4]{index=4}  
+- JSONL input format: one object per request with `custom_id`, `method`, `url`, `body`. :contentReference[oaicite:5]{index=5}
+
+> **Non‑negotiable invariant:** *One session = one call*. In batch mode this becomes *one batch job with exactly one JSONL line*. This avoids request‑size surprises and keeps mental models stable.
+
+> **Repository context:** We already have providers for OpenAI and Ollama; this RFC adds a third, `openai-batch`, without changing file choreography. :contentReference[oaicite:6]{index=6}
+
+---
+
+## 1. Goals
+
+1. **Drop‑in parity**  
+   For a given session input, batch mode yields the same shape of outputs (minutes + decisions) and triggers the same file moves as realtime.
+
+2. **Switchable gears**  
+   A control file `./.photo-select/gear.json` (`{"provider":"openai-batch"}` or `"openai"`) is read when a session is created. In‑flight sessions finish on their original provider.
+
+3. **Taste the soup**  
+   A probe command (`photo-select probe --n <int>`) runs a *realtime*, read‑only “tasting” at the current level that writes `probe-minutes.md` and `probe-decisions.json` without moving files.
+
+4. **Per‑level durability**  
+   Persist a small ledger next to artifacts (tickets + optional SQLite) so runs survive crashes and tolerate user edits between passes.
+
+5. **Model parity with GPT‑5**  
+   MVP targets **GPT‑5** through the **Responses API**; we fall back to Chat Completions when the Batch endpoint/model combination doesn’t support `/v1/responses`. :contentReference[oaicite:7]{index=7}
+
+---
+
+## 2. Non‑Goals
+
+- Streaming or partial result application (Batch doesn’t stream). :contentReference[oaicite:8]{index=8}  
+- Packing multiple sessions into one batch job (we intentionally keep one line per job).  
+- Changing curator personas, selection logic, or minutes/decisions schema.
+
+---
+
+## 3. User context: story → curation → resonance
+
+The practice begins with 2k–10k images and a rich context file (site copy, emails, calendar, voice memos) collapsed into a single text. Each session convenes a panel of curators, produces *minutes* and a strict JSON *decisions* block, moves photos into `_keep` or `_aside`, and recurses. Batch mode should *not* change the editorial stance or the location of artifacts; it only changes *when* results land and how much they cost.
+
+---
+
+## 4. Platform constraints (OpenAI)
+
+- **JSONL format**: Each request line must include `custom_id`, `method`, `url`, `body`. :contentReference[oaicite:9]{index=9}  
+- **Window & pricing**: 24‑hour completion target; ~50% cost reduction vs. synchronous APIs. :contentReference[oaicite:10]{index=10}  
+- **Capabilities**: No streaming; images supported; separate rate limits; zero‑data‑retention is not supported on Batch. Document this clearly in README. :contentReference[oaicite:11]{index=11}
+
+---
+
+## 5. Design
+
+### 5.1 Provider interface
+
+```ts
+// src/providers/types.d.ts
+export interface CuratorialProvider {
+  name: string; // 'openai' | 'ollama' | 'openai-batch'
+  submit(session: SessionInput, opts: ProviderOpts): Promise<SessionHandle>;
+  collect(handle: SessionHandle): Promise<SessionResult>; // resolves to the same structures used today
+  cancel?(handle: SessionHandle): Promise<void>;
+  // For realtime providers, submit() may internally execute and return an already-completed handle.
+}
+````
+
+The orchestrator treats providers uniformly: create sessions, then `collect()` results. Realtime resolves immediately; batch resolves when a job finishes. No change to recursion/file‑move logic.
+
+### 5.2 One session = one batch job
+
+For each session we write a **single‑line JSONL** file:
+
+```json
+{
+  "custom_id": "ps:<level-path>|sha256:<inputs>",
+  "method": "POST",
+  "url": "/v1/responses",
+  "body": {
+    "model": "gpt-5",
+    "reasoning": { "effort": "medium" },
+    "text": {
+      "verbosity": "low",
+      "format": {
+        "type": "json_schema",
+        "name": "PhotoSelectPanelV1",
+        "strict": true,
+        "schema": { /* unchanged schema */ }
+      }
+    },
+    "input": [
+      { "role": "user", "content": [
+        { "type": "input_text", "text": "Context ..." },
+        { "type": "input_text", "text": "{\"filename\":\"DSCF0001.jpg\",\"people\":[\"Alice\",\"Bob\"]}" },
+        { "type": "input_image", "image_url": { "url": "data:image/jpeg;base64,..." } }
+        /* up to N images, 1600px proxies */
+      ]}
+    ]
+  }
+}
+```
+
+We upload it via the **Files API** with `purpose:"batch"`, then create the job with `endpoint:"/v1/responses"` (or `/v1/chat/completions` if capability check fails) and `completion_window:"24h"`. We poll until *completed*, download `output_file_id`, parse the JSONL, match by `custom_id`, and hand the assistant’s structured JSON to the existing parser/mover logic. ([OpenAI Cookbook][3])
+
+> **Note**: For some releases, examples and guides use `/v1/chat/completions` in batch; we support both endpoints with an automatic fallback check. ([OpenAI Cookbook][3])
+
+### 5.3 Filesystem choreography (unchanged)
+
+Within the current recursion level directory:
+
+```
+<level-dir>/
+  minutes-*.json                # final minutes (unchanged)
+  decisions.json                # final decisions (unchanged)
+  _keep/  _aside/               # file moves (unchanged)
+  .photo-select/
+    gear.json                   # {"provider":"openai-batch"|"openai"}
+    state.db                    # optional SQLite (see 5.4)
+  .batch/
+    inputs/<custom_id>.jsonl
+    results/<batch_id>.jsonl
+    <custom_id>.ticket.json     # {batch_id, custom_id, status, model, submitted_at, ...}
+    <custom_id>.status.json     # mirror of batch status
+    jobs.ndjson                 # append-only ledger
+  probe-minutes.md              # probe artifacts (read-only)
+  probe-decisions.json
+```
+
+This *in‑place* layout remains tolerant to user edits between runs.
+
+### 5.4 Optional SQLite per level
+
+**File**: `<level-dir>/.photo-select/state.db`
+
+```sql
+CREATE TABLE jobs(
+  id TEXT PRIMARY KEY,            -- custom_id
+  batch_id TEXT NOT NULL,
+  level_dir TEXT NOT NULL,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,           -- validating|in_progress|finalizing|completed|failed|expired|cancelled
+  input_path TEXT NOT NULL,
+  output_path TEXT,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  image_bytes INTEGER DEFAULT 0,
+  est_cost_cents INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  error TEXT
+);
+CREATE INDEX jobs_status ON jobs(status);
+```
+
+SQLite is *optional* in MVP; JSON tickets suffice. When enabled (`PHOTO_SELECT_BATCH_SQLITE=1`), `photo-select status` can print per‑level scoreboards and projections.
+
+### 5.5 Probe mode
+
+`photo-select probe --n <int>` runs a *realtime* session against a small subset at the current level, writing `probe-minutes.md` and `probe-decisions.json` only. This supports the reflective “chef’s tasting” without disturbing the pipeline.
+
+### 5.6 Image inputs & size discipline
+
+We pass **proxy images** (long edge ≈1600px, JPEG Q≈85) to keep request bodies within limits and token accounting predictable. If a session exceeds body limits, split it into sequential parts `-part1`, `-part2` and merge decisions prior to moves. (Batch supports images; verify on model card; capability can vary by release.) ([OpenAI Help Center][2])
+
+---
+
+## 6. CLI & UX
+
+New provider & subcommands:
+
+```bash
+# Enqueue work at this level using Batch
+photo-select --provider openai-batch \
+  --model gpt-5 \
+  --reasoning-effort medium \
+  --curators "Ingeborg Gerdes, Deborah Treisman, M.M. Bakhtin, Jonas Mekas" \
+  --workers 10 \
+  --context /path/to/context.txt
+
+# Watch and apply results as jobs complete
+photo-select batch watch --dir /path/to/story
+
+# List, cancel, switch gears
+photo-select batch ls
+photo-select batch cancel <batch_id>
+photo-select gear openai         # switch to realtime for new sessions
+photo-select gear openai-batch   # back to batch
+
+# Taste the soup (no moves)
+photo-select probe --n 3
+```
+
+**Flags (new):**
+
+| Flag                       |     Default | Purpose                                           |
+| -------------------------- | ----------: | ------------------------------------------------- |
+| `--provider openai-batch`  |             | Use the Batch provider                            |
+| `--batch-check-interval`   |       `60s` | Poll cadence in `watch`                           |
+| `--batch-max-in-flight`    | `--workers` | Upper bound on queued jobs per level              |
+| `--model-fallback <model>` |             | Use if chosen model/endpoint isn’t batch‑eligible |
+| `--batch-keep-jsonl`       |     `false` | Keep input JSONL sidecar for debugging            |
+
+**Environment:**
+
+* `OPENAI_API_KEY`, `OPENAI_ORG_ID` (as today)
+* `PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS`, `PHOTO_SELECT_BATCH_MAX_IN_FLIGHT`
+* `PHOTO_SELECT_BATCH_SQLITE=1` to enable the DB
+* Optional `PHOTO_SELECT_BUDGET_USD` to guardrails enqueueing
+
+---
+
+## 7. Observability & cost
+
+* Append to `jobs.ndjson` on *every* state change.
+* Maintain estimated spend: `(input_tokens × unit_in + output_tokens × unit_out) × batch_discount`. Batch pricing is ~**50%** off synchronous. ([OpenAI][1])
+* `photo-select status` prints per‑level scoreboard:
+
+```
+level-03  queued:1 running:0 completed:1 failed:0 expired:0  est_cost:$0.42  model:gpt-5  provider:openai-batch
+```
+
+---
+
+## 8. Failure, retry, expiry
+
+Batch states to handle: **validating → in_progress → finalizing → completed | failed | expired | canceling → canceled**. Expired jobs may yield partial results; apply what’s valid and re‑enqueue leftovers. (OpenAI lists these states and 24h semantics; batch has separate limits, no streaming, images supported.) ([OpenAI Help Center][2])
+
+**Retries**: exponential backoff with jitter; cap attempts; write `failed-reply-*.json` on parse/validation errors; mark files `NEEDS_REVIEW` (no moves).
+
+**Idempotency**: `custom_id` is a content hash of (system prompt + context text + image list + curator roster + knobs). Resubmitting the same session updates status rather than duplicating work.
+
+---
+
+## 9. Security & privacy
+
+* Batch endpoint **does not** support zero‑data‑retention; document this clearly. ([OpenAI Help Center][2])
+* Avoid embedding PII in `custom_id`; use path hashes.
+* Make probe output opt‑in for sharing; minutes still live alongside decisions in the level dir to keep practice legible.
+
+---
+
+## 10. Back‑compat
+
+* Existing providers (`openai`, `ollama`) are untouched; the new provider is opt‑in via `--provider openai-batch`.
+* Artifact names and file moves remain identical.
+* Orchestrator recursion is unchanged; only submission/collection plumbing differs.
+
+---
+
+## 11. Implementation plan (MVP)
+
+1. **Provider module**
+
+   * `src/providers/openai-batch.js`: implements `submit/collect/cancel` using the OpenAI SDK `files` + `batches` APIs and writes per‑session tickets/artifacts.
+   * Capability check: try `/v1/responses` for selected model, fall back to `/v1/chat/completions` if unsupported.
+
+2. **Orchestrator glue**
+
+   * If provider resolves a handle with `{deferred:true}`, orchestrator proceeds without blocking; `batch watch` (or a background loop when the CLI is attached) later calls `collect()` to apply results.
+
+3. **CLI**
+
+   * Add `photo-select batch ls|watch|cancel`, `photo-select gear <provider>`, and `probe`.
+
+4. **Validation**
+
+   * Reuse the strict JSON schema you already send to GPT‑5; validate assistant JSON again with AJV (V8+) before moves.
+
+5. **Tests**
+
+   * Unit: JSONL generation preserves our schema and knobs.
+   * Integration: fixture a “completed” batch result; ensure minutes + moves match realtime oracle.
+   * Concurrency: reservations prevent overlap across multiple in‑flight jobs.
+   * Failure: `failed|expired|canceled` paths mark state and do not move files.
+
+6. **Docs**
+
+   * README section: Batch mode (cost, 24h window, statuses, images, no streaming, data-retention note, separate limits). ([OpenAI Help Center][2])
+
+---
+
+## 12. Alternatives considered
+
+* **Many sessions per batch job**: better throughput per job but complicates partial failures and size limits. Rejected for MVP: the “one session = one job” mapping aligns with current mental model and simplifies retries.
+* **Global SQLite**: we prefer *per‑level* placement so human inspection mirrors the process, and runs tolerate user‑driven file moves.
+
+---
+
+## 13. Open questions
+
+1. **Watch mode UX**: Should the CLI optionally stay attached and stream a status table until the current level settles?
+2. **Budget guardrails**: Stop enqueuing when `est_cost > PHOTO_SELECT_BUDGET_USD`? (Default off.)
+3. **Model cadence checks**: Should we auto‑probe model cards on startup to pre‑warn if `/v1/responses` isn’t batch‑eligible for a chosen model?
+
+---
+
+## 14. Appendix
+
+### 14.1 Example JSONL (Batch → Responses)
+
+```json
+{"custom_id":"ps-level003-0007","method":"POST","url":"/v1/responses",
+ "body":{
+   "model":"gpt-5",
+   "reasoning":{"effort":"medium"},
+   "text":{
+     "verbosity":"low",
+     "format":{"type":"json_schema","name":"PhotoSelectPanelV1","strict":true,"schema":{ /* elided */ }}
+   },
+   "input":[
+     {"role":"user","content":[
+       {"type":"input_text","text":"Context (collapsed) ..."},
+       {"type":"input_text","text":"{\"filename\":\"DSCF0001.jpg\",\"people\":[\"Alice\",\"Bob\"]}"},
+       {"type":"input_image","image_url":{"url":"data:image/jpeg;base64,..."}} 
+     ]}
+   ]
+ }}
+```
+
+OpenAI Batch cookbook shows JSONL with `custom_id`, `method`, `url`, `body`, and demonstrates image workflows and that batch completes within 24h at lower price/higher rate limits. ([OpenAI Cookbook][3])
+
+### 14.2 Batch states (for status files)
+
+`validating | in_progress | finalizing | completed | failed | expired | canceling | canceled` with a 24‑hour target; no streaming; images supported; separate limits. ([OpenAI Help Center][2])
+
+---
+
+## 15. Why this fits the practice
+
+The *feeling* remains intact: curators in dialogue; minutes that read like a room; decisions applied level‑by‑level; and artifacts exactly where you’re looking. Batch becomes a gentler gear—cheaper, separate‑quota—and your *tasting spoon* stays handy via `probe`. You can switch gears mid‑run without breaking rhythm, and you keep editorial fidelity while gaining operational headroom.
+```
+
+### File: ./docs/rfcs/0009-openai-batch-provider.md
+```
+### RFC 0009 — OpenAI Batch Provider (V2)
+
+**Status:** Proposed
+**Owner:** Jamie Burkart
+**Reviewers:** Matteo Collina, Simon Willison, Evgeny Poberezkin, James M. Snell, Logan Kilpatrick, Yehuda Katz, Erik Bernhardsson, Deborah Treisman
+**Created:** 2025‑10‑18
+**Target Version:** v0.3.x
+
+---
+
+### 0. Summary
+
+Add a new provider, **`openai-batch`**, that executes each *curatorial session* as a single **OpenAI Batch API** request to the **Responses API**. The batch job is submitted with a JSONL input containing exactly **one** request (one session), then polled until an **output file** is available; minutes and decisions are written in place, and files are moved the same as in realtime runs.
+
+This keeps our invariants intact:
+
+* **One session ⇄ one call** (here: one JSONL line, one batch job). ([OpenAI Platform][1])
+* **Structured outputs** via Responses **JSON schema** with `strict: true`, identical to our realtime GPT‑5 path. ([OpenAI Platform][3])
+* **On‑disk choreography** unchanged: minutes and decisions land beside the photos; `_keep/_aside` moves apply only after valid decisions. 
+
+Batch is asynchronous (no streaming), targets completion within a time window (e.g., **`"24h"`), and typically offers **lower per‑token pricing** than synchronous requests. ([OpenAI Platform][1])
+
+---
+
+### 1. Motivation
+
+Jamie’s practice works in **stories**: 2–10k images + a rich context file (site copy, emails, calendar, voice memos) → curatorial round‑tables that produce minutes and decisions, recursing level‑by‑level until the set settles. Runs can span days. The Batch API matches this cadence and reduces cost, provided we can: (a) **taste** progress without committing moves, (b) **switch gears** between realtime and batch, and (c) **resume** safely after interruptions. 
+
+---
+
+### 2. Non‑Goals
+
+* Changing selection logic, persona roster, or artifact formats.
+* Streaming partial batch results (Batch does not stream). ([OpenAI Platform][1])
+* Guaranteeing any particular model is batch‑eligible; we’ll **detect and fall back**. (Model cards and eligibility can change.) ([OpenAI Platform][1])
+
+---
+
+### 3. Terminology
+
+* **Session:** One curatorial round‑table over a subset of photos at a single recursion level.
+* **Gear:** Provider mode: `"realtime"` or `"openai-batch"`.
+* **Probe/Taste:** Realtime, *read‑only* run that produces **probe‑minutes** and **probe‑decisions** but **does not move files**.
+* **Level:** A directory under review; recursion continues into `_keep` when a level settles. 
+
+---
+
+### 4. Current state (abridged)
+
+* Realtime provider (OpenAI) already supports GPT‑5 via the **Responses** API with strict JSON schema outputs.
+* The orchestrator writes minutes and decisions, moves files into `_keep/_aside`, then recurses.
+* People metadata (“Jamie’s notes”) flows from **photo-filter** and is included per image. 
+
+---
+
+### 5. Goals
+
+1. **Drop‑in parity:** Given identical inputs, batch and realtime produce the **same artifact shapes** and **file moves**.
+2. **One session = one JSONL line/job:** Bound request size and keep mapping simple. ([OpenAI Platform][1])
+3. **Hot gear switch:** Change provider mid‑run without restart; in‑flight jobs finish on their original gear.
+4. **Tasting & status:** Probe anytime; show a status dashboard with costs, queue depth, and per‑level progress.
+5. **Per‑level durability:** A small SQLite sidecar (optional but on by default) in the level directory for resume and inspection.
+
+---
+
+### 6. High‑level design
+
+#### 6.1 Provider interface
+
+```ts
+// src/providers/types.ts
+export interface CuratorialProvider {
+  name: string;                   // 'openai' | 'openai-batch' | ...
+  supportsAsync: boolean;         // batch provider: true
+  submit(session: SessionInput): Promise<SessionHandle>; // enqueue or run
+  collect(handle: SessionHandle): Promise<SessionResult>; // resolve into minutes+decisions
+  cancel?(handle: SessionHandle): Promise<void>;          // best-effort
+}
+```
+
+```ts
+// src/providers/openai-batch.ts (new)
+export default class OpenAIBatchProvider implements CuratorialProvider { /* … */ }
+```
+
+The orchestrator remains the consumer; it only adds an **async two‑phase** path when `supportsAsync`.
+
+#### 6.2 Two‑phase orchestrator
+
+* **SUBMIT:** Partition unclassified images into subsets (≤ `BATCH_SIZE`, default 10). Build the **same Responses payload** we use in realtime (instructions, `input[]` items, per‑image people notes). Serialize a **single‑line JSONL** with:
+
+  ```json
+  {
+    "custom_id": "ps:<abs-level-path>|<sha256-of-inputs>",
+    "method": "POST",
+    "url": "/v1/responses",
+    "body": {
+      "model": "gpt-5",
+      "reasoning": { "effort": "medium" },
+      "text": {
+        "format": { "type": "json_schema", "name": "PhotoSelectPanelV1", "strict": true }
+      },
+      "max_output_tokens": 32000,
+      "input": [ /* multimodal items including input_image.image_url and input_text */ ]
+    }
+  }
+  ```
+
+  (Shape per **Batch** JSONL; body mirrors our **Responses** call and multimodal items, including `input_image.image_url` for vision.) ([OpenAI Platform][1])
+
+  Upload JSONL with **Files API** `purpose:"batch"`, create a **Batch** with `endpoint:"/v1/responses"` and `completion_window:"24h"`. Persist `{custom_id,batch_id,input_file_id}`. ([OpenAI Platform][1])
+
+* **APPLY (watcher):** Poll `batches.retrieve(batch_id)` until terminal. On `completed`, download the `output_file_id`, parse the line matching `custom_id`, validate JSON against `PhotoSelectPanelV1`, write `minutes-<uuid>.json`, then **apply file moves** atomically and mark the session `applied`. If `error_file_id` exists, store it for debugging and optionally re‑enqueue. ([OpenAI Platform][1])
+
+Optional: subscribe a **webhook** to get notified when a batch completes (future enhancement beyond MVP). ([OpenAI Platform][4])
+
+#### 6.3 Filesystem artifacts (unchanged placement)
+
+At each recursion level `<level_dir>/`:
+
+```
+minutes-<uuid>.json            # final minutes (unchanged)
+decisions.json                 # final decisions (unchanged, if you keep this file)
+_keep/  _aside/                # post-decision moves (unchanged)
+
+.photo-select/                 # new or extended
+  sqlite.db                    # per-level state (jobs, reservations, usage)
+  jobs.ndjson                  # append-only ledger (human tail)
+  inputs/<custom_id>.jsonl     # exact JSONL sent to Batch
+  tickets/<custom_id>.json     # {batch_id, custom_id, status, model, submitted_at, ...}
+  status/<custom_id>.json      # latest batch state snapshot
+  results/<batch_id>.jsonl     # raw results as delivered by OpenAI
+  probe-minutes.md             # from taste runs (never moves files)
+  probe-decisions.json         # from taste runs (never moves files)
+```
+
+This keeps the story directory the “living room” where you read minutes and watch decisions arrive. 
+
+---
+
+### 7. Data model (SQLite)
+
+**File:** `<level_dir>/.photo-select/sqlite.db`
+
+```sql
+CREATE TABLE jobs (
+  custom_id TEXT PRIMARY KEY,
+  level_path TEXT NOT NULL,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,     -- queued|in_progress|finalizing|completed|failed|expired|canceled|applied
+  batch_id TEXT,
+  input_file_id TEXT,
+  output_file_id TEXT,
+  error_file_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  error TEXT
+);
+
+CREATE TABLE reservations (
+  file TEXT PRIMARY KEY,
+  custom_id TEXT NOT NULL REFERENCES jobs(custom_id),
+  status TEXT NOT NULL        -- reserved|applied|released
+);
+
+CREATE TABLE usage (
+  custom_id TEXT PRIMARY KEY REFERENCES jobs(custom_id),
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  image_bytes INTEGER DEFAULT 0,
+  cost_cents INTEGER DEFAULT 0
+);
+
+CREATE INDEX idx_jobs_status ON jobs(status);
+```
+
+**Idempotency:** `custom_id = sha256(system + context + images + curators + knobs + level_path)`. Resubmitting with the same inputs converges to one application.
+
+---
+
+### 8. CLI & UX
+
+* **Run (enqueue):**
+
+  ```bash
+  photo-select --provider openai-batch --model gpt-5     --reasoning-effort medium     --curators "Ingeborg Gerdes, Deborah Treisman, M.M. Bakhtin, Jonas Mekas"     --workers 10     --context /path/to/context.txt
+  ```
+
+* **Watch (apply results as they complete):**
+
+  ```bash
+  photo-select batch watch --dir /path/to/story
+  ```
+
+* **Status & control:**
+
+  ```bash
+  photo-select batch ls
+  photo-select batch cancel <batch_id>
+  photo-select probe --n 3             # taste-only, never moves files
+  photo-select gear batch|realtime     # hot switch for *new* sessions
+  ```
+
+* **Flags (new):**
+
+| Flag                       |     Default | Purpose                                     |
+| -------------------------- | ----------: | ------------------------------------------- |
+| `--provider openai-batch`  |           — | Use the Batch transport                     |
+| `--batch-window`           |       `24h` | Batch completion window (string)            |
+| `--batch-check-interval`   |       `60s` | Polling cadence in watch mode               |
+| `--batch-max-in-flight`    | `--workers` | Cap jobs per level                          |
+| `--model-fallback <model>` |           — | Fallback if chosen model not batch‑eligible |
+
+* **Env:**
+
+  * `OPENAI_API_KEY` (required), `OPENAI_ORG_ID` (optional)
+  * `PHOTO_SELECT_PROVIDER` (default gear)
+  * `PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS`, `PHOTO_SELECT_BATCH_MAX_IN_FLIGHT`
+  * `PHOTO_SELECT_MAX_OLD_SPACE_MB` (unchanged)
+
+---
+
+### 9. OpenAI integration details
+
+* **Creation flow:** `files.create(purpose:"batch")` → `batches.create({endpoint:"/v1/responses", input_file_id, completion_window:"24h"})` → poll `batches.retrieve(id)` → on `completed`, download `output_file_id` (and inspect `error_file_id` if present). Each JSONL line must include a unique **`custom_id`** so you can match results. ([OpenAI Platform][1])
+
+* **Request format:** JSONL object with `method:"POST"`, `url:"/v1/responses"`, and a `body` that mirrors our realtime call (including **structured outputs** and **vision** inputs via `input_image.image_url`). ([OpenAI Platform][1])
+
+* **Throughput & quotas:** Batch uses a separate queue; **tokens from pending batch jobs count against your batch queue limit** until completion—budget your in‑flight jobs accordingly. ([OpenAI Platform][2])
+
+* **Lifecycle & events:** Status progresses through validation/in‑progress/finalizing/terminal states; optional **webhooks** can notify on completion (future enhancement). ([OpenAI Platform][4])
+
+---
+
+### 10. Image inputs & size discipline
+
+* Use downscaled **proxy images** (e.g., long edge ≤ 1600px, JPEG Q≈85) to keep each session well under request limits and control cost.
+* If a session would exceed limits, split deterministically into `-part1`, `-part2` within the **same level**; merge decisions **before** moves.
+
+Vision is supported with Responses via `input_image.image_url` (URLs or data URLs). ([OpenAI Platform][5])
+
+---
+
+### 11. Observability & “taste the soup”
+
+* `photo-select status` prints per‑level scoreboard:
+
+  ```
+  level-03  queued:1 running:0 completed:1 failed:0 expired:0  est_cost:$0.42  model:gpt-5
+  ```
+* Append a ledger line to `<level_dir>/.photo-select/jobs.ndjson` when a job changes state.
+* Optional: `datasette <level_dir>/.photo-select/sqlite.db` for deep inspection (out of scope to bundle).
+* **Probe** writes `probe-minutes.md` / `probe-decisions.json` and never moves files.
+
+---
+
+### 12. Failure, retries, expiry
+
+* **States:** `queued → in_progress → finalizing → completed | failed | expired | canceled` (provider) then `applied` (ours). ([OpenAI Platform][1])
+* **Retries:** Exponential backoff + jitter; N attempts (default 2) for transient failures.
+* **Expired:** Re‑enqueue with the same `custom_id`; keep lineage by linking new `batch_id`.
+* **Invalid JSON:** One “repair” attempt; otherwise write `NEEDS_REVIEW` marker and continue.
+* **Cancellation:** Best‑effort; release `reservations` and re‑queue leftovers if needed.
+
+---
+
+### 13. Privacy & compliance
+
+* Context and proxy images are sent to OpenAI; adhere to platform data controls and your project’s privacy policy.
+* Avoid embedding PII in `custom_id`; hash paths; keep identifying data locally.
+* Document that batch is **asynchronous** and **non-streaming**; results are retrieved via output files. ([OpenAI Platform][1])
+
+---
+
+### 14. Backwards compatibility
+
+* Existing providers (`openai`, `ollama`) unchanged.
+* New provider is **opt-in** via `--provider openai-batch`.
+* Artifact locations and recursion semantics unchanged, so users can safely interrupt / resume and **switch gears** between sessions. 
+
+---
+
+### 15. Implementation plan (MVP)
+
+**Code**
+
+* `src/providers/openai-batch.ts` — implement `submit/collect/cancel`, JSONL serializer, file upload, batch create, poll, result parsing.
+* `src/providers/index.ts` — register `'openai-batch'`.
+* `src/orchestrator.ts` — introduce two-phase path when `supportsAsync=true`; reuse existing parse→move→recurse logic.
+* `src/db/sqlite.ts` — helper for per-level DB (jobs/reservations/usage).
+* `src/cli/batch.ts` — `ls`, `watch`, `cancel`.
+
+**Tests**
+
+* Unit: JSONL generation equals synchronous **Responses** body; schema validation path identical.
+* Integration: stub batches client; assert artifacts layout and that minutes/decisions are identical to realtime oracle for a fixed fixture.
+* Concurrency: reservations prevent duplicate moves across mixed realtime/batch runs.
+
+**Docs**
+
+* README: new provider, “taste the soup,” cost/throughput notes, and model eligibility notes.
+
+---
+
+### 16. Risks & mitigations
+
+* **Model eligibility drift:** Detect at startup; log and fall back. ([OpenAI Platform][1])
+* **Request size blow-ups:** Enforce proxy images, hard cap images per session, and split deterministically.
+* **Queue starvation / spend spikes:** Cap in-flight jobs; show projected spend; expose `--batch-max-in-flight`. ([OpenAI Platform][2])
+* **Narrative degradation:** Keep a small “voice QA” (optional) and rely on probes; never move files on probe. 
+
+---
+
+### 17. Open questions
+
+1. Should **watch** block by default (like `tail -f`) or return immediately with a suggested `--follow`?
+2. Do we support multi-request batches for tiny stories (several sessions per JSONL) to reduce per-job overhead? (Leaning **no** for MVP to preserve “one session = one call”.)
+3. Add webhook support now or later? (Leaning **later**; polling suffices.) ([OpenAI Platform][4])
+
+---
+
+### 18. Appendix A — Minimal Node sketch
+
+```ts
+// provider/openai-batch.ts (sketch)
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import OpenAI from 'openai';
+
+export default class OpenAIBatchProvider {
+  name = 'openai-batch';
+  supportsAsync = true;
+  constructor(private cfg: Cfg, private db: DB, private openai: OpenAI) {}
+
+  private idFor(session: SessionInput) {
+    const h = createHash('sha256');
+    h.update(JSON.stringify({
+      level: session.levelPath,
+      model: this.cfg.model,
+      curators: session.curators,
+      contextHash: session.contextHash,
+      images: session.images.map(i => i.hash),
+      knobs: { verbosity: session.verbosity, effort: session.reasoningEffort }
+    }));
+    return `ps:${session.levelPath}|${h.digest('hex').slice(0,32)}`;
+  }
+
+  async submit(session: SessionInput): Promise<SessionHandle> {
+    const custom_id = this.idFor(session);
+    await this.db.upsertJob({ custom_id, status: 'queued', level_path: session.levelPath, model: this.cfg.model });
+
+    const line = buildJsonlLineForResponses({ custom_id, session, model: this.cfg.model }); // mirrors realtime
+    const jsonlPath = path.join(session.levelPath, '.photo-select', 'inputs', `${custom_id}.jsonl`);
+    fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+    fs.writeFileSync(jsonlPath, `${JSON.stringify(line)}
+`);
+
+    const file = await this.openai.files.create({ file: fs.createReadStream(jsonlPath), purpose: 'batch' });
+    const batch = await this.openai.batches.create({
+      input_file_id: file.id, endpoint: '/v1/responses', completion_window: this.cfg.batchWindow ?? '24h'
+    });
+
+    await this.db.updateJob(custom_id, { status: 'in_progress', batch_id: batch.id, input_file_id: file.id });
+    return { provider: 'openai-batch', custom_id, batch_id: batch.id };
+  }
+
+  async collect(h: SessionHandle): Promise<SessionResult> {
+    while (true) {
+      const b = await this.openai.batches.retrieve(h.batch_id);
+      if (b.status === 'completed') {
+        const stream = await this.openai.files.content(b.output_file_id!);
+        const raw = await stream.text();
+        await this.db.updateJob(h.custom_id, { status: 'completed', output_file_id: b.output_file_id });
+        const { minutes, decisions } = parseBatchOutput(raw, h.custom_id); // reuses realtime parser + schema
+        return { minutes, decisions };
+      }
+      if (b.status === 'failed' || b.status === 'expired' || b.status === 'canceled') {
+        await this.db.updateJob(h.custom_id, { status: b.status, error_file_id: b.error_file_id ?? null });
+        throw new Error(`batch ${b.status}`);
+      }
+      await sleep(this.cfg.pollIntervalMs ?? 60000);
+    }
+  }
+
+  async cancel(h: SessionHandle) {
+    // Best-effort; not guaranteed if already finalizing
+    await this.openai.batches.cancel(h.batch_id).catch(() => {});
+    await this.db.updateJob(h.custom_id, { status: 'canceled' });
+  }
+}
+```
+
+(Shapes and fields align with OpenAI’s **Batch** and **Responses** references; use your existing structured-output schema and multimodal builder.) ([OpenAI Platform][1])
+
+---
+
+### 19. Why this fits the practice
+
+It keeps the curators’ dialog audible and legible, places state where the art lives (in the level directory), and lets you **change gears** between realtime reflection and batch thrift. Minutes still read like a room; the story still settles level‑by‑level; you still taste as you go. 
+```
+
 ### File: ./docs/field-notes.md
 ```
 # Field Notes Workflow
@@ -2491,6 +3453,13 @@ Notebooks created by the Python prototype lack headers and automatic links. Run 
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+You can run sessions in two “gears”:
+
+- **Realtime (`openai`)** – submit a request and stream the reply immediately.
+- **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
+  then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
+  Batch offers separate rate limits and lower per-token pricing than realtime calls.
+
 ---
 
 ## Requirements
@@ -2539,7 +3508,7 @@ Invoke the CLI from the project directory using `npx`:
 ```bash
 npx photo-select \
   [--dir /path/to/images] \
-  [--provider ollama] \
+  [--provider openai|openai-batch|ollama] \
   [--model qwen2.5vl:32b] \
   [--api-key sk-...] \
   [--context /path/to/context.txt]
@@ -2552,14 +3521,49 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 ```bash
 # run from the project directory
 npx photo-select --provider openai --model gpt-4o [other flags]
+# enqueue a batch job for the current level
+npx photo-select --provider openai-batch --model gpt-5 [other flags]
 # or, if installed globally:
 photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
 
 Run `photo-select --help` to see all options.
 
+The OpenAI providers both generate multimodal, structured responses; the batch
+transport simply defers collection until the job completes. Use `photo-select
+batch watch` to poll for finished jobs and apply their minutes/decisions.
+
 The Ollama provider uses the official `ollama` JavaScript library. Images are
 sent by file path so no base64 encoding step is required.
+
+### Gears & durable state
+
+Each recursion level stores its provider “gear” in
+`<level>/.photo-select/gear.json`. Switch gears without restarting by running:
+
+```bash
+photo-select gear openai        # realtime
+photo-select gear openai-batch  # batch
+```
+
+In-flight sessions finish on the gear they started with. Batch mode writes
+JSONL inputs, tickets, and results to `<level>/.photo-select/` alongside the
+minutes/decisions files so you can pause, resume, or audit progress later.
+
+To check progress or apply finished jobs manually:
+
+```bash
+photo-select batch watch --dir /path/to/story   # poll & apply results
+photo-select batch ls                           # list known batch jobs
+photo-select batch cancel <batch_id>            # best-effort cancel
+photo-select probe --n 3                        # realtime, read-only tasting
+```
+
+Batch-specific environment variables mirror these flags:
+
+- `PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS` – override the polling cadence.
+- `PHOTO_SELECT_BATCH_MAX_IN_FLIGHT` – cap concurrent batch jobs per level.
+- `PHOTO_SELECT_BATCH_SQLITE=1` – ensure the per-level SQLite ledger is created.
 
 ### photo-select-here.sh
 
@@ -2595,7 +3599,7 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--provider` | `openai` | `openai` or `ollama` |
+| `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
 | `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
@@ -2608,7 +3612,10 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
 | `--save-io` | `false` | Save prompts and responses for debugging |
-| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
+| `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
+| `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
+| `--batch-window` | `24h` | Completion window requested for batch jobs |
+| `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
 People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
@@ -2775,7 +3782,7 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
 
 ## Supported OpenAI models
 
-The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
+The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. In batch mode, each session is serialized to a single JSONL line and submitted to the Batch API with the same structured-output schema. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
 * **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, and `gpt-5-chat-latest`
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
@@ -2994,7 +4001,8 @@ Now everything—random choice, conversation, and file moves—happens automatic
   "scripts": {
     "start": "photo-select",
     "test": "vitest run",
-    "undici:smoke": "node scripts/undici-smoke.mjs"
+    "undici:smoke": "node scripts/undici-smoke.mjs",
+    "debug:batch": "node scripts/debug-batch.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -3028,6 +4036,155 @@ Now everything—random choice, conversation, and file moves—happens automatic
 ### File: ./scripts
 ```
 (File type is inode/directory — skipping raw dump.)
+```
+
+### File: ./scripts/debug-batch.mjs
+```
+import OpenAI from "openai";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+let openai;
+
+function getClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY not set");
+    }
+    openai = new OpenAI({ apiKey });
+  }
+  return openai;
+}
+
+const pretty = (x) => JSON.stringify(x, null, 2);
+const safeParse = (line) => {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+};
+const countBy = (arr) =>
+  arr.reduce((acc, k) => ((acc[k] = (acc[k] || 0) + 1), acc), {});
+
+async function fetchTextFile(fileId) {
+  const client = getClient();
+  const res = await client.files.content(fileId);
+  return await res.text();
+}
+
+async function saveToTmp(name, text) {
+  const out = path.join("/tmp", name);
+  await fs.writeFile(out, text, "utf8");
+  return out;
+}
+
+async function peekJsonl(text, n = 10) {
+  const lines = text.trim().split("\n").filter(Boolean);
+  const first = lines.slice(0, n).map(safeParse).filter(Boolean);
+  return { totalLines: lines.length, first };
+}
+
+function logErrorRow(row) {
+  const cid = row.custom_id ?? "(no custom_id)";
+  const err = row.error || {};
+  const code = err.code ?? err.type ?? "unknown";
+  const msg = err.message ?? "(no message)";
+  const param = err.param ? ` param=${err.param}` : "";
+  console.error(`  • ${cid}: [${code}] ${msg}${param}`);
+}
+
+export async function debugBatch(batchId, { peek = 10 } = {}) {
+  console.error(`🔎 Debugging batch ${batchId} …`);
+  const client = getClient();
+  const b = await client.batches.retrieve(batchId);
+
+  console.error("📋 Batch status:");
+  console.error(pretty({
+    id: b.id,
+    status: b.status,
+    created_at: b.created_at,
+    completion_window: b.completion_window,
+    request_counts: b.request_counts,
+    metadata: b.metadata,
+    model: b.metadata?.model ?? b.default_model ?? "(unknown)",
+    input_file_id: b.input_file_id,
+    output_file_id: b.output_file_id,
+    error_file_id: b.error_file_id
+  }));
+
+  try {
+    const inputText = await fetchTextFile(b.input_file_id);
+    const inputLines = inputText.trim().split("\n").filter(Boolean);
+    console.error(`📥 Input JSONL: ${inputLines.length} line(s).`);
+    if (inputLines.length) {
+      const firstTwo = inputLines.slice(0, 2).join("\n");
+      console.error("  First 2 line(s):\n" + firstTwo);
+    }
+  } catch (e) {
+    console.error("⚠️ Could not fetch input_file_id content:", e.message || e);
+  }
+
+  if (b.error_file_id) {
+    const errText = await fetchTextFile(b.error_file_id);
+    const errPath = await saveToTmp(`batch-${b.id}-errors.jsonl`, errText);
+    console.error(`🧾 Saved error JSONL → ${errPath}`);
+    const { totalLines, first } = await peekJsonl(errText, peek);
+
+    const errorCodes = countBy(
+      first.map((r) => r?.error?.code ?? r?.error?.type ?? "unknown")
+    );
+    console.error(`❗ ${totalLines} error row(s). Summary by code/type:`);
+    Object.entries(errorCodes).forEach(([k, v]) =>
+      console.error(`  - ${k}: ${v}`)
+    );
+
+    console.error(`🔬 First ${first.length} error row(s):`);
+    first.forEach(logErrorRow);
+  } else {
+    console.error("ℹ️ No error_file_id on this batch.");
+  }
+
+  if (b.output_file_id) {
+    const outText = await fetchTextFile(b.output_file_id);
+    const outPath = await saveToTmp(`batch-${b.id}-output.jsonl`, outText);
+    console.error(`✅ Saved output JSONL → ${outPath}`);
+    const { totalLines, first } = await peekJsonl(outText, peek);
+    console.error(`📤 ${totalLines} success row(s). Showing first ${first.length}:`);
+    first.forEach((r, i) =>
+      console.error(`  • [${i + 1}] ${r?.custom_id ?? "(no custom_id)"}`)
+    );
+  } else {
+    console.error("ℹ️ No output_file_id on this batch.");
+  }
+
+  if (!b.output_file_id && !b.error_file_id) {
+    console.error("⚠️ Completed without output **and** without an error file.");
+    console.error(
+      "   This usually means the input JSONL was empty/invalid, or every request was rejected before execution."
+    );
+    console.error(
+      "   The input peek above should confirm whether we actually uploaded valid request rows."
+    );
+  }
+}
+
+if (process.argv[1] && process.argv[1].endsWith("debug-batch.mjs")) {
+  const batchId = process.argv[2];
+  if (!batchId) {
+    console.error("Usage: node scripts/debug-batch.mjs <batchId>");
+    process.exit(2);
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("❌ OPENAI_API_KEY not set");
+    process.exit(1);
+  }
+  debugBatch(batchId).catch((e) => {
+    console.error("❌ debugBatch failed:", e);
+    process.exit(1);
+  });
+}
 ```
 
 ### File: ./scripts/demote-thumb.js
@@ -3654,6 +4811,16 @@ echo "Overview generation complete. The file '$OUTPUT_FILE' has been created."
 ```
 {{!-- prompts/default_prompt.hbs --}}
 
+{{#if context}}
+Background for today's review:
+
+===
+
+{{context}}
+
+===
+{{/if}}
+
 You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
 
 Role play as {{curators}}:
@@ -3673,11 +4840,6 @@ All people depicted have signed legal releases granting permission for their lik
 Before each image you will be given a one-line JSON object like:
 {"filename":"<name>","people":["<First Last>", "..."]}
 These are "Jamie's notes" on each photo. All named people are Jamie's personal friends. If both "Name" and "Name (context)" appear, they refer to the same person.
-
-{{#if context}}
-Background for today's review:
-{{context}}
-{{/if}}
 
 {{#if hasFieldNotes}}
 Field-notes snapshot (for reference):
@@ -5867,17 +7029,510 @@ export function estimateInputTokens({
 ```
 export { default as OpenAIProvider } from './openai.js';
 export { default as OllamaProvider } from './ollama.js';
+export { default as OpenAIBatchProvider } from './openai-batch.js';
 
-export async function getProvider(name = 'openai') {
-  if (name === 'openai') {
+const FACTORIES = {
+  async openai() {
     const m = await import('./openai.js');
     return new m.default();
-  }
-  if (name === 'ollama') {
+  },
+  async 'openai-batch'() {
+    const m = await import('./openai-batch.js');
+    return new m.default();
+  },
+  async ollama() {
     const m = await import('./ollama.js');
     return new m.default();
+  },
+};
+
+export async function getProvider(name = 'openai') {
+  const factory = FACTORIES[name];
+  if (!factory) {
+    throw new Error(`Unknown provider ${name}`);
   }
-  throw new Error(`Unknown provider ${name}`);
+  return factory();
+}
+```
+
+### File: ./src/providers/openai-batch.js
+```
+import { OpenAI } from 'openai';
+import { mkdir, writeFile, appendFile, readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
+import { buildReplySchema } from '../replySchema.js';
+import { computeMaxOutputTokens } from '../tokenEstimate.js';
+import { delay } from '../config.js';
+import { debugBatch } from '../../scripts/debug-batch.mjs';
+
+const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
+const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
+const DEFAULT_ENDPOINT = '/v1/responses';
+const FALLBACK_ENDPOINT = '/v1/chat/completions';
+
+const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
+
+function safeId(customId) {
+  return customId.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function levelKey(levelDir) {
+  const rel = path.relative(process.cwd(), levelDir);
+  return rel && !rel.startsWith('..') ? rel || path.basename(levelDir) : path.resolve(levelDir);
+}
+
+async function ensureDirs(levelDir) {
+  const base = path.join(levelDir, '.batch');
+  const dirs = {
+    base,
+    inputs: path.join(base, 'inputs'),
+    results: path.join(base, 'results'),
+    tickets: path.join(base, 'tickets'),
+    status: path.join(base, 'status'),
+  };
+  await Promise.all(
+    Object.values(dirs).map((dir) => mkdir(dir, { recursive: true }))
+  );
+  return dirs;
+}
+
+async function appendLedger(baseDir, entry) {
+  const file = path.join(baseDir, 'jobs.ndjson');
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+  await appendFile(file, line + '\n');
+}
+
+function computeCustomId({ levelDir, prompt, model, curators = [], used = [], minutesMin, minutesMax, reasoningEffort, verbosity }) {
+  const hash = crypto.createHash('sha256');
+  hash.update(levelKey(levelDir));
+  hash.update(model || '');
+  hash.update(prompt || '');
+  if (curators.length) hash.update(curators.join(','));
+  if (reasoningEffort) hash.update(reasoningEffort);
+  if (verbosity) hash.update(String(verbosity));
+  hash.update(String(minutesMin ?? ''));
+  hash.update(String(minutesMax ?? ''));
+  for (const file of used) {
+    hash.update(path.basename(file));
+  }
+  const digest = hash.digest('hex');
+  return `ps:${levelKey(levelDir)}|sha256:${digest}`;
+}
+
+function extractStructured(payload) {
+  if (!payload) return { text: '', json: null };
+  if (typeof payload === 'string') {
+    try {
+      const parsed = JSON.parse(payload);
+      return extractStructured(parsed);
+    } catch {
+      return { text: payload, json: null };
+    }
+  }
+  if (Array.isArray(payload.output)) {
+    const message = payload.output.find((item) => item.type === 'message');
+    if (message && Array.isArray(message.content)) {
+      const jsonPart = message.content.find((c) => c.type === 'output_json' && c.json);
+      if (jsonPart?.json) {
+        return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
+      }
+      const textPart = message.content.find((c) => c.type === 'output_text' && c.text);
+      if (textPart?.text) {
+        return { text: textPart.text, json: null };
+      }
+    }
+  }
+  if (payload.output_text) {
+    return { text: payload.output_text, json: null };
+  }
+  if (payload.data?.length) {
+    try {
+      const nested = JSON.parse(payload.data[0]);
+      return extractStructured(nested);
+    } catch {}
+  }
+  return { text: JSON.stringify(payload), json: null };
+}
+
+async function streamToText(resp) {
+  if (typeof resp.text === 'function') {
+    return resp.text();
+  }
+  if (typeof resp.arrayBuffer === 'function') {
+    const buf = Buffer.from(await resp.arrayBuffer());
+    return buf.toString('utf8');
+  }
+  if (resp.body && typeof resp.body === 'object' && typeof resp.body.getReader === 'function') {
+    const reader = resp.body.getReader();
+    const chunks = [];
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  }
+  throw new Error('Unsupported response stream from files.content');
+}
+
+export default class OpenAIBatchProvider {
+  name = 'openai-batch';
+  supportsAsync = true;
+
+  constructor({
+    client,
+    pollIntervalMs = DEFAULT_POLL_MS,
+    completionWindow = DEFAULT_COMPLETION_WINDOW,
+    enableFallback = true,
+    helpers = {},
+  } = {}) {
+    this.client = client || new OpenAI();
+    this.pollIntervalMs = pollIntervalMs;
+    this.completionWindow = completionWindow;
+    this.enableFallback = enableFallback;
+    this.helpers = {
+      buildInput,
+      buildMessages,
+      schemaForBatch,
+      buildReplySchema,
+      ...helpers,
+    };
+  }
+
+  async submit(options = {}) {
+    const {
+      levelDir,
+      prompt,
+      images = [],
+      curators = [],
+      model = 'gpt-5',
+      minutesMin = 3,
+      minutesMax = 12,
+      reasoningEffort,
+      verbosity = 'low',
+    } = options;
+    if (!levelDir) throw new Error('levelDir is required for openai-batch provider');
+    const dirs = await ensureDirs(levelDir);
+    const responsesRequest = await this.#buildResponsesRequest({
+      prompt,
+      images,
+      curators,
+      model,
+      minutesMin,
+      minutesMax,
+      reasoningEffort,
+      verbosity,
+    });
+    const customId = computeCustomId({
+      levelDir,
+      prompt,
+      model,
+      curators,
+      used: responsesRequest.used,
+      minutesMin,
+      minutesMax,
+      reasoningEffort,
+      verbosity,
+    });
+    const safe = safeId(customId);
+
+    const attempts = [
+      { endpoint: DEFAULT_ENDPOINT, request: responsesRequest },
+    ];
+    if (this.enableFallback) {
+      attempts.push({ endpoint: FALLBACK_ENDPOINT, request: null });
+    }
+
+    let batch;
+    let lastErr;
+    let inputFile;
+    let endpointUsed = DEFAULT_ENDPOINT;
+    for (const attempt of attempts) {
+      const endpoint = attempt.endpoint;
+      const request = attempt.request ||
+        (await this.#buildChatCompletionsRequest({
+          prompt,
+          images,
+          curators,
+          model,
+          minutesMin,
+          minutesMax,
+          verbosity,
+        }, responsesRequest.used));
+      const jsonlLine = {
+        custom_id: customId,
+        method: 'POST',
+        url: endpoint,
+        body: request.body,
+      };
+      const jsonlPath = path.join(dirs.inputs, `${safe}.jsonl`);
+      await writeFile(jsonlPath, JSON.stringify(jsonlLine) + '\n', 'utf8');
+      try {
+        inputFile = await this.client.files.create({
+          file: createReadStream(jsonlPath),
+          purpose: 'batch',
+        });
+        batch = await this.client.batches.create({
+          input_file_id: inputFile.id,
+          endpoint,
+          completion_window: this.completionWindow,
+          metadata: {
+            custom_id: customId,
+            model,
+            level: levelKey(levelDir),
+          },
+        });
+        endpointUsed = endpoint;
+        break;
+      } catch (err) {
+        lastErr = err;
+        await appendLedger(dirs.base, {
+          custom_id: customId,
+          event: 'submit_error',
+          endpoint,
+          message: err?.message,
+        });
+        if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) {
+          throw err;
+        }
+      }
+    }
+
+    if (!batch) {
+      throw lastErr || new Error('Failed to create batch job');
+    }
+
+    const ticketPath = path.join(dirs.tickets, `${safe}.ticket.json`);
+    const submittedAt = new Date().toISOString();
+    const ticket = {
+      custom_id: customId,
+      batch_id: batch.id,
+      model,
+      endpoint: endpointUsed,
+      status: batch.status,
+      input_file_id: inputFile.id,
+      submitted_at: submittedAt,
+      completion_window: this.completionWindow,
+      used_images: responsesRequest.used.map((file) => path.basename(file)),
+    };
+    await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
+    await appendLedger(dirs.base, {
+      custom_id: customId,
+      event: 'submitted',
+      batch_id: batch.id,
+      endpoint: endpointUsed,
+      status: batch.status,
+    });
+
+    const statusPath = path.join(dirs.status, `${safe}.status.json`);
+    await writeFile(statusPath, JSON.stringify(batch, null, 2));
+
+    return {
+      provider: this.name,
+      customId,
+      batchId: batch.id,
+      levelDir,
+      model,
+      ticketPath,
+      statusPath,
+      safeId: safe,
+      used: responsesRequest.used,
+      endpoint: endpointUsed,
+    };
+  }
+
+  async collect(handle) {
+    let lastStatus = null;
+    const dirs = await ensureDirs(handle.levelDir);
+    const ticketPath = path.join(dirs.tickets, `${handle.safeId}.ticket.json`);
+    const statusPath = path.join(dirs.status, `${handle.safeId}.status.json`);
+    while (true) {
+      const job = await this.client.batches.retrieve(handle.batchId);
+      if (job.status !== lastStatus) {
+        lastStatus = job.status;
+        await appendLedger(dirs.base, {
+          custom_id: handle.customId,
+          event: 'status',
+          batch_id: handle.batchId,
+          status: job.status,
+        });
+      }
+      await writeFile(statusPath, JSON.stringify(job, null, 2));
+      await this.#updateTicket(ticketPath, {
+        status: job.status,
+        output_file_id: job.output_file_id ?? undefined,
+        error_file_id: job.error_file_id ?? undefined,
+      });
+      if (job.status === 'completed') {
+        if (!job.output_file_id) {
+          console.error(
+            `⚠️  Batch ${handle.batchId} completed without output — running diagnostics…`
+          );
+          try {
+            await debugBatch(handle.batchId);
+          } catch (diagErr) {
+            console.error('❌ debugBatch helper failed:', diagErr);
+          }
+          throw new Error(`Batch ${handle.batchId} completed without output`);
+        }
+        const resp = await this.client.files.content(job.output_file_id);
+        const text = await streamToText(resp);
+        const resultsPath = path.join(dirs.results, `${handle.batchId}.jsonl`);
+        await writeFile(resultsPath, text, 'utf8');
+        const parsed = this.#parseOutput(text, handle.customId);
+        await this.#updateTicket(ticketPath, {
+          status: 'completed',
+          completed_at: new Date().toISOString(),
+          output_file_id: job.output_file_id,
+        });
+        return {
+          raw: parsed.text,
+          json: parsed.json,
+          usage: parsed.usage,
+        };
+      }
+      if (TERMINAL_FAILURE.has(job.status)) {
+        await this.#updateTicket(ticketPath, {
+          status: job.status,
+          error_file_id: job.error_file_id ?? undefined,
+        });
+        const err = new Error(`Batch ${handle.batchId} ${job.status}`);
+        err.status = job.status;
+        throw err;
+      }
+      await delay(this.pollIntervalMs);
+    }
+  }
+
+  async cancel(handle) {
+    try {
+      await this.client.batches.cancel(handle.batchId);
+      const dirs = await ensureDirs(handle.levelDir);
+      const ticketPath = path.join(dirs.tickets, `${handle.safeId}.ticket.json`);
+      await this.#updateTicket(ticketPath, {
+        status: 'canceled',
+        canceled_at: new Date().toISOString(),
+      });
+      await appendLedger(path.join(handle.levelDir, '.batch'), {
+        custom_id: handle.customId,
+        event: 'canceled',
+        batch_id: handle.batchId,
+      });
+    } catch (err) {
+      if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+        console.warn('Batch cancel failed:', err);
+      }
+    }
+  }
+
+  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity }) {
+    const { instructions, input, used } = await this.helpers.buildInput(
+      prompt,
+      images,
+      curators
+    );
+    const schema = this.helpers.schemaForBatch(used, curators, {
+      minutesMin,
+      minutesMax,
+    });
+    const effort = reasoningEffort && reasoningEffort !== 'auto' ? reasoningEffort : '';
+    const max_output_tokens = computeMaxOutputTokens({
+      decisionsCount: used.length,
+      minutesCount: minutesMax,
+      effort: effort || 'low',
+    });
+    const body = {
+      model,
+      instructions,
+      input,
+      text: {
+        verbosity,
+        format: {
+          type: 'json_schema',
+          name: schema.name,
+          schema: schema.schema,
+          strict: true,
+        },
+      },
+      max_output_tokens,
+    };
+    if (effort) {
+      body.reasoning = { effort };
+    }
+    return { body, used };
+  }
+
+  async #buildChatCompletionsRequest({ prompt, images, curators, model, minutesMin, minutesMax, verbosity }, used) {
+    const { messages } = await this.helpers.buildMessages(
+      prompt,
+      images,
+      curators
+    );
+    const schema = this.helpers.buildReplySchema({
+      minutesMin,
+      minutesMax,
+      images: used.map((file) => path.basename(file)),
+    });
+    const max_tokens = computeMaxOutputTokens({
+      decisionsCount: used.length,
+      minutesCount: minutesMax,
+      effort: 'low',
+    });
+    const body = {
+      model,
+      messages,
+      response_format: { type: 'json_schema', json_schema: schema },
+      max_tokens,
+      temperature: 0.7,
+    };
+    if (verbosity) {
+      body.metadata = { verbosity };
+    }
+    return { body, used };
+  }
+
+  async #updateTicket(ticketPath, updates) {
+    let current = {};
+    try {
+      const raw = await readFile(ticketPath, 'utf8');
+      current = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+    const next = {
+      ...current,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    await writeFile(ticketPath, JSON.stringify(next, null, 2));
+  }
+
+  #parseOutput(text, customId) {
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch (err) {
+        throw new Error(`Invalid JSONL in batch output: ${err.message}`);
+      }
+      if (obj.custom_id !== customId) continue;
+      if (obj.error) {
+        const err = new Error(obj.error?.message || 'Batch item error');
+        err.cause = obj.error;
+        throw err;
+      }
+      const response = obj.response || {};
+      const body = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+      const { text, json } = extractStructured(body);
+      return { text, json, usage: response.usage || body?.usage };
+    }
+    throw new Error(`No output found for custom_id ${customId}`);
+  }
 }
 ```
 
@@ -5903,7 +7558,22 @@ const OLLAMA_NUM_PREDICT = Number.parseInt(
   10
 ) || MAX_RESPONSE_TOKENS;
 
+const kPromise = Symbol('ollama-handle');
+
 export default class OllamaProvider {
+  name = 'ollama';
+  supportsAsync = false;
+
+  async submit(options = {}) {
+    const promise = this.chat(options);
+    return { provider: this.name, [kPromise]: promise };
+  }
+
+  async collect(handle) {
+    const raw = await handle[kPromise];
+    return { raw };
+  }
+
   async chat({
     prompt,
     images,
@@ -6005,8 +7675,22 @@ import { parseFormatEnv } from '../formatOverride.js';
 import path from 'node:path';
 
 const OPENAI_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OPENAI_FORMAT');
+const kPromise = Symbol('openai-handle-promise');
 
 export default class OpenAIProvider {
+  name = 'openai';
+  supportsAsync = false;
+
+  async submit(options = {}) {
+    const promise = this.chat(options);
+    return { provider: this.name, [kPromise]: promise };
+  }
+
+  async collect(handle) {
+    const raw = await handle[kPromise];
+    return { raw };
+  }
+
   async chat({
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,
@@ -6258,6 +7942,15 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
+    if (err?.code === "BILLING_LIMIT") {
+      console.error(
+        "🛑  Billing limit reached. Please review your provider usage before retrying."
+      );
+      if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+        console.error("  ↳ cause:", err.cause);
+      }
+      process.exit(1);
+    }
     console.error("❌  Error:", err);
     process.exit(1);
   }
@@ -7475,6 +9168,32 @@ export async function triageDirectory({
   const indent = "  ".repeat(depth);
   let notesWriter;
 
+  function isBillingLimitError(err) {
+    if (!err) return false;
+    const candidates = [
+      err?.message,
+      err?.error?.message,
+      err?.cause?.message,
+      err?.response?.data?.error?.message,
+      err?.response?.data?.message,
+      err?.response?.error?.message,
+      err?.response?.message,
+      err?.body?.error?.message,
+      err?.body?.message,
+    ]
+      .flat()
+      .filter(Boolean)
+      .map((msg) => String(msg));
+    return candidates.some((message) => /billing (hard )?limit/i.test(message));
+  }
+
+  function createBillingLimitError(err) {
+    const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
+    wrapped.code = "BILLING_LIMIT";
+    wrapped.cause = err;
+    return wrapped;
+  }
+
   let dynamicWorkers = workers;
   let consecutiveGatewayErrors = 0;
   function isGatewayError(e) {
@@ -7509,6 +9228,13 @@ export async function triageDirectory({
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const runSession = async (payload) => {
+    const handle = await provider.submit({
+      levelDir,
+      ...payload,
+    });
+    return provider.collect(handle);
+  };
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
@@ -7601,7 +9327,9 @@ export async function triageDirectory({
           }
         };
         let batchIdx = 0;
-        const nextBatch = () => (queue.length ? queue.splice(0, BATCH_SIZE) : null);
+        let abortProcessing = false;
+        const nextBatch = () =>
+          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
 
         async function workerFn() {
           while (true) {
@@ -7659,7 +9387,7 @@ export async function triageDirectory({
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
                 await saveText('prompt', attemptNum, first.prompt);
-                reply = await provider.chat({
+                const { raw: firstRaw } = await runSession({
                   prompt: first.prompt,
                   images: batch,
                   model,
@@ -7673,6 +9401,7 @@ export async function triageDirectory({
                   },
                   stream: true,
                 });
+                reply = firstRaw;
                 await saveText('response', attemptNum, reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
@@ -7696,7 +9425,7 @@ export async function triageDirectory({
                     ].join("\n");
                     attemptNum++;
                     await saveText('prompt', attemptNum, repair);
-                    reply = await provider.chat({
+                    const { raw: repairRaw } = await runSession({
                       prompt: repair,
                       images: batch,
                       model,
@@ -7710,6 +9439,7 @@ export async function triageDirectory({
                       },
                       stream: true,
                     });
+                    reply = repairRaw;
                     await saveText('response', attemptNum, reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
@@ -7816,6 +9546,12 @@ export async function triageDirectory({
                 bar.stop();
                 multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                if (isBillingLimitError(err) && !abortProcessing) {
+                  abortProcessing = true;
+                  queue.length = 0;
+                  log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                  throw createBillingLimitError(err);
+                }
               }
             });
           }
@@ -7845,14 +9581,22 @@ export async function triageDirectory({
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
     const asideDir = path.join(dir, "_aside");
-    let keepExists = false;
-    try {
-      keepExists = (await stat(keepDir)).isDirectory();
-    } catch {
-      // ignore
-    }
 
-    if (keepExists) {
+    const countImages = async (folder) => {
+      try {
+        return (await listImages(folder)).length;
+      } catch (err) {
+        if (err?.code === "ENOENT") return 0;
+        throw err;
+      }
+    };
+
+    const [keepCount, asideCount] = await Promise.all([
+      countImages(keepDir),
+      countImages(asideDir),
+    ]);
+
+    if (keepCount > 0 && asideCount > 0) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -7870,24 +9614,9 @@ export async function triageDirectory({
         depth: depth + 1,
         gitRoot,
       });
-    } else {
-      let keepCount = 0;
-      let asideCount = 0;
-      try {
-        keepCount = (await listImages(keepDir)).length;
-      } catch {
-        // ignore
-      }
-      try {
-        asideCount = (await listImages(asideDir)).length;
-      } catch {
-        // ignore
-      }
-
-      if (keepCount || asideCount) {
-        const status = keepCount ? "kept" : "set aside";
-        console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
-      }
+    } else if (keepCount || asideCount) {
+      const status = keepCount ? "kept" : "set aside";
+      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
 }
@@ -7914,25 +9643,26 @@ BuildVersion:		24E263
 
 ### Current Date & Uptime
 ```
-Thu Oct  9 12:08:09 EDT 2025
-12:08  up 1 day, 17:44, 9 users, load averages: 1.59 2.44 2.83
+Tue Oct 21 09:18:30 EDT 2025
+ 9:18  up 1 day, 21 mins, 5 users, load averages: 5.69 5.02 3.91
 ```
 
 ### Disk Usage
 ```
 Filesystem        Size    Used   Avail Capacity iused ifree %iused  Mounted on
-/dev/disk3s1s1   7.3Ti    14Gi   446Gi     4%    425k  4.3G    0%   /
-devfs            204Ki   204Ki     0Bi   100%     706     0  100%   /dev
-/dev/disk3s6     7.3Ti   7.0Gi   446Gi     2%       7  4.7G    0%   /System/Volumes/VM
-/dev/disk3s2     7.3Ti    13Gi   446Gi     3%    1.9k  4.7G    0%   /System/Volumes/Preboot
-/dev/disk3s4     7.3Ti   679Mi   446Gi     1%     328  4.7G    0%   /System/Volumes/Update
+/dev/disk3s1s1   7.3Ti    14Gi   1.6Ti     1%    425k  4.3G    0%   /
+devfs            205Ki   205Ki     0Bi   100%     708     0  100%   /dev
+/dev/disk3s6     7.3Ti    24Ki   1.6Ti     1%       0   17G    0%   /System/Volumes/VM
+/dev/disk3s2     7.3Ti    13Gi   1.6Ti     1%    1.9k   17G    0%   /System/Volumes/Preboot
+/dev/disk3s4     7.3Ti   682Mi   1.6Ti     1%     328   17G    0%   /System/Volumes/Update
 /dev/disk1s2     500Mi   6.0Mi   481Mi     2%       1  4.9M    0%   /System/Volumes/xarts
 /dev/disk1s1     500Mi   5.4Mi   481Mi     2%      36  4.9M    0%   /System/Volumes/iSCPreboot
 /dev/disk1s3     500Mi   2.6Mi   481Mi     1%      65  4.9M    0%   /System/Volumes/Hardware
-/dev/disk3s5     7.3Ti   6.8Ti   446Gi    94%    6.0M  4.7G    0%   /System/Volumes/Data
+/dev/disk3s5     7.3Ti   5.7Ti   1.6Ti    79%    5.8M   17G    0%   /System/Volumes/Data
 map auto_home      0Bi     0Bi     0Bi   100%       0     0     -   /System/Volumes/Data/home
+/dev/disk4s1      30Gi    30Gi     0Bi   100%       0     0     -   /Volumes/DR-70D
 /dev/disk2s1     5.0Gi   1.9Gi   3.1Gi    38%      64   33M    0%   /System/Volumes/Update/SFR/mnt1
-/dev/disk3s1     7.3Ti    14Gi   446Gi     4%    426k  4.3G    0%   /System/Volumes/Update/mnt1
+/dev/disk3s1     7.3Ti    14Gi   1.6Ti     1%    426k  4.3G    0%   /System/Volumes/Update/mnt1
 ```
 
 ### Memory Usage
@@ -8361,6 +10091,7 @@ zstandard @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_
 #
                          /Users/jburkart/mamba/envs/deepseek-mps
 base                  *  /opt/anaconda3
+internvl38b              /opt/anaconda3/envs/internvl38b
 zoom-browser             /opt/anaconda3/envs/zoom-browser
 
 
@@ -8928,13 +10659,13 @@ PATH=/opt/anaconda3/bin:/opt/homebrew/bin:/Users/jburkart/mamba/condabin:/Users/
 ### Ollama Models
 ```
 NAME                     ID              SIZE      MODIFIED     
-blaifa/InternVL3_5:8b    798a5c808206    5.7 GB    3 days ago      
-qwen2.5vl:32b            3edc3a52fe98    21 GB     4 days ago      
-llama3.2-vision:11b      6f2f9757ae97    7.8 GB    4 days ago      
-qwen2.5vl:7b             5ced39dfa4ba    6.0 GB    4 days ago      
+blaifa/InternVL3_5:8b    798a5c808206    5.7 GB    2 weeks ago     
+qwen2.5vl:32b            3edc3a52fe98    21 GB     2 weeks ago     
+llama3.2-vision:11b      6f2f9757ae97    7.8 GB    2 weeks ago     
+qwen2.5vl:7b             5ced39dfa4ba    6.0 GB    2 weeks ago     
 llama3.2-vision:90b      bee2a956f3a8    54 GB     2 months ago    
 qwen2.5vl:72b            05ea68274581    48 GB     2 months ago    
-r1-1776:70b              140ea940f21d    42 GB     6 months ago    
+r1-1776:70b              140ea940f21d    42 GB     7 months ago    
 deepseek-r1:14b          ea35dfe18182    9.0 GB    8 months ago    
 deepseek-r1:8b           28f8fd6cdc67    4.9 GB    8 months ago    
 deepseek-r1:7b           0a8c26691023    4.7 GB    8 months ago    

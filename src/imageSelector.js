@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
+import { execa } from "execa";
 import { SUPPORTED_EXTENSIONS } from "./config.js";
+<<<<<<< HEAD
 import {
   copyFile as copyFileWithStrategy,
   parseStrategy,
@@ -35,6 +38,9 @@ function createLimiter(limit) {
       runNext();
     });
 }
+=======
+import { copyFile as copyFileWithStrategy } from "./fs/copyOps.js";
+>>>>>>> 0ae3a4d44102f9c967930a22cba4020805285663
 
 /** Return full paths of images in `dir` (non‑recursive). */
 async function fileExists(p) {
@@ -78,6 +84,7 @@ export function pickRandom(array, count) {
   return shuffled.slice(0, Math.min(count, array.length));
 }
 
+<<<<<<< HEAD
 /** Ensure sub‑directories exist and move each file accordingly. */
 export async function moveFiles(files, targetDir, notes = new Map(), options = {}) {
   if (!files.length) return { entries: [], summary: null };
@@ -144,4 +151,55 @@ export async function moveFiles(files, targetDir, notes = new Map(), options = {
   await Promise.all(tasks);
   const summary = summarizeCopy(results);
   return { entries: results, summary, message: formatSummary(summary) };
+=======
+/** Materialize files into the target directory using clone/hardlink/copy. */
+export async function materializeFiles(
+  files,
+  targetDir,
+  notes = new Map(),
+  {
+    strategy = process.env.COPY_STRATEGY || "auto",
+    dryRun = false,
+    apfsRequired = false,
+  } = {}
+) {
+  if (!files.length) {
+    return { counts: {}, files: [] };
+  }
+  await fs.mkdir(targetDir, { recursive: true });
+  const counts = new Map();
+  const results = [];
+  for (const file of files) {
+    const dest = path.join(targetDir, path.basename(file));
+    if (dryRun) {
+      counts.set("dry-run", (counts.get("dry-run") || 0) + 1);
+      results.push({ from: file, to: dest, mode: "dry-run" });
+      continue;
+    }
+    const result = await copyFileWithStrategy(file, dest, strategy);
+    counts.set(result.mode, (counts.get(result.mode) || 0) + 1);
+    results.push({ from: file, to: dest, mode: result.mode });
+    if (apfsRequired && result.mode !== "clone") {
+      throw new Error(`APFS clone required but fell back to ${result.mode} for ${file}`);
+    }
+    const note = notes.get(file);
+    if (note) {
+      const txt = dest.replace(/\.[^.]+$/, ".txt");
+      await fs.writeFile(txt, note, "utf8");
+    }
+    await tagProvenance(file, dest, result.mode).catch(() => {});
+  }
+  return {
+    counts: Object.fromEntries(counts),
+    files: results,
+  };
+}
+
+async function tagProvenance(src, dest, mode) {
+  if (process.platform !== "darwin") return;
+  const hash = crypto.createHash("sha256").update(src).digest("hex");
+  await execa("xattr", ["-w", "com.openhouse.src-path", src, dest]);
+  await execa("xattr", ["-w", "com.openhouse.src-hash", hash, dest]);
+  await execa("xattr", ["-w", "com.openhouse.clone-mode", mode, dest]);
+>>>>>>> 0ae3a4d44102f9c967930a22cba4020805285663
 }

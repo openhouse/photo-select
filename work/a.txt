@@ -1,0 +1,1704 @@
+a )
+
+---
+
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/.gitignore b/.gitignore
+index 6b612e4d3e5b982bfee52aa72e236b4dfb1c3449..0a3f237a85d30f30ab26ad672ff88ae6c7d4f26d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,5 +1,6 @@
+ # dependencies & build artifacts
+ /node_modules
+ /.env
+ .DS_Store
+ .debug
++data/
+diff --git a/README.md b/README.md
+index 1a1b40a91c66586a7db716e30c84e19eb818d5f8..e8978d2e739e7ef1b6106007f1aad0decf8eb7ac 100644
+--- a/README.md
++++ b/README.md
+@@ -1,29 +1,29 @@
+ # photo‑select
+ 
+ A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
+-moves the files accordingly, and then recurses until a directory is fully triaged.**
++materializes APFS clones (or hardlinks/copies when cloning is unavailable), and then recurses until a directory is fully triaged.**
+ 
+ You can run sessions in two “gears”:
+ 
+ - **Realtime (`openai`)** – submit a request and stream the reply immediately.
+ - **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
+   then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
+   Batch offers separate rate limits and lower per-token pricing than realtime calls.
+ 
+ ---
+ 
+ ## Requirements
+ 
+ - Node 20+
+ - An OpenAI API key (via `OPENAI_API_KEY` or the `--api-key` flag)
+   ```bash
+   export OPENAI_API_KEY="sk‑..."
+   ```
+ 
+ * macOS, Linux, or Windows‑WSL (uses only cross‑platform Node APIs)
+ 
+ ## Installation
+ 
+ ```bash
+ cd photo-select
+ nvm install   # obeys .nvmrc (Node 20.x)
+@@ -136,59 +136,79 @@ The script automatically:
+ 
+ Run `node scripts/demote-thumb.js <file> <image>` to convert an embedded
+ thumbnail to a plain link inside a Markdown file. The tool also appends
+ `~ Demoted: <image>` to the `Δ‑Summary` block, creating it if missing.
+ 
+ This helps you stay within the three‑thumbnail budget when curating notes.
+ 
+ All CLI flags—including `--api-key`, `--model`, and `--no-recurse`—can be passed
+ through to the script unchanged.
+ 
+ ### Flags
+ 
+ | flag       | default                      | description                                     |
+ | ---------- | ---------------------------- | ----------------------------------------------- |
+ | `--dir`    | current directory            | Source directory containing images              |
+ | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
+ | `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
+ | `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
+ | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
+ | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
+ | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
+ | `--context` | *(unset)* | Text file with exhibition context for the curators |
+ | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
+ | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
+ | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
++| `--strategy` | `auto` | Materialization strategy: `auto`, `clone`, `hardlink`, `copy`, or `move` |
++| `--dry-run` | `false` | Emit the plan and journal entries without writing to disk |
++| `--apfs-required` | `false` | Exit with an error if any file falls back from clone to hardlink/copy |
+ | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
+ | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
+ | `--verbose` | `false` | Print extra logs |
+ | `--save-io` | `false` | Save prompts and responses for debugging |
+ | `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
+ | `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
+ | `--batch-window` | `24h` | Completion window requested for batch jobs |
+ | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
+ 
++### APFS clone workflow
++
++Materialization prefers copy-on-write clones whenever the source and destination reside on the same APFS volume. Each file operation appends a JSON line to `data/journal.ndjson`:
++
++```json
++{"op":"copy","from":"/Volumes/photos/_all/1.jpg","to":"/Volumes/photos/_keep/1.jpg","mode":"clone","bytes":24837912,"ms":12}
++```
++
++- On macOS the CLI calls `bin/apfs-clone` (compiled during `npm install`) which wraps `clonefile(2)` / `copyfile(…, COPYFILE_CLONE | COPYFILE_ALL)`. If cloning is unsupported we fall back to `cp -c -p`, then to same-device hardlinks, and finally to metadata-preserving byte copies.
++- Linux/other platforms attempt `cp --reflink=auto --preserve=xattr,timestamps` before copying.
++- Override the strategy per run with `--strategy=<auto|clone|hardlink|copy|move>` or by exporting `COPY_STRATEGY`.
++- `--dry-run` keeps the journal and console summary while skipping filesystem writes (entries use `"mode":"dry-run"`).
++- `--apfs-required` exits non-zero if any file would fall back to hardlink or copy.
++- Final summaries include per-mode counts, total bytes, elapsed wall time, and `du -sk` deltas for the destination tree.
++
++Run `npm run test:apfs` (or invoke `scripts/test-apfs-clone.js` directly) to smoke-test the helper on your machine.
++
+ People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+ Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
+ 
+ Set `PHOTO_SELECT_IDENTITY_POLICY=canonicalize` to enable the older normalization/alias behaviour, though the default (`passthrough`) is recommended.
+ 
+ When `--field-notes` is enabled, the tool initializes a git repository in the target directory if one is absent and commits each notebook update using the model's commit message. During the second pass the prompt includes the two prior versions of each notebook and the commit log for that level so curators can craft a self-contained update.
+ 
+ See [docs/field-notes.md](docs/field-notes.md) for a description of how the notebook system works.
+ 
+ ### Increasing memory
+ 
+ The Node.js heap defaults to about 4 GB. Large runs with `--parallel` or `--workers` greater than 1
+ may exhaust that limit. Set `PHOTO_SELECT_MAX_OLD_SPACE_MB` to allocate more memory:
+ 
+ ```bash
+ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
+   /path/to/photo-select/photo-select-here.sh --workers 10 --api-key sk-...
+ ```
+ 
+ The value is passed directly to `--max-old-space-size`, so adjust it to match your
+ available RAM.
+ 
+ ### Concurrency: `--workers` (recommended)
+ 
+ Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.
+diff --git a/bin/apfs-clone.c b/bin/apfs-clone.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..e8013a835b768b95aa5ad9943a57b1b10f45c764
+--- /dev/null
++++ b/bin/apfs-clone.c
+@@ -0,0 +1,82 @@
++// bin/apfs-clone.c
++// Build: clang -O2 -Wall -Wextra -o apfs-clone bin/apfs-clone.c
++#define _DARWIN_C_SOURCE
++#include <copyfile.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <unistd.h>
++
++static void fail(const char *msg) {
++  int err = errno;
++  fprintf(stderr, "%s: %s\n", msg, strerror(err));
++  exit(err ? err : 1);
++}
++
++static void ensure_parent(const char *dst) {
++  char *tmp = strdup(dst);
++  if (!tmp) fail("strdup");
++  char *slash = strrchr(tmp, '/');
++  if (slash) {
++    *slash = '\0';
++    if (*tmp) {
++      if (mkdir(tmp, 0777) != 0 && errno != EEXIST) {
++        free(tmp);
++        fail("mkdir");
++      }
++    }
++  }
++  free(tmp);
++}
++
++int main(int argc, char **argv) {
++  if (argc != 3) {
++    fprintf(stderr, "usage: apfs-clone SRC DST\n");
++    return 2;
++  }
++  const char *src = argv[1];
++  const char *dst = argv[2];
++  ensure_parent(dst);
++
++  int sfd = open(src, O_RDONLY | O_NONBLOCK);
++  if (sfd < 0) fail("open(src)");
++  int dfd = open(".", O_RDONLY);
++  if (dfd < 0) {
++    close(sfd);
++    fail("open(.)");
++  }
++  const char *base = strrchr(dst, '/');
++  const char *name = base ? base + 1 : dst;
++  if (!name || !*name) {
++    close(sfd);
++    close(dfd);
++    fprintf(stderr, "invalid destination path\n");
++    return 1;
++  }
++
++  unlink(dst);
++
++  int rc = fclonefileat(sfd, dfd, name, 0);
++  int err = errno;
++  close(sfd);
++  close(dfd);
++  if (rc == 0) return 0;
++  if (err == ENOTSUP || err == EXDEV || err == EINVAL) {
++    copyfile_flags_t flags = COPYFILE_ALL | COPYFILE_CLONE | COPYFILE_EXCL |
++                             COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
++    int cprc = copyfile(src, dst, NULL, flags);
++    if (cprc == 0) return 0;
++    err = errno;
++    if (err == ENOTSUP || err == EXDEV) {
++      return err;
++    }
++    fail("copyfile(COPYFILE_CLONE)");
++  }
++  errno = err;
++  fail("fclonefileat");
++  return err;
++}
+diff --git a/package-lock.json b/package-lock.json
+index 3c01acd0c71721128b5afbfb4c631cb24d5ae886..03f222eebce3da21c3395d6dcd3720f0ed0c2ce8 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,44 +1,46 @@
+ {
+   "name": "photo-select",
+   "version": "0.1.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "photo-select",
+       "version": "0.1.1",
++      "hasInstallScript": true,
+       "license": "MIT",
+       "dependencies": {
+         "agentkeepalive": "^4.2.1",
+         "cli-progress": "^3.12.0",
+         "commander": "^12.0.0",
+         "diff": "^8.0.2",
+         "dotenv": "^16.5.0",
+         "handlebars": "^4.7.8",
+         "ollama": "^0.5.16",
+         "openai": "^4.0.0",
++        "p-limit": "^5.0.0",
+         "sharp": "^0.34.2",
+         "undici": "^6.21.3"
+       },
+       "bin": {
+         "photo-select": "src/index.js"
+       },
+       "devDependencies": {
+         "undici": "^6.21.3",
+         "vitest": "^1.5.0"
+       },
+       "engines": {
+         "node": ">=20"
+       }
+     },
+     "node_modules/@emnapi/runtime": {
+       "version": "1.4.3",
+       "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.4.3.tgz",
+       "integrity": "sha512-pBPWdu6MLKROBX05wSNKcNb++m5Er+KQ9QkB+WVM+pW2Kx9hoSrVTnu3BdkI5eBLZoKu/J6mW/B6i6bJB2ytXQ==",
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+         "tslib": "^2.4.0"
+       }
+     },
+     "node_modules/@esbuild/aix-ppc64": {
+@@ -2206,51 +2208,50 @@
+         "agentkeepalive": "^4.2.1",
+         "form-data-encoder": "1.7.2",
+         "formdata-node": "^4.3.2",
+         "node-fetch": "^2.6.7"
+       },
+       "bin": {
+         "openai": "bin/cli"
+       },
+       "peerDependencies": {
+         "ws": "^8.18.0",
+         "zod": "^3.23.8"
+       },
+       "peerDependenciesMeta": {
+         "ws": {
+           "optional": true
+         },
+         "zod": {
+           "optional": true
+         }
+       }
+     },
+     "node_modules/p-limit": {
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/p-limit/-/p-limit-5.0.0.tgz",
+       "integrity": "sha512-/Eaoq+QyLSiXQ4lyYV23f14mZRQcXnxfHrN0vCai+ak9G0pp9iEQukIIZq5NccEvwRB8PUnZT0KsOoDCINS1qQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "yocto-queue": "^1.0.0"
+       },
+       "engines": {
+         "node": ">=18"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/path-key": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz",
+       "integrity": "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/pathe": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/pathe/-/pathe-1.1.2.tgz",
+       "integrity": "sha512-whLdWMYL2TwI08hn8/ZqAbrVemu0LNaNNJZX73O6qaIdCTfXutsLhMkjdENX0qhsQ9uIimo4/aQOmXkoon2nDQ==",
+@@ -2861,36 +2862,35 @@
+       "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
+       "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "siginfo": "^2.0.0",
+         "stackback": "0.0.2"
+       },
+       "bin": {
+         "why-is-node-running": "cli.js"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/wordwrap": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/wordwrap/-/wordwrap-1.0.0.tgz",
+       "integrity": "sha512-gvVzJFlPycKc5dZN4yPkP8w7Dc37BtP1yczEneOb4uq34pXZcvrtRTmWV8W+Ume+XCxKgbjM+nevkyFPMybd4Q==",
+       "license": "MIT"
+     },
+     "node_modules/yocto-queue": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-1.2.1.tgz",
+       "integrity": "sha512-AyeEbWOu/TAXdxlV9wmGcR0+yh2j3vYPGOECcIj2S7MkrLyC7ne+oye2BKTItt0ii2PHk4cDy+95+LshzbXnGg==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12.20"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     }
+   }
+ }
+diff --git a/package.json b/package.json
+index ef32254dda8cc615c841674523a85732fa6e2de6..495035d05186437593fb34281b1f0e5e8ac14dec 100644
+--- a/package.json
++++ b/package.json
+@@ -1,36 +1,39 @@
+ {
+   "name": "photo-select",
+   "version": "0.1.1",
+   "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
+   "type": "module",
+   "bin": {
+     "photo-select": "./src/index.js"
+   },
+   "scripts": {
+     "start": "photo-select",
+     "test": "vitest run",
+     "undici:smoke": "node scripts/undici-smoke.mjs",
+-    "debug:batch": "node scripts/debug-batch.mjs"
++    "debug:batch": "node scripts/debug-batch.mjs",
++    "postinstall": "if [ \"$(uname)\" = Darwin ]; then clang -O2 -Wall -Wextra -o bin/apfs-clone bin/apfs-clone.c || true; fi",
++    "test:apfs": "node scripts/test-apfs-clone.js"
+   },
+   "engines": {
+     "node": ">=20"
+   },
+   "author": "Jamie Burkart",
+   "license": "MIT",
+   "dependencies": {
+     "agentkeepalive": "^4.2.1",
+     "cli-progress": "^3.12.0",
+     "commander": "^12.0.0",
+     "diff": "^8.0.2",
+     "dotenv": "^16.5.0",
+     "handlebars": "^4.7.8",
+     "ollama": "^0.5.16",
+     "openai": "^4.0.0",
++    "p-limit": "^5.0.0",
+     "sharp": "^0.34.2",
+     "undici": "^6.21.3"
+   },
+   "devDependencies": {
+-    "vitest": "^1.5.0",
+-    "undici": "^6.21.3"
++    "undici": "^6.21.3",
++    "vitest": "^1.5.0"
+   }
+ }
+diff --git a/scripts/test-apfs-clone.js b/scripts/test-apfs-clone.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..24214fc38cf70d0931aa2932fd704de26233fabc
+--- /dev/null
++++ b/scripts/test-apfs-clone.js
+@@ -0,0 +1,21 @@
++#!/usr/bin/env node
++import fs from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
++import { copyFile } from "../src/fs/copyOps.js";
++
++async function main() {
++  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "apfs-clone-test-"));
++  const src = path.join(dir, "source.bin");
++  const dst = path.join(dir, "dest.bin");
++  await fs.writeFile(src, Buffer.alloc(1024, 7));
++  const result = await copyFile(src, dst, process.env.COPY_STRATEGY || "auto");
++  const st = await fs.stat(dst);
++  console.log(JSON.stringify({ mode: result.mode, bytes: st.size }));
++  await fs.rm(dir, { recursive: true, force: true });
++}
++
++main().catch((err) => {
++  console.error(JSON.stringify({ error: err?.message || String(err) }));
++  process.exitCode = 1;
++});
+diff --git a/src/fs/copyOps.js b/src/fs/copyOps.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..2faadf8b1f47ef7db2adaf3f441c5b9e2b988525
+--- /dev/null
++++ b/src/fs/copyOps.js
+@@ -0,0 +1,330 @@
++import { promises as fs } from "node:fs";
++import path from "node:path";
++import crypto from "node:crypto";
++import { fileURLToPath } from "node:url";
++import { execa } from "execa";
++import pLimit from "p-limit";
++import { appendJournal } from "./journal.js";
++
++const DEFAULT_STRATEGY = (process.env.COPY_STRATEGY || "auto").toLowerCase();
++const DEFAULT_CONCURRENCY = Number(process.env.COPY_CONCURRENCY || 8);
++const limiter = pLimit(Math.max(1, DEFAULT_CONCURRENCY));
++
++function now() {
++  return Date.now();
++}
++
++async function pathDevice(p) {
++  try {
++    const st = await fs.stat(p);
++    return st.dev;
++  } catch {
++    return null;
++  }
++}
++
++async function detectFsType(p) {
++  if (process.platform !== "darwin") return null;
++  try {
++    const { stdout } = await execa("stat", ["-f", "%T", p]);
++    return stdout.trim().toLowerCase();
++  } catch {
++    return null;
++  }
++}
++
++async function ensureDir(p, mode) {
++  await fs.mkdir(p, { recursive: true, mode });
++}
++
++function tmpPath(dest) {
++  const base = `${dest}.tmp-${process.pid}-${crypto.randomBytes(4).toString("hex")}`;
++  return base;
++}
++
++async function hardlinkFile(src, dest) {
++  try {
++    await fs.link(src, dest);
++    return "hardlink";
++  } catch (err) {
++    if (err?.code === "EXDEV" || err?.code === "EPERM" || err?.code === "EACCES") {
++      throw Object.assign(new Error("hardlink unsupported"), { code: err.code });
++    }
++    throw err;
++  }
++}
++
++const here = fileURLToPath(new URL(".", import.meta.url));
++
++async function cloneFileDarwin(src, dest) {
++  const helper = path.resolve(here, "../../bin/apfs-clone");
++  try {
++    await execa(helper, [src, dest], { stdio: "ignore" });
++    return "clone";
++  } catch (err) {
++    if (err?.exitCode === 18 || err?.exitCode === 45 || err?.exitCode === 66) {
++      const copyFlags = ["-c", "-p", "--", src, dest];
++      try {
++        await execa("cp", copyFlags, { stdio: "ignore" });
++        return "clone";
++      } catch (err2) {
++        if (err2?.exitCode === 18 || err2?.exitCode === 45 || err2?.exitCode === 66) {
++          throw Object.assign(new Error("clone unsupported"), { code: "ENOTSUP" });
++        }
++        throw err2;
++      }
++    }
++    if (err?.code === "ENOENT" || err?.exitCode === 127) {
++      // helper missing -> fall back to cp -c
++      try {
++        await execa("cp", ["-c", "-p", "--", src, dest], { stdio: "ignore" });
++        return "clone";
++      } catch (err3) {
++        throw err3;
++      }
++    }
++    if (err?.exitCode === 18 || err?.exitCode === 45) {
++      throw Object.assign(new Error("clone unsupported"), { code: "ENOTSUP" });
++    }
++    throw err;
++  }
++}
++
++async function copyByteForByte(src, dest) {
++  if (process.platform === "darwin") {
++    try {
++      await execa("cp", ["-p", "--", src, dest], { stdio: "ignore" });
++      return "copy";
++    } catch (err) {
++      if (err?.code !== "ENOENT") {
++        throw err;
++      }
++    }
++  }
++  if (process.platform === "linux") {
++    try {
++      await execa("cp", ["-a", "--", src, dest], { stdio: "ignore" });
++      return "copy";
++    } catch (err) {
++      if (err?.code !== "ENOENT") {
++        throw err;
++      }
++    }
++  }
++  await fs.copyFile(src, dest);
++  const st = await fs.stat(src);
++  await fs.utimes(dest, st.atime, st.mtime).catch(() => {});
++  await fs.chmod(dest, st.mode).catch(() => {});
++  return "copy";
++}
++
++async function ensureCleanDest(dest) {
++  try {
++    await fs.rm(dest, { force: true });
++  } catch {}
++}
++
++async function materializeFile(src, dest, strategy, opts = {}) {
++  const start = now();
++  const lstat = await fs.lstat(src);
++  if (lstat.isSymbolicLink()) {
++    const target = await fs.readlink(src);
++    await ensureDir(path.dirname(dest));
++    try {
++      await fs.symlink(target, dest);
++    } catch (err) {
++      if (err?.code !== "EEXIST") throw err;
++    }
++    const elapsed = now() - start;
++    await appendJournal({
++      op: "copy",
++      from: src,
++      to: dest,
++      mode: "symlink",
++      bytes: 0,
++      ms: elapsed,
++    });
++    return { mode: "symlink", bytes: 0, ms: elapsed };
++  }
++  if (!lstat.isFile()) {
++    const elapsed = now() - start;
++    await appendJournal({
++      op: "copy",
++      from: src,
++      to: dest,
++      mode: "skip",
++      bytes: 0,
++      ms: elapsed,
++    });
++    return { mode: "skip", bytes: 0, ms: elapsed };
++  }
++
++  const resolvedStrategy = (strategy || DEFAULT_STRATEGY).toLowerCase();
++  const attempts = [];
++  if (resolvedStrategy === "move") {
++    await ensureDir(path.dirname(dest));
++    await ensureCleanDest(dest);
++    await fs.rename(src, dest);
++    const elapsed = now() - start;
++    const bytes = lstat.size;
++    await appendJournal({ op: "move", from: src, to: dest, mode: "move", bytes, ms: elapsed });
++    return { mode: "move", bytes, ms: elapsed };
++  }
++  if (resolvedStrategy === "clone") {
++    attempts.push("clone");
++  } else if (resolvedStrategy === "hardlink") {
++    attempts.push("hardlink");
++  } else if (resolvedStrategy === "copy") {
++    attempts.push("copy");
++  } else {
++    attempts.push("clone", "hardlink", "copy");
++  }
++
++  await ensureDir(path.dirname(dest));
++  const destExists = await fs
++    .stat(dest)
++    .then(() => true)
++    .catch((err) => (err?.code === "ENOENT" ? false : Promise.reject(err)));
++  if (destExists) {
++    const dstStat = await fs.stat(dest);
++    if (dstStat.size === lstat.size && dstStat.mtimeMs >= lstat.mtimeMs) {
++      const elapsed = now() - start;
++      await appendJournal({
++        op: "copy",
++        from: src,
++        to: dest,
++        mode: "skip-exists",
++        bytes: lstat.size,
++        ms: elapsed,
++      });
++      return { mode: "skip-exists", bytes: lstat.size, ms: elapsed };
++    }
++    await ensureCleanDest(dest);
++  }
++
++  const srcDev = lstat.dev;
++  const dstParent = path.dirname(dest);
++  const dstDev = await pathDevice(dstParent);
++  const sameDevice = dstDev != null && dstDev === srcDev;
++  const fsType = sameDevice ? await detectFsType(dstParent) : null;
++
++  for (const mode of attempts) {
++    try {
++      const temp = tmpPath(dest);
++      await ensureCleanDest(temp);
++      if (mode === "clone") {
++        if (process.platform === "darwin" && sameDevice && fsType === "apfs") {
++          await cloneFileDarwin(src, temp);
++          await fs.rename(temp, dest);
++          const elapsed = now() - start;
++          const bytes = lstat.size;
++          await appendJournal({ op: "copy", from: src, to: dest, mode: "clone", bytes, ms: elapsed });
++          return { mode: "clone", bytes, ms: elapsed };
++        }
++        if (process.platform !== "darwin" && sameDevice) {
++          try {
++            await execa("cp", ["--reflink=auto", "--preserve=all", "--", src, temp], {
++              stdio: "ignore",
++            });
++            await fs.rename(temp, dest);
++            const elapsed = now() - start;
++            const bytes = lstat.size;
++            await appendJournal({ op: "copy", from: src, to: dest, mode: "clone", bytes, ms: elapsed });
++            return { mode: "clone", bytes, ms: elapsed };
++          } catch (err) {
++            if (err?.exitCode === 1) {
++              await fs.rm(temp, { force: true }).catch(() => {});
++              continue;
++            }
++            throw err;
++          }
++        }
++      } else if (mode === "hardlink") {
++        if (!sameDevice) {
++          continue;
++        }
++        await hardlinkFile(src, temp);
++        await fs.rename(temp, dest).catch(async (err) => {
++          if (err?.code === "EXDEV") throw err;
++          throw err;
++        });
++        const elapsed = now() - start;
++        const bytes = lstat.size;
++        await appendJournal({ op: "copy", from: src, to: dest, mode: "hardlink", bytes, ms: elapsed });
++        return { mode: "hardlink", bytes, ms: elapsed };
++      } else if (mode === "copy") {
++        const bytes = lstat.size;
++        await copyByteForByte(src, temp);
++        await fs.rename(temp, dest);
++        const elapsed = now() - start;
++        await appendJournal({ op: "copy", from: src, to: dest, mode: "copy", bytes, ms: elapsed });
++        return { mode: "copy", bytes, ms: elapsed };
++      }
++      await fs.rm(temp, { force: true }).catch(() => {});
++    } catch (err) {
++      if (mode === "clone" && (err?.code === "ENOTSUP" || err?.code === "EXDEV")) {
++        continue;
++      }
++      if (mode === "hardlink" && err?.code === "EXDEV") {
++        continue;
++      }
++      throw err;
++    }
++  }
++  const fallback = await copyByteForByte(src, dest);
++  const elapsed = now() - start;
++  await appendJournal({ op: "copy", from: src, to: dest, mode: fallback, bytes: lstat.size, ms: elapsed });
++  return { mode: fallback, bytes: lstat.size, ms: elapsed };
++}
++
++export async function copyFile(src, dest, strategy = DEFAULT_STRATEGY, opts = {}) {
++  return limiter(() => materializeFile(src, dest, strategy, opts));
++}
++
++export async function copyTree(srcDir, destDir, strategy = DEFAULT_STRATEGY, opts = {}) {
++  const start = now();
++  const summary = { clone: 0, hardlink: 0, copy: 0, move: 0, skipped: 0, bytes: 0 };
++  const duBefore = await getDiskUsage(destDir);
++  await ensureDir(destDir);
++  const entries = await fs.readdir(srcDir, { withFileTypes: true });
++  for (const entry of entries) {
++    const from = path.join(srcDir, entry.name);
++    const to = path.join(destDir, entry.name);
++    if (entry.isDirectory()) {
++      const st = await fs.stat(from).catch(() => null);
++      await ensureDir(to, st?.mode);
++      const nested = await copyTree(from, to, strategy, opts);
++      for (const key of ["clone", "hardlink", "copy", "move", "skipped"]) {
++        summary[key] = (summary[key] || 0) + (nested?.[key] || 0);
++      }
++      summary.bytes += nested?.bytes || 0;
++      continue;
++    }
++    const result = await copyFile(from, to, strategy, opts);
++    if (result.mode === "clone" || result.mode === "hardlink" || result.mode === "copy" || result.mode === "move") {
++      summary[result.mode] = (summary[result.mode] || 0) + 1;
++      summary.bytes += result.bytes || 0;
++    } else {
++      summary.skipped += 1;
++    }
++  }
++  const elapsed = now() - start;
++  const duAfter = await getDiskUsage(destDir);
++  const delta = duAfter != null && duBefore != null ? duAfter - duBefore : null;
++  console.log(
++    `📦  copyTree ${srcDir} → ${destDir} in ${elapsed}ms (clone=${summary.clone} hardlink=${summary.hardlink} copy=${summary.copy} bytes=${summary.bytes}${
++      delta != null ? ` du_delta_kb=${delta}` : ""
++    })`
++  );
++  return { ...summary, ms: elapsed, duDeltaKb: delta };
++}
++
++async function getDiskUsage(dir) {
++  try {
++    const { stdout } = await execa("du", ["-sk", dir]);
++    const [value] = stdout.trim().split(/\s+/);
++    return Number(value);
++  } catch {
++    return null;
++  }
++}
+diff --git a/src/fs/journal.js b/src/fs/journal.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..c56c3db1ed50e55880b7dabc9b4ff1663cff644d
+--- /dev/null
++++ b/src/fs/journal.js
+@@ -0,0 +1,63 @@
++import fs from "node:fs";
++import { promises as fsp } from "node:fs";
++import path from "node:path";
++
++const JOURNAL_PATH = process.env.PHOTO_SELECT_JOURNAL_PATH ||
++  path.resolve(process.cwd(), "data/journal.ndjson");
++
++function ensureDirSync(filePath) {
++  const dir = path.dirname(filePath);
++  fs.mkdirSync(dir, { recursive: true });
++}
++
++let stream;
++let pending = 0;
++
++function getStream() {
++  if (!stream) {
++    ensureDirSync(JOURNAL_PATH);
++    stream = fs.createWriteStream(JOURNAL_PATH, { flags: "a" });
++    stream.on("error", (err) => {
++      console.warn(`⚠️  journal write failed: ${err?.message || err}`);
++    });
++  }
++  return stream;
++}
++
++export async function appendJournal(entry) {
++  try {
++    const out = JSON.stringify(entry);
++    const s = getStream();
++    pending++;
++    await new Promise((resolve, reject) => {
++      s.write(out + "\n", (err) => {
++        pending--;
++        if (err) reject(err);
++        else resolve();
++      });
++    });
++  } catch (err) {
++    console.warn(`⚠️  Failed to append journal entry: ${err?.message || err}`);
++  }
++}
++
++export async function flushJournal() {
++  const s = stream;
++  if (!s) return;
++  await new Promise((resolve) => {
++    if (pending === 0) return resolve();
++    const onDrain = () => {
++      if (pending === 0) {
++        s.off("drain", onDrain);
++        resolve();
++      }
++    };
++    s.on("drain", onDrain);
++    onDrain();
++  });
++  await fsp.fsync?.(s.fd).catch(() => {});
++}
++
++export function getJournalPath() {
++  return JOURNAL_PATH;
++}
+diff --git a/src/imageSelector.js b/src/imageSelector.js
+index 93df83a384c28456d5dc0335f7443f44a0bc2730..621617b75760b03f923820bbff6943b57c767338 100644
+--- a/src/imageSelector.js
++++ b/src/imageSelector.js
+@@ -1,39 +1,76 @@
+ import fs from "node:fs/promises";
+ import path from "node:path";
++import crypto from "node:crypto";
++import { execa } from "execa";
+ import { SUPPORTED_EXTENSIONS } from "./config.js";
++import { copyFile as copyFileWithStrategy } from "./fs/copyOps.js";
+ 
+ /** Return full paths of images in `dir` (non‑recursive). */
+ export async function listImages(dir) {
+   const entries = await fs.readdir(dir, { withFileTypes: true });
+   return entries
+     .filter(
+       (e) =>
+         e.isFile() &&
+         SUPPORTED_EXTENSIONS.includes(path.extname(e.name).toLowerCase())
+     )
+     .map((e) => path.join(dir, e.name))
+     .sort();
+ }
+ 
+ /** Pick up to `count` random items from the array. */
+ export function pickRandom(array, count) {
+   const shuffled = array.slice().sort(() => Math.random() - 0.5);
+   return shuffled.slice(0, Math.min(count, array.length));
+ }
+ 
+-/** Ensure sub‑directories exist and move each file accordingly. */
+-export async function moveFiles(files, targetDir, notes = new Map()) {
+-  if (!files.length) return;
++/** Materialize files into the target directory using clone/hardlink/copy. */
++export async function materializeFiles(
++  files,
++  targetDir,
++  notes = new Map(),
++  {
++    strategy = process.env.COPY_STRATEGY || "auto",
++    dryRun = false,
++    apfsRequired = false,
++  } = {}
++) {
++  if (!files.length) {
++    return { counts: {}, files: [] };
++  }
+   await fs.mkdir(targetDir, { recursive: true });
+-  await Promise.all(
+-    files.map(async (file) => {
+-      const dest = path.join(targetDir, path.basename(file));
+-      await fs.rename(file, dest);
+-      const note = notes.get(file);
+-      if (note) {
+-        const txt = dest.replace(/\.[^.]+$/, ".txt");
+-        await fs.writeFile(txt, note, "utf8");
+-      }
+-    })
+-  );
++  const counts = new Map();
++  const results = [];
++  for (const file of files) {
++    const dest = path.join(targetDir, path.basename(file));
++    if (dryRun) {
++      counts.set("dry-run", (counts.get("dry-run") || 0) + 1);
++      results.push({ from: file, to: dest, mode: "dry-run" });
++      continue;
++    }
++    const result = await copyFileWithStrategy(file, dest, strategy);
++    counts.set(result.mode, (counts.get(result.mode) || 0) + 1);
++    results.push({ from: file, to: dest, mode: result.mode });
++    if (apfsRequired && result.mode !== "clone") {
++      throw new Error(`APFS clone required but fell back to ${result.mode} for ${file}`);
++    }
++    const note = notes.get(file);
++    if (note) {
++      const txt = dest.replace(/\.[^.]+$/, ".txt");
++      await fs.writeFile(txt, note, "utf8");
++    }
++    await tagProvenance(file, dest, result.mode).catch(() => {});
++  }
++  return {
++    counts: Object.fromEntries(counts),
++    files: results,
++  };
++}
++
++async function tagProvenance(src, dest, mode) {
++  if (process.platform !== "darwin") return;
++  const hash = crypto.createHash("sha256").update(src).digest("hex");
++  await execa("xattr", ["-w", "com.openhouse.src-path", src, dest]);
++  await execa("xattr", ["-w", "com.openhouse.src-hash", hash, dest]);
++  await execa("xattr", ["-w", "com.openhouse.clone-mode", mode, dest]);
+ }
+diff --git a/src/index.js b/src/index.js
+index 7dd33b8a1912e4291d57033db768d2408206c960..185eba0038efe260bf36e3cdd99faa3511c40f9c 100755
+--- a/src/index.js
++++ b/src/index.js
+@@ -55,72 +55,84 @@ program
+     "Reasoning effort (minimal|low|medium|high|auto)",
+     process.env.PHOTO_SELECT_REASONING_EFFORT
+   )
+   .option("--no-recurse", "Process a single directory only")
+   .option(
+     "-P, --parallel <n>",
+     "Number of concurrent API calls (deprecated; use --workers)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option("--field-notes", "Enable field notes workflow")
+   .option("-v, --verbose", "Print extra logs")
+   .option(
+     "--save-io",
+     "Save full prompts and responses for debugging"
+   )
+   .option(
+     "--workers <n>",
+     "Number of worker processes (each runs batches sequentially)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option(
+     "--concurrency <n>",
+     "Maximum in-flight OpenAI requests",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
++  .option(
++    "--strategy <mode>",
++    "Materialization strategy (auto|clone|hardlink|copy|move)",
++    process.env.COPY_STRATEGY || "auto"
++  )
++  .option("--dry-run", "Plan without writing to disk")
++  .option("--apfs-required", "Fail if a file cannot be cloned")
+   .parse(process.argv);
+ 
+ let {
+   dir,
+   prompt: promptPath,
+   provider: providerName,
+   model,
+   recurse,
+   apiKey,
+   curators,
+   context: contextPath,
+   parallel,
+   fieldNotes,
+   verbose,
+   saveIo,
+   workers,
+   verbosity,
+   reasoningEffort,
+   ollamaBaseUrl,
+   concurrency: concurrencyFlag,
++  strategy,
++  dryRun: dryRunFlag,
++  apfsRequired,
+ } = program.opts();
+ 
++const dryRun = !!dryRunFlag;
++
+ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
+   const n = Number(parallel) || 1;
+   if (!workers) workers = n;
+   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
+ }
+ if (!workers) workers = 1;
+ 
+ const envConc = Number(process.env.CONCURRENCY);
+ const envWorkers = Number(process.env.WORKERS);
+ if (!workers && Number.isFinite(envWorkers)) workers = envWorkers;
+ let concurrency = Number.isFinite(envConc)
+   ? envConc
+   : Number.isFinite(concurrencyFlag)
+   ? concurrencyFlag
+   : workers;
+ if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+ 
+ // Scale transport, filesystem, and batching with worker count
+ const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+ const maxSockets = clamp(workers * 2 + 2, 8, 64);
+ const maxFreeSockets = clamp(Math.ceil(maxSockets / 2), 4, 32);
+ process.env.UNDICI_CONNECTIONS = String(maxSockets);
+ process.env.UNDICI_KEEPALIVE_MS = "10000";
+ process.env.UNDICI_FREE_TIMEOUT_MS = "60000";
+ process.env.PHOTO_SELECT_MAX_SOCKETS = String(maxSockets);
+@@ -155,80 +167,91 @@ async function handleSignal(sig) {
+   await closeDispatcher().catch(() => {});
+   process.exit(0);
+ }
+ process.on('SIGINT', handleSignal);
+ process.on('SIGTERM', handleSignal);
+ 
+ // Early bootstrap log (helps confirm the process is alive).
+ if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+   console.log(`🔧 bootstrap: node=${process.version} workers=${workers} dir=${process.cwd()}`);
+ }
+ 
+ // Configure HTTP dispatcher only if explicitly enabled.
+ // This is async but we don't block startup on it.
+ void configureHttpFromEnv();
+ 
+ if (verbose) {
+   process.env.PHOTO_SELECT_VERBOSE = '1';
+ }
+ 
+ if (apiKey) {
+   process.env.OPENAI_API_KEY = apiKey;
+ }
+ if (ollamaBaseUrl) {
+   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
+ }
++const copyStrategy = (strategy || process.env.COPY_STRATEGY || 'auto').toLowerCase();
++process.env.COPY_STRATEGY = copyStrategy;
++if (dryRun) {
++  process.env.PHOTO_SELECT_DRY_RUN = '1';
++}
++if (apfsRequired) {
++  process.env.PHOTO_SELECT_APFS_REQUIRED = '1';
++}
+ 
+ const provider = providerName || 'openai';
+ let finalModel = model;
+ if (!finalModel) {
+   finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+ }
+ 
+ let finalReasoningEffort = reasoningEffort?.toLowerCase();
+ if (!finalReasoningEffort) {
+   finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+ }
+ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
+ 
+ (async () => {
+   try {
+     if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+       console.error(
+         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
+       );
+       process.exit(1);
+     }
+     const absDir = path.resolve(dir);
+     const { triageDirectory } = await import('./orchestrator.js');
+     const { getProvider } = await import('./providers/index.js');
+     const driver = await getProvider(provider);
+     await triageDirectory({
+       dir: absDir,
+       promptPath,
+       provider: driver,
+       model: finalModel,
+       recurse,
+       curators,
+       contextPath,
+       fieldNotes,
+       verbose,
+       saveIo,
+       workers,
+       verbosity,
+       reasoningEffort: finalReasoningEffort,
++      copyStrategy,
++      dryRun,
++      apfsRequired,
+     });
+     console.log("🎉  Finished triaging.");
+   } catch (err) {
+     if (err?.code === "BILLING_LIMIT") {
+       console.error(
+         "🛑  Billing limit reached. Please review your provider usage before retrying."
+       );
+       if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+         console.error("  ↳ cause:", err.cause);
+       }
+       process.exit(1);
+     }
+     console.error("❌  Error:", err);
+     process.exit(1);
+   }
+ })();
+diff --git a/src/orchestrator.js b/src/orchestrator.js
+index 3e4a65e0d17f673b2616c9e04b03cc305c8049a4..4a73b33affd7566be6555b0935b8c5171ac5b92f 100644
+--- a/src/orchestrator.js
++++ b/src/orchestrator.js
+@@ -1,38 +1,39 @@
+ import path from "node:path";
+-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
++import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+ import { execFile } from "node:child_process";
+ import { promisify } from "node:util";
+ import { batchStore } from "./batchContext.js";
+ import crypto from "node:crypto";
+ import { delay } from "./config.js";
+-import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
++import { listImages, pickRandom, materializeFiles } from "./imageSelector.js";
+ import { parseReply, getPeople } from "./chatClient.js";
+ import { buildPrompt } from "./templates.js";
+ import FieldNotesWriter from "./fieldNotesWriter.js";
+ import { MultiBar, Presets } from "cli-progress";
+ import { sanitizePeople } from "./lib/people.js";
++import { copyFile as copyFileWithStrategy } from "./fs/copyOps.js";
+ import { finalizeCurators } from "./core/finalizeCurators.js";
+ 
+ const exec = promisify(execFile);
+ 
+ // ---- env & defaults ---------------------------------------------------------
+ function envBool(name, def) {
+   const v = process.env[name];
+   if (v == null) return def;
+   if (/^(1|true|yes|on)$/i.test(v)) return true;
+   if (/^(0|false|no|off)$/i.test(v)) return false;
+   return def;
+ }
+ const PRETTY = envBool("PHOTO_SELECT_PRETTY", true);                 // pretty console summary
+ const TRANSCRIPT_TXT = envBool("PHOTO_SELECT_TRANSCRIPT_TXT", false); // optional .txt transcript
+ 
+ function parsePrettyMinutes() {
+   const raw = process.env.PHOTO_SELECT_PRETTY_MINUTES;
+   const isTTY = process.stdout.isTTY;
+   const isCI = !!process.env.CI;
+   if (raw != null) {
+     if (/^(all|∞|infinity|0)$/i.test(raw)) return Infinity;
+     const n = Number(raw);
+     if (Number.isFinite(n) && n >= 0) return n === 0 ? Infinity : n;
+   }
+   return isTTY && !isCI ? Infinity : 20;
+@@ -229,102 +230,137 @@ export async function resolveResumeLevel(startDir) {
+  * @param {Object} options.provider     Chat provider instance
+  * @param {string} options.model        Model id for the provider
+  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
+  * @param {string} [options.contextPath]     Optional additional context file
+ * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
+ * @param {number} [options.depth=0]         Internal recursion depth (for logging)
+ */
+ export async function triageDirectory(options) {
+   let {
+     dir,
+     promptPath,
+     provider,
+     model,
+     recurse = true,
+     curators = [],
+     contextPath,
+     fieldNotes = false,
+     verbose = false,
+     saveIo = false,
+     workers = 1,
+     verbosity,
+     reasoningEffort,
+     depth = 0,
+     gitRoot,
++    copyStrategy = process.env.COPY_STRATEGY || "auto",
++    dryRun = false,
++    apfsRequired = false,
+   } = options;
+   if (!provider) {
+     const m = await import('./providers/openai.js');
+     provider = new m.default();
+   }
+   const indent = "  ".repeat(depth);
+   let notesWriter;
+ 
+   function isBillingLimitError(err) {
+     if (!err) return false;
+     const candidates = [
+       err?.message,
+       err?.error?.message,
+       err?.cause?.message,
+       err?.response?.data?.error?.message,
+       err?.response?.data?.message,
+       err?.response?.error?.message,
+       err?.response?.message,
+       err?.body?.error?.message,
+       err?.body?.message,
+     ]
+       .flat()
+       .filter(Boolean)
+       .map((msg) => String(msg));
+     return candidates.some((message) => /billing (hard )?limit/i.test(message));
+   }
+ 
+   function createBillingLimitError(err) {
+     const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
+     wrapped.code = "BILLING_LIMIT";
+     wrapped.cause = err;
+     return wrapped;
+   }
+ 
+   let dynamicWorkers = workers;
+   let consecutiveGatewayErrors = 0;
++  const recentOutcomes = [];
++  let lastAdjustMs = 0;
++  function pruneOutcomes(now = Date.now()) {
++    while (recentOutcomes.length && now - recentOutcomes[0].now > 120_000) {
++      recentOutcomes.shift();
++    }
++  }
++  function recordOutcome({ ok, error }) {
++    const now = Date.now();
++    pruneOutcomes(now);
++    recentOutcomes.push({ now, ok, error });
++    pruneOutcomes(now);
++    const window = recentOutcomes.filter((item) => now - item.now <= 60_000);
++    if (window.length < 5) return;
++    const failures = window.filter((item) => !item.ok).length;
++    const rate = failures / window.length;
++    if (now - lastAdjustMs < 30_000) return;
++    if (rate > 0.25 && dynamicWorkers > 1) {
++      dynamicWorkers = Math.max(1, Math.floor(dynamicWorkers / 2));
++      lastAdjustMs = now;
++      console.warn(
++        `${indent}⚖️  Error rate ${(rate * 100).toFixed(1)}% → reducing workers to ${dynamicWorkers}.`
++      );
++    } else if (rate < 0.05 && dynamicWorkers < workers) {
++      dynamicWorkers = Math.min(workers, dynamicWorkers + 1);
++      lastAdjustMs = now;
++      console.log(
++        `${indent}⚖️  Error rate ${(rate * 100).toFixed(1)}% → increasing workers to ${dynamicWorkers}.`
++      );
++    }
++  }
+   function isGatewayError(e) {
+     const s = e?.status || e?.code;
+     return s === 502 || s === 503;
+   }
+-  function noteGatewayError() {
++  function noteGatewayError(err) {
+     consecutiveGatewayErrors++;
+     if (consecutiveGatewayErrors >= 3 && dynamicWorkers > 1) {
+       dynamicWorkers = 1;
+       console.warn(
+         `${indent}⚠️  High gateway error rate → reducing workers to 1 for the next 10 minutes.`
+       );
+       setTimeout(() => {
+         dynamicWorkers = workers;
+         consecutiveGatewayErrors = 0;
+       }, 10 * 60 * 1000);
+     }
++    recordOutcome({ ok: false, error: err });
+   }
+ 
+   if (depth === 0) {
+     const shown = MAX_MINUTES === Infinity ? 'all' : String(MAX_MINUTES);
+     console.log(dim(`UI: pretty=${PRETTY?'on':'off'}, transcript_txt=${TRANSCRIPT_TXT?'on':'off'}, minutes_shown=${shown}`));
+   }
+ 
+   if (!gitRoot) gitRoot = dir;
+ 
+   if (recurse) {
+     const { dir: workDir, hops } = await resolveResumeLevel(dir);
+     if (workDir !== dir) {
+       const relative = path.relative(dir, workDir) || ".";
+       const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+       console.log(
+         `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+       );
+       return triageDirectory({
+         ...options,
+         dir: workDir,
+         depth: depth + hops,
+         provider,
+         gitRoot,
+       });
+     }
+@@ -333,109 +369,124 @@ export async function triageDirectory(options) {
+   if (fieldNotes && depth === 0) {
+     await ensureGitRepo(gitRoot);
+   }
+ 
+   console.log(`${indent}📁  Scanning ${dir}`);
+ 
+   // Archive original images at this level
+   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+   const runSession = async (payload) => {
+     const handle = await provider.submit({
+       levelDir,
+       ...payload,
+     });
+     return provider.collect(handle);
+   };
+   const initImages = await listImages(dir);
+   const levelStart = Date.now();
+   const totalImages = initImages.length;
+   const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
+   await mkdir(levelDir, { recursive: true });
+   if (saveIo) {
+     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
+     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+   }
+   const failedArchives = [];
+-  const copyFileSafe = async (
+-    src,
+-    dest,
+-    attempt = 0,
+-    maxAttempts = 3
+-  ) => {
+-    try {
+-      await copyFile(src, dest);
+-    } catch (err) {
+-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+-        const wait = (attempt + 1) * 1000;
+-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+-        try {
+-          await stat(src);
+-        } catch {
+-          // ignore
+-        }
+-        await delay(wait);
+-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+-      }
+-      throw err;
+-    }
+-  };
+-  await Promise.all(
+-    initImages.map(async (file) => {
+-      const dest = path.join(levelDir, path.basename(file));
++  if (!dryRun) {
++    const copyFileSafe = async (
++      src,
++      dest,
++      attempt = 0,
++      maxAttempts = 3
++    ) => {
+       try {
+-        await copyFileSafe(file, dest);
++        const archiveStrategy = copyStrategy === "move" ? "copy" : copyStrategy;
++        await copyFileWithStrategy(src, dest, archiveStrategy);
+       } catch (err) {
+-        failedArchives.push(file);
+-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
++        if (err?.code === "ECANCELED" && attempt < maxAttempts) {
++          const wait = (attempt + 1) * 1000;
++          console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
++          try {
++            await stat(src);
++          } catch {
++            // ignore
++          }
++          await delay(wait);
++          return copyFileSafe(src, dest, attempt + 1, maxAttempts);
++        }
++        throw err;
+       }
+-    })
+-  );
++    };
++    await Promise.all(
++      initImages.map(async (file) => {
++        const dest = path.join(levelDir, path.basename(file));
++        try {
++          await copyFileSafe(file, dest);
++        } catch (err) {
++          failedArchives.push(file);
++          console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
++        }
++      })
++    );
++  }
+   if (failedArchives.length) {
+     const listPath = path.join(levelDir, "failed-archives.txt");
+     await writeFile(listPath, failedArchives.join("\n"), "utf8");
+     console.warn(
+       `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+     );
+   }
+ 
+   if (fieldNotes) {
+     const lvl = String(depth + 1).padStart(3, '0');
+     notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
+     await notesWriter.init();
+   }
+ 
+   let completedBatches = 0;
+ 
+   while (true) {
+     const images = await listImages(dir);
+-    if (images.length === 0) {
++    const keepDir = path.join(dir, "_keep");
++    const asideDir = path.join(dir, "_aside");
++    const [existingKeep, existingAside] = await Promise.all([
++      listImages(keepDir).catch(() => []),
++      listImages(asideDir).catch(() => []),
++    ]);
++    const processedNames = new Set(
++      existingKeep.concat(existingAside).map((p) => path.basename(p))
++    );
++    const pending = images.filter(
++      (file) => !processedNames.has(path.basename(file))
++    );
++    if (pending.length === 0) {
+       console.log(`${indent}✅  Nothing to do in ${dir}`);
+       break;
+     }
+ 
+-    console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+-    const queue = pickRandom(images, images.length);
++    console.log(`${indent}📊  ${pending.length} unclassified image(s) found`);
++    const queue = pickRandom(pending, pending.length);
+     console.log(
+       `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
+     );
+ 
+     const multibar = new MultiBar(
+         {
+           clearOnComplete: false,
+           hideCursor: true,
+           format: `${indent}{prefix} |{bar}| {stage}`,
+         },
+         Presets.shades_classic
+       );
+       try {
+         const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+         const getBar = (idx) =>
+           multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+         const log = (msg) => {
+           for (const line of String(msg).split(/\n/)) {
+             multibar.log(line + "\n");
+             if (process.env.NODE_ENV === "test") console.log(line);
+           }
+         };
+         let batchIdx = 0;
+         let abortProcessing = false;
+         const nextBatch = () =>
+@@ -547,50 +598,51 @@ export async function triageDirectory(options) {
+                       onProgress: (stage) => {
+                         bar.update(stageMap[stage] || 0, { stage });
+                       },
+                       stream: true,
+                     });
+                     reply = repairRaw;
+                     await saveText('response', attemptNum, reply);
+                     ({ keep, aside, unclassified, notes } = parseReply(
+                       reply,
+                       batch,
+                       meta
+                     ));
+                   }
+                   if (keep.length + aside.length === 0) {
+                     console.log(
+                       dim(
+                         `⚠️  No decisions after ${attempts} attempt(s); marking NEEDS_REVIEW and continuing.`
+                       )
+                     );
+                     const marker = path.join(dir, "NEEDS_REVIEW");
+                     const list = batch.map((f) => path.basename(f)).join("\n");
+                     try {
+                       const prev = await readFile(marker, "utf8").catch(() => "");
+                       await writeFile(marker, `${prev}${list}\n`, "utf8");
+                     } catch {}
++                    recordOutcome({ ok: false, error: new Error("no decisions") });
+                     return;
+                   }
+                 }
+                 const ms = Date.now() - batchStart;
+                 bar.update(4, { stage: "done" });
+                 bar.stop();
+                 multibar.remove(bar);
+                 if (PRETTY) {
+                   log(`${indent}🤖  ChatGPT reply (pretty):\n` + prettyLLMReply(reply));
+                 } else {
+                   log(`${indent}🤖  ChatGPT reply:\n${reply}`);
+                 }
+                 log(
+                   `${indent}⏱️  Batch ${idx} completed in ${(ms / 1000).toFixed(1)}s`
+                 );
+ 
+                 // Write primary minutes JSON and optional transcript
+                 const uuid = crypto.randomUUID();
+                 const jsonPath = path.join(dir, `minutes-${uuid}.json`);
+                 const j =
+                   extractJsonBlock(reply) || (() => {
+                     const mk = (arr, tag) =>
+                       arr.map((f) => ({
+                         filename: path.basename(f),
+                         decision: tag,
+@@ -607,73 +659,92 @@ export async function triageDirectory(options) {
+                         : { speaker: "Curator", text: line };
+                     });
+                     return { minutes: minutesObjs, decisions };
+                   })();
+                 await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
+                 log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
+                 if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
+                   const txtPath = path.join(dir, `minutes-${uuid}.txt`);
+                   let out = j.minutes
+                     .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
+                     .join("\n");
+                   if (Array.isArray(j.decisions)) {
+                     const keeps = j.decisions.filter((d) => d.decision === "keep");
+                     const asides = j.decisions.filter((d) => d.decision === "aside");
+                     out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
+                     for (const d of keeps)
+                       out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                     for (const d of asides)
+                       out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                   }
+                   await writeFile(txtPath, out, "utf8");
+                   log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
+                 }
+                 const keepDir = path.join(dir, "_keep");
+                 const asideDir = path.join(dir, "_aside");
+-                await Promise.all([
+-                  moveFiles(keep, keepDir, notes),
+-                  moveFiles(aside, asideDir, notes),
++                const [keepResult, asideResult] = await Promise.all([
++                  materializeFiles(keep, keepDir, notes, {
++                    strategy: copyStrategy,
++                    dryRun,
++                    apfsRequired,
++                  }),
++                  materializeFiles(aside, asideDir, notes, {
++                    strategy: copyStrategy,
++                    dryRun,
++                    apfsRequired,
++                  }),
+                 ]);
++                const formatCounts = (result) => {
++                  if (!result || !result.counts) return "";
++                  const entries = Object.entries(result.counts)
++                    .map(([mode, count]) => `${mode}:${count}`)
++                    .join(", ");
++                  return entries ? ` (${entries})` : "";
++                };
+                   if (unclassified.length && keep.length + aside.length > 0) {
+                     queue.push(...unclassified);
+                   }
+                 log(
+-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
++                  `📂  Materialized: ${keep.length} keep → ${keepDir}${formatCounts(
++                    keepResult
++                  )}, ${aside.length} aside → ${asideDir}${formatCounts(asideResult)}`
+                 );
++                recordOutcome({ ok: true });
+ 
+                 if (keep.length + aside.length > 0) {
+                   completedBatches++;
+                   const elapsedSec = (Date.now() - levelStart) / 1000;
+                   const remaining = totalBatches - completedBatches;
+                   const tps = completedBatches / elapsedSec;
+                   const etaSec = tps > 0 ? Math.ceil(remaining / tps) : Infinity;
+                   log(
+                     `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
+                   );
+                 }
+               } catch (err) {
+-                if (isGatewayError(err)) noteGatewayError();
++                if (isGatewayError(err)) noteGatewayError(err);
++                else recordOutcome({ ok: false, error: err });
+                 bar.update(4, { stage: "error" });
+                 bar.stop();
+                 multibar.remove(bar);
+                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                 if (isBillingLimitError(err) && !abortProcessing) {
+                   abortProcessing = true;
+                   queue.length = 0;
+                   log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                   throw createBillingLimitError(err);
+                 }
+               }
+             });
+           }
+         }
+ 
+         const pool = Array.from(
+           { length: Math.min(dynamicWorkers, Math.max(queue.length, 1)) },
+           () => workerFn()
+         );
+         await Promise.all(pool);
+       } finally {
+         multibar.stop();
+       }
+       const remaining = (await listImages(dir)).length;
+       const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+@@ -703,32 +774,35 @@ export async function triageDirectory(options) {
+ 
+     const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+       countImages(keepDir),
+       countImages(asideDir),
+       dirExists(path.join(keepDir, "_keep")),
+     ]);
+ 
+     const keepHasWork = keepCount > 0 || hasDeeperKeep;
+     if (keepHasWork) {
+       await triageDirectory({
+         dir: keepDir,
+         promptPath,
+         provider,
+         model,
+         recurse,
+         curators,
+         contextPath,
+         fieldNotes,
+         verbose,
+         saveIo,
+         workers,
+         verbosity,
+         reasoningEffort,
+         depth: depth + 1,
+         gitRoot,
++        copyStrategy,
++        dryRun,
++        apfsRequired,
+       });
+     } else if (keepCount || asideCount) {
+       const status = keepCount ? "kept" : "set aside";
+       console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
+     }
+   }
+ }
+diff --git a/tests/orchestrator.test.js b/tests/orchestrator.test.js
+index d9ae7e49c30a5de577a24c040e263c7528565204..f486bc9984253cb778f647c367a0940ec560f6ec 100644
+--- a/tests/orchestrator.test.js
++++ b/tests/orchestrator.test.js
+@@ -28,50 +28,52 @@ beforeEach(async () => {
+   await fs.writeFile(path.join(tmpDir, "2.jpg"), "b");
+   promptFile = path.join(tmpDir, "prompt.txt");
+   await fs.writeFile(promptFile, "prompt");
+ });
+ 
+ afterEach(async () => {
+   vi.restoreAllMocks();
+   await fs.rm(tmpDir, { recursive: true, force: true });
+ });
+ 
+ describe("triageDirectory", () => {
+   it("moves files into keep and aside", async () => {
+     chatCompletion.mockResolvedValueOnce(
+       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+     );
+     await triageDirectory({
+       dir: tmpDir,
+       promptPath: promptFile,
+       model: "test-model",
+       recurse: false,
+     });
+     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
++    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
++    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+     const level = path.join(tmpDir, "_level-001", "1.jpg");
+     await expect(fs.stat(level)).resolves.toBeTruthy();
+   });
+ 
+   it("recurses into keep directory", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }))
+       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["1.jpg"] }));
+     await triageDirectory({
+       dir: tmpDir,
+       promptPath: promptFile,
+       model: "test-model",
+       recurse: true,
+     });
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const aside2 = path.join(tmpDir, "_keep", "_aside", "1.jpg");
+     await expect(fs.stat(aside2)).resolves.toBeTruthy();
+     const level2 = path.join(tmpDir, "_keep", "_level-002", "1.jpg");
+     await expect(fs.stat(level2)).resolves.toBeTruthy();
+   });
+ 
+   it("recurses even when all images kept", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(
+         JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+ 
+EOF
+)

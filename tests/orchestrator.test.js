@@ -55,6 +55,8 @@ describe("triageDirectory", () => {
     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
     const level = path.join(tmpDir, "_level-001", "1.jpg");
     await expect(fs.stat(level)).resolves.toBeTruthy();
   });

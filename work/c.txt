@@ -1,0 +1,3383 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/README.md b/README.md
+index 1a1b40a91c66586a7db716e30c84e19eb818d5f8..901ee52dbae518d04df044c266907afcdfa616e2 100644
+--- a/README.md
++++ b/README.md
+@@ -121,50 +121,69 @@ If you keep the repository cloned on your system, the `photo-select-here.sh`
+ script lets you run the CLI on whatever directory you're currently in without
+ typing `--dir` each time. Call it with the path to the script:
+ 
+ ```bash
+ /path/to/photo-select/photo-select-here.sh [photo-select flags]
+ ```
+ 
+ The script automatically:
+ 
+ 1. Loads `nvm` and uses the Node version defined in `.nvmrc` if available.
+ 2. Runs `npx photo-select` inside the repo.
+ 3. Sets `--dir` to your current working directory unless you specify it
+    explicitly.
+ 
+ ### demote-thumb.js
+ 
+ Run `node scripts/demote-thumb.js <file> <image>` to convert an embedded
+ thumbnail to a plain link inside a Markdown file. The tool also appends
+ `~ Demoted: <image>` to the `Δ‑Summary` block, creating it if missing.
+ 
+ This helps you stay within the three‑thumbnail budget when curating notes.
+ 
+ All CLI flags—including `--api-key`, `--model`, and `--no-recurse`—can be passed
+ through to the script unchanged.
+ 
++## APFS Clone workflow
++
++Materializing curator decisions now prefers APFS copy-on-write clones. When
++cloning isn’t available the pipeline falls back to same-device hard links and
++finally to metadata-preserving byte copies.
++
++Key CLI additions:
++
++- `--strategy <auto|clone|hardlink|copy|move>` – choose the materialization mode.
++- `--dry-run` – log planned operations without touching the filesystem.
++- `--apfs-required` – exit non-zero if a file can’t be cloned on APFS.
++- `--materialize-concurrency <n>` – bound simultaneous file work.
++- `--log-json` / `--journal <file>` – stream NDJSON entries for each file.
++
++Every operation is appended to `data/journal.ndjson`, enabling idempotent
++reruns that skip completed destinations. End-of-level summaries report clone vs.
++hardlink vs. copy counts and include a `du -sk` delta for observability. On
++macOS you can validate clone support quickly with `npm run test:apfs`.
++
+ ### Flags
+ 
+ | flag       | default                      | description                                     |
+ | ---------- | ---------------------------- | ----------------------------------------------- |
+ | `--dir`    | current directory            | Source directory containing images              |
+ | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
+ | `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
+ | `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
+ | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
+ | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
+ | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
+ | `--context` | *(unset)* | Text file with exhibition context for the curators |
+ | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
+ | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
+ | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+ | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
+ | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
+ | `--verbose` | `false` | Print extra logs |
+ | `--save-io` | `false` | Save prompts and responses for debugging |
+ | `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
+ | `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
+ | `--batch-window` | `24h` | Completion window requested for batch jobs |
+ | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
+ 
+ People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+diff --git a/bin/apfs-clone.c b/bin/apfs-clone.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..6f1209c7b04619f54e0f93fc6ff90b54a778463a
+--- /dev/null
++++ b/bin/apfs-clone.c
+@@ -0,0 +1,22 @@
++// bin/apfs-clone.c
++// Build: clang -O2 -Wall -Wextra -o bin/apfs-clone bin/apfs-clone.c
++#define _DARWIN_C_SOURCE
++#include <copyfile.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++int main(int argc, char **argv) {
++  if (argc != 3) {
++    fprintf(stderr, "usage: apfs-clone SRC DST\n");
++    return 2;
++  }
++  copyfile_flags_t flags = COPYFILE_ALL | COPYFILE_CLONE | COPYFILE_EXCL |
++                           COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
++  int rc = copyfile(argv[1], argv[2], NULL, flags);
++  if (rc < 0) {
++    perror("copyfile(COPYFILE_CLONE)");
++    return errno ? errno : 1;
++  }
++  return 0;
++}
+diff --git a/copyOps.sh b/copyOps.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..05df272b521886c3c20e415a950fe6a2dfa9d087
+--- /dev/null
++++ b/copyOps.sh
+@@ -0,0 +1,59 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++copy_file() {
++  local src="$1" dst="$2" strategy="${3:-auto}"
++  mkdir -p "$(dirname "$dst")"
++  case "$strategy" in
++    clone)
++      if cp -c -p -- "$src" "$dst" 2>/dev/null; then echo clone; return; fi
++      ;;
++    hardlink)
++      if ln "$src" "$dst" 2>/dev/null; then echo hardlink; return; fi
++      ;;
++    move)
++      if mv "$src" "$dst" 2>/dev/null; then echo move; return; fi
++      ;;
++  esac
++  if cp -c -p -- "$src" "$dst" 2>/dev/null; then echo clone; return; fi
++  if ln "$src" "$dst" 2>/dev/null; then echo hardlink; return; fi
++  cp -p -- "$src" "$dst"
++  echo copy
++}
++
++copy_tree() {
++  local src="$1" dst="$2" strategy="${3:-auto}"
++  mkdir -p "$dst"
++  find "$src" -type f | while IFS= read -r file; do
++    rel="${file#$src/}"
++    target="$dst/$rel"
++    mkdir -p "$(dirname "$target")"
++    mode="$(copy_file "$file" "$target" "$strategy")"
++    printf '{"op":"copy","from":"%s","to":"%s","mode":"%s"}\n' "$file" "$target" "$mode"
++  done
++}
++
++if [[ "$#" -lt 2 ]]; then
++  echo "usage: copyOps.sh [-r] [--strategy mode] SRC DST" >&2
++  exit 2
++fi
++
++strategy="auto"
++recursive=0
++args=()
++while [[ "$#" -gt 0 ]]; do
++  case "$1" in
++    -r|--recursive) recursive=1; shift ;;
++    --strategy) strategy="$2"; shift 2 ;;
++    *) args+=("$1"); shift ;;
++  esac
++done
++
++src="${args[-2]}"
++dst="${args[-1]}"
++if [[ "$recursive" -eq 1 ]]; then
++  copy_tree "$src" "$dst" "$strategy"
++else
++  mode="$(copy_file "$src" "$dst" "$strategy")"
++  printf '{"op":"copy","from":"%s","to":"%s","mode":"%s"}\n' "$src" "$dst" "$mode"
++fi
+diff --git a/copyOps.swift b/copyOps.swift
+new file mode 100755
+index 0000000000000000000000000000000000000000..c47b255ae7e1be996d04171d702fe238f8e2caa7
+--- /dev/null
++++ b/copyOps.swift
+@@ -0,0 +1,85 @@
++#!/usr/bin/env swift
++import Foundation
++import Darwin
++
++@discardableResult
++func copyFile(_ src: String, _ dst: String, strategy: String = "auto") throws -> String {
++    let fm = FileManager.default
++    try fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
++    var st = stat()
++    guard lstat(src, &st) == 0 else {
++        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: nil)
++    }
++    let sameDevice = ({ () -> Bool in
++        var dstParent = stat()
++        let parent = (dst as NSString).deletingLastPathComponent
++        if lstat(parent, &dstParent) != 0 { return false }
++        return st.st_dev == dstParent.st_dev
++    })()
++
++    let order: [String]
++    switch strategy {
++    case "clone": order = ["clone", "copy"]
++    case "hardlink": order = ["hardlink", "copy"]
++    case "copy": order = ["copy"]
++    case "move": order = ["move", "clone", "hardlink", "copy"]
++    default:
++        order = sameDevice ? ["clone", "hardlink", "copy"] : ["clone", "copy"]
++    }
++
++    let tmp = dst + ".tmp-" + UUID().uuidString
++    var lastErr: NSError?
++    for step in order {
++        switch step {
++        case "clone":
++            if clonefile(src, tmp, 0) == 0 { try fm.replaceItemAt(URL(fileURLWithPath: dst), withItemAt: URL(fileURLWithPath: tmp)); return "clone" }
++            if errno == EXDEV || errno == ENOTSUP { break }
++        case "hardlink":
++            if link(src, tmp) == 0 { try fm.replaceItemAt(URL(fileURLWithPath: dst), withItemAt: URL(fileURLWithPath: tmp)); return "hardlink" }
++            if errno == EXDEV { break }
++        case "move":
++            if rename(src, tmp) == 0 { try fm.replaceItemAt(URL(fileURLWithPath: dst), withItemAt: URL(fileURLWithPath: tmp)); return "move" }
++        default:
++            let flags = UInt32(COPYFILE_ALL)
++            if copyfile(src, tmp, nil, flags) == 0 { try fm.replaceItemAt(URL(fileURLWithPath: dst), withItemAt: URL(fileURLWithPath: tmp)); return "copy" }
++        }
++        lastErr = NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: nil)
++        unlink(tmp)
++    }
++    throw lastErr ?? NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: nil)
++}
++
++func copyTree(_ src: String, _ dst: String, strategy: String = "auto") throws {
++    let fm = FileManager.default
++    try fm.createDirectory(atPath: dst, withIntermediateDirectories: true)
++    let enumerator = fm.enumerator(atPath: src)
++    while let rel = enumerator?.nextObject() as? String {
++        let from = (src as NSString).appendingPathComponent(rel)
++        let to = (dst as NSString).appendingPathComponent(rel)
++        var st = stat()
++        if lstat(from, &st) != 0 { continue }
++        if (st.st_mode & S_IFMT) == S_IFDIR { try fm.createDirectory(atPath: to, withIntermediateDirectories: true); continue }
++        if (st.st_mode & S_IFMT) != S_IFREG { continue }
++        let mode = try copyFile(from, to, strategy: strategy)
++        print("{\"op\":\"copy\",\"from\":\"\(from)\",\"to\":\"\(to)\",\"mode\":\"\(mode)\"}")
++    }
++}
++
++if CommandLine.argc >= 3 {
++    let src = CommandLine.arguments[CommandLine.argc - 2]
++    let dst = CommandLine.arguments.last!
++    let recursive = CommandLine.arguments.contains("-r") || CommandLine.arguments.contains("--recursive")
++    let strategy = (CommandLine.arguments.firstIndex(of: "--strategy").flatMap { idx -> String? in
++        let next = idx + 1
++        return next < CommandLine.arguments.count ? CommandLine.arguments[next] : nil
++    }) ?? "auto"
++    if recursive {
++        try copyTree(src, dst, strategy: strategy)
++    } else {
++        let mode = try copyFile(src, dst, strategy: strategy)
++        print("{\"op\":\"copy\",\"from\":\"\(src)\",\"to\":\"\(dst)\",\"mode\":\"\(mode)\"}")
++    }
++} else {
++    fputs("usage: copyOps [-r] [--strategy clone|copy|hardlink|move] SRC DST\n", stderr)
++    exit(2)
++}
+diff --git a/data/journal.ndjson b/data/journal.ndjson
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b137891791fe96927ad78e64b0aad7bded08bdc
+--- /dev/null
++++ b/data/journal.ndjson
+@@ -0,0 +1 @@
++
+diff --git a/package-lock.json b/package-lock.json
+index 3c01acd0c71721128b5afbfb4c631cb24d5ae886..da5c379fdfa684870602ddf162ab79f0492157d1 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,41 +1,43 @@
+ {
+   "name": "photo-select",
+   "version": "0.1.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "photo-select",
+       "version": "0.1.1",
++      "hasInstallScript": true,
+       "license": "MIT",
+       "dependencies": {
+         "agentkeepalive": "^4.2.1",
+         "cli-progress": "^3.12.0",
+         "commander": "^12.0.0",
+         "diff": "^8.0.2",
+         "dotenv": "^16.5.0",
++        "execa": "^8.0.1",
+         "handlebars": "^4.7.8",
+         "ollama": "^0.5.16",
+         "openai": "^4.0.0",
+         "sharp": "^0.34.2",
+         "undici": "^6.21.3"
+       },
+       "bin": {
+         "photo-select": "src/index.js"
+       },
+       "devDependencies": {
+         "undici": "^6.21.3",
+         "vitest": "^1.5.0"
+       },
+       "engines": {
+         "node": ">=20"
+       }
+     },
+     "node_modules/@emnapi/runtime": {
+       "version": "1.4.3",
+       "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.4.3.tgz",
+       "integrity": "sha512-pBPWdu6MLKROBX05wSNKcNb++m5Er+KQ9QkB+WVM+pW2Kx9hoSrVTnu3BdkI5eBLZoKu/J6mW/B6i6bJB2ytXQ==",
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+         "tslib": "^2.4.0"
+@@ -1441,51 +1443,50 @@
+       },
+       "engines": {
+         "node": ">= 0.8"
+       }
+     },
+     "node_modules/commander": {
+       "version": "12.1.0",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-12.1.0.tgz",
+       "integrity": "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+       }
+     },
+     "node_modules/confbox": {
+       "version": "0.1.8",
+       "resolved": "https://registry.npmjs.org/confbox/-/confbox-0.1.8.tgz",
+       "integrity": "sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/cross-spawn": {
+       "version": "7.0.6",
+       "resolved": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+       "integrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "path-key": "^3.1.0",
+         "shebang-command": "^2.0.0",
+         "which": "^2.0.1"
+       },
+       "engines": {
+         "node": ">= 8"
+       }
+     },
+     "node_modules/debug": {
+       "version": "4.4.1",
+       "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.1.tgz",
+       "integrity": "sha512-KcKCqiftBJcZr++7ykoDIEwSa3XWowTfNPo92BYxjXiyYEVrUQh2aLyhxBCwww+heortUFxEJYcRzosstTEBYQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "ms": "^2.1.3"
+       },
+       "engines": {
+         "node": ">=6.0"
+       },
+       "peerDependenciesMeta": {
+         "supports-color": {
+           "optional": true
+@@ -1659,51 +1660,50 @@
+       }
+     },
+     "node_modules/estree-walker": {
+       "version": "3.0.3",
+       "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
+       "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/estree": "^1.0.0"
+       }
+     },
+     "node_modules/event-target-shim": {
+       "version": "5.0.1",
+       "resolved": "https://registry.npmjs.org/event-target-shim/-/event-target-shim-5.0.1.tgz",
+       "integrity": "sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=6"
+       }
+     },
+     "node_modules/execa": {
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/execa/-/execa-8.0.1.tgz",
+       "integrity": "sha512-VyhnebXciFV2DESc+p6B+y0LjSm0krU4OgJN44qFAhBY0TJ+1V61tYD2+wHusZ6F9n5K+vl8k0sTy7PEfV4qpg==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "cross-spawn": "^7.0.3",
+         "get-stream": "^8.0.1",
+         "human-signals": "^5.0.0",
+         "is-stream": "^3.0.0",
+         "merge-stream": "^2.0.0",
+         "npm-run-path": "^5.1.0",
+         "onetime": "^6.0.0",
+         "signal-exit": "^4.1.0",
+         "strip-final-newline": "^3.0.0"
+       },
+       "engines": {
+         "node": ">=16.17"
+       },
+       "funding": {
+         "url": "https://github.com/sindresorhus/execa?sponsor=1"
+       }
+     },
+     "node_modules/form-data": {
+       "version": "4.0.3",
+       "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.3.tgz",
+       "integrity": "sha512-qsITQPfmvMOSAdeyZ+12I1c+CKSstAFAwu+97zrnWAbIr5u8wfsExUzCesVLC8NgHuRUqNN4Zy6UPWUTRGslcA==",
+       "license": "MIT",
+       "dependencies": {
+@@ -1789,51 +1789,50 @@
+       },
+       "engines": {
+         "node": ">= 0.4"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+     "node_modules/get-proto": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+       "integrity": "sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==",
+       "license": "MIT",
+       "dependencies": {
+         "dunder-proto": "^1.0.1",
+         "es-object-atoms": "^1.0.0"
+       },
+       "engines": {
+         "node": ">= 0.4"
+       }
+     },
+     "node_modules/get-stream": {
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/get-stream/-/get-stream-8.0.1.tgz",
+       "integrity": "sha512-VaUJspBffn/LMCJVoMvSAdmscJyS1auj5Zulnn5UoYcY531UWmdwhRWkcGKnGU93m5HSXP9LP2usOryrBtQowA==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=16"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/gopd": {
+       "version": "1.2.0",
+       "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
+       "integrity": "sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.4"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+     "node_modules/handlebars": {
+       "version": "4.7.8",
+       "resolved": "https://registry.npmjs.org/handlebars/-/handlebars-4.7.8.tgz",
+       "integrity": "sha512-vafaFqs8MZkRrSX7sFVUdo3ap/eNiLnb4IakshzvP56X5Nr1iGKAIqdX6tMlm6HcNRIkr6AxO5jFEoJzzpT8aQ==",
+       "license": "MIT",
+@@ -1874,98 +1873,95 @@
+         "has-symbols": "^1.0.3"
+       },
+       "engines": {
+         "node": ">= 0.4"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+     "node_modules/hasown": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
+       "integrity": "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==",
+       "license": "MIT",
+       "dependencies": {
+         "function-bind": "^1.1.2"
+       },
+       "engines": {
+         "node": ">= 0.4"
+       }
+     },
+     "node_modules/human-signals": {
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/human-signals/-/human-signals-5.0.0.tgz",
+       "integrity": "sha512-AXcZb6vzzrFAUE61HnN4mpLqd/cSIwNQjtNWR0euPm6y0iqx3G4gOXaIDdtdDwZmhwe82LA6+zinmW4UBWVePQ==",
+-      "dev": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=16.17.0"
+       }
+     },
+     "node_modules/humanize-ms": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/humanize-ms/-/humanize-ms-1.2.1.tgz",
+       "integrity": "sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==",
+       "license": "MIT",
+       "dependencies": {
+         "ms": "^2.0.0"
+       }
+     },
+     "node_modules/is-arrayish": {
+       "version": "0.3.2",
+       "resolved": "https://registry.npmjs.org/is-arrayish/-/is-arrayish-0.3.2.tgz",
+       "integrity": "sha512-eVRqCvVlZbuw3GrM63ovNSNAeA1K16kaR/LRY/92w0zxQ5/1YzwblUX652i4Xs9RwAGjW9d9y6X88t8OaAJfWQ==",
+       "license": "MIT"
+     },
+     "node_modules/is-fullwidth-code-point": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz",
+       "integrity": "sha512-zymm5+u+sCsSWyD9qNaejV3DFvhCKclKdizYaJUuHA83RLjb7nSuGnddCHGv0hk+KY7BMAlsWeK4Ueg6EV6XQg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/is-stream": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/is-stream/-/is-stream-3.0.0.tgz",
+       "integrity": "sha512-LnQR4bZ9IADDRSkvpqMGvt/tEJWclzklNgSw48V5EAaAeDd6qGvN8ei6k5p0tvxSR171VmGyHuTiAOfxAbr8kA==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": "^12.20.0 || ^14.13.1 || >=16.0.0"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/isexe": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
+       "integrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
+-      "dev": true,
+       "license": "ISC"
+     },
+     "node_modules/js-tokens": {
+       "version": "9.0.1",
+       "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-9.0.1.tgz",
+       "integrity": "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/local-pkg": {
+       "version": "0.5.1",
+       "resolved": "https://registry.npmjs.org/local-pkg/-/local-pkg-0.5.1.tgz",
+       "integrity": "sha512-9rrA30MRRP3gBD3HTGnC6cDFpaE1kVDWxWgqWJUN0RvDNAo+Nz/9GxB+nHOH0ifbVFy0hSA1V6vFDvnx54lTEQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "mlly": "^1.7.3",
+         "pkg-types": "^1.2.1"
+       },
+       "engines": {
+         "node": ">=14"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/antfu"
+       }
+@@ -1981,79 +1977,77 @@
+       }
+     },
+     "node_modules/magic-string": {
+       "version": "0.30.17",
+       "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.17.tgz",
+       "integrity": "sha512-sNPKHvyjVf7gyjwS4xGTaW/mCnF8wnjtifKBEhxfZ7E/S8tQ0rssrwGNn6q8JH/ohItJfSQp9mBtQYuTlH5QnA==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@jridgewell/sourcemap-codec": "^1.5.0"
+       }
+     },
+     "node_modules/math-intrinsics": {
+       "version": "1.1.0",
+       "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+       "integrity": "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.4"
+       }
+     },
+     "node_modules/merge-stream": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/merge-stream/-/merge-stream-2.0.0.tgz",
+       "integrity": "sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/mime-db": {
+       "version": "1.52.0",
+       "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
+       "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
+     "node_modules/mime-types": {
+       "version": "2.1.35",
+       "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+       "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+       "license": "MIT",
+       "dependencies": {
+         "mime-db": "1.52.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
+     "node_modules/mimic-fn": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/mimic-fn/-/mimic-fn-4.0.0.tgz",
+       "integrity": "sha512-vqiC06CuhBTUdZH+RYl8sFrL096vA45Ok5ISO6sE/Mr1jRbGH4Csnhi8f3wKVl7x8mO4Au7Ir9D3Oyv1VYMFJw==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/minimist": {
+       "version": "1.2.8",
+       "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+       "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==",
+       "license": "MIT",
+       "funding": {
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
+     "node_modules/mlly": {
+       "version": "1.7.4",
+       "resolved": "https://registry.npmjs.org/mlly/-/mlly-1.7.4.tgz",
+       "integrity": "sha512-qmdSIPC4bDJXgZTCR7XosJiNKySV7O215tsPtDN9iEO/7q/76b/ijtgRu/+epFXSJhijtTCCGp3DWS549P3xKw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "acorn": "^8.14.0",
+@@ -2122,89 +2116,86 @@
+     },
+     "node_modules/node-fetch": {
+       "version": "2.7.0",
+       "resolved": "https://registry.npmjs.org/node-fetch/-/node-fetch-2.7.0.tgz",
+       "integrity": "sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==",
+       "license": "MIT",
+       "dependencies": {
+         "whatwg-url": "^5.0.0"
+       },
+       "engines": {
+         "node": "4.x || >=6.0.0"
+       },
+       "peerDependencies": {
+         "encoding": "^0.1.0"
+       },
+       "peerDependenciesMeta": {
+         "encoding": {
+           "optional": true
+         }
+       }
+     },
+     "node_modules/npm-run-path": {
+       "version": "5.3.0",
+       "resolved": "https://registry.npmjs.org/npm-run-path/-/npm-run-path-5.3.0.tgz",
+       "integrity": "sha512-ppwTtiJZq0O/ai0z7yfudtBpWIoxM8yE6nHi1X47eFR2EWORqfbu6CnPlNsjeN683eT0qG6H/Pyf9fCcvjnnnQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "path-key": "^4.0.0"
+       },
+       "engines": {
+         "node": "^12.20.0 || ^14.13.1 || >=16.0.0"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/npm-run-path/node_modules/path-key": {
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/path-key/-/path-key-4.0.0.tgz",
+       "integrity": "sha512-haREypq7xkM7ErfgIyA0z+Bj4AGKlMSdlQE2jvJo6huWD1EdkKYV+G/T4nq0YEF2vgTT8kqMFKo1uHn950r4SQ==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/ollama": {
+       "version": "0.5.16",
+       "resolved": "https://registry.npmjs.org/ollama/-/ollama-0.5.16.tgz",
+       "integrity": "sha512-OEbxxOIUZtdZgOaTPAULo051F5y+Z1vosxEYOoABPnQKeW7i4O8tJNlxCB+xioyoorVqgjkdj+TA1f1Hy2ug/w==",
+       "license": "MIT",
+       "dependencies": {
+         "whatwg-fetch": "^3.6.20"
+       }
+     },
+     "node_modules/onetime": {
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/onetime/-/onetime-6.0.0.tgz",
+       "integrity": "sha512-1FlR+gjXK7X+AsAHso35MnyN5KqGwJRi/31ft6x0M194ht7S+rWAvd7PHss9xSKMzE0asv1pyIHaJYq+BbacAQ==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "mimic-fn": "^4.0.0"
+       },
+       "engines": {
+         "node": ">=12"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/openai": {
+       "version": "4.104.0",
+       "resolved": "https://registry.npmjs.org/openai/-/openai-4.104.0.tgz",
+       "integrity": "sha512-p99EFNsA/yX6UhVO93f5kJsDRLAg+CTA2RBqdHK4RtK8u5IJw32Hyb2dTGKbnnFmnuoBv5r7Z2CURI9sGZpSuA==",
+       "license": "Apache-2.0",
+       "dependencies": {
+         "@types/node": "^18.11.18",
+         "@types/node-fetch": "^2.6.4",
+         "abort-controller": "^3.0.0",
+         "agentkeepalive": "^4.2.1",
+         "form-data-encoder": "1.7.2",
+         "formdata-node": "^4.3.2",
+         "node-fetch": "^2.6.7"
+       },
+@@ -2222,51 +2213,50 @@
+         "zod": {
+           "optional": true
+         }
+       }
+     },
+     "node_modules/p-limit": {
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/p-limit/-/p-limit-5.0.0.tgz",
+       "integrity": "sha512-/Eaoq+QyLSiXQ4lyYV23f14mZRQcXnxfHrN0vCai+ak9G0pp9iEQukIIZq5NccEvwRB8PUnZT0KsOoDCINS1qQ==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "yocto-queue": "^1.0.0"
+       },
+       "engines": {
+         "node": ">=18"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/path-key": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz",
+       "integrity": "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/pathe": {
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/pathe/-/pathe-1.1.2.tgz",
+       "integrity": "sha512-whLdWMYL2TwI08hn8/ZqAbrVemu0LNaNNJZX73O6qaIdCTfXutsLhMkjdENX0qhsQ9uIimo4/aQOmXkoon2nDQ==",
+       "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/pathval": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/pathval/-/pathval-1.1.1.tgz",
+       "integrity": "sha512-Dp6zGqpTdETdR63lehJYPeIOqpiNBNtc7BpWSLrOje7UaIsE5aY92r/AunQA7rsXvet3lrJ3JnZX29UPTKXyKQ==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": "*"
+       }
+     },
+     "node_modules/picocolors": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+@@ -2419,81 +2409,78 @@
+         "@img/sharp-libvips-darwin-arm64": "1.1.0",
+         "@img/sharp-libvips-darwin-x64": "1.1.0",
+         "@img/sharp-libvips-linux-arm": "1.1.0",
+         "@img/sharp-libvips-linux-arm64": "1.1.0",
+         "@img/sharp-libvips-linux-ppc64": "1.1.0",
+         "@img/sharp-libvips-linux-s390x": "1.1.0",
+         "@img/sharp-libvips-linux-x64": "1.1.0",
+         "@img/sharp-libvips-linuxmusl-arm64": "1.1.0",
+         "@img/sharp-libvips-linuxmusl-x64": "1.1.0",
+         "@img/sharp-linux-arm": "0.34.2",
+         "@img/sharp-linux-arm64": "0.34.2",
+         "@img/sharp-linux-s390x": "0.34.2",
+         "@img/sharp-linux-x64": "0.34.2",
+         "@img/sharp-linuxmusl-arm64": "0.34.2",
+         "@img/sharp-linuxmusl-x64": "0.34.2",
+         "@img/sharp-wasm32": "0.34.2",
+         "@img/sharp-win32-arm64": "0.34.2",
+         "@img/sharp-win32-ia32": "0.34.2",
+         "@img/sharp-win32-x64": "0.34.2"
+       }
+     },
+     "node_modules/shebang-command": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz",
+       "integrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "shebang-regex": "^3.0.0"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/shebang-regex": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz",
+       "integrity": "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/siginfo": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
+       "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
+       "dev": true,
+       "license": "ISC"
+     },
+     "node_modules/signal-exit": {
+       "version": "4.1.0",
+       "resolved": "https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz",
+       "integrity": "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==",
+-      "dev": true,
+       "license": "ISC",
+       "engines": {
+         "node": ">=14"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/isaacs"
+       }
+     },
+     "node_modules/simple-swizzle": {
+       "version": "0.2.2",
+       "resolved": "https://registry.npmjs.org/simple-swizzle/-/simple-swizzle-0.2.2.tgz",
+       "integrity": "sha512-JA//kQgZtbuY83m+xT+tXJkmJncGMTFT+C+g2h2R9uxkYIrE2yy9sgmcLhCnw57/WSD+Eh3J97FPEDFnbXnDUg==",
+       "license": "MIT",
+       "dependencies": {
+         "is-arrayish": "^0.3.1"
+       }
+     },
+     "node_modules/source-map": {
+       "version": "0.6.1",
+       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
+       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
+       "license": "BSD-3-Clause",
+       "engines": {
+         "node": ">=0.10.0"
+       }
+@@ -2530,51 +2517,50 @@
+       "dependencies": {
+         "emoji-regex": "^8.0.0",
+         "is-fullwidth-code-point": "^3.0.0",
+         "strip-ansi": "^6.0.1"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/strip-ansi": {
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz",
+       "integrity": "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==",
+       "license": "MIT",
+       "dependencies": {
+         "ansi-regex": "^5.0.1"
+       },
+       "engines": {
+         "node": ">=8"
+       }
+     },
+     "node_modules/strip-final-newline": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/strip-final-newline/-/strip-final-newline-3.0.0.tgz",
+       "integrity": "sha512-dOESqjYr96iWYylGObzd39EuNTa5VJxyvVAEm5Jnh7KGo75V43Hk1odPQkNDyXNmUR6k+gEiDVXnjB8HJ3crXw==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=12"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
+     "node_modules/strip-literal": {
+       "version": "2.1.1",
+       "resolved": "https://registry.npmjs.org/strip-literal/-/strip-literal-2.1.1.tgz",
+       "integrity": "sha512-631UJ6O00eNGfMiWG78ck80dfBab8X6IVFB51jZK5Icd7XAs60Z5y7QdSd/wGIklnWvRbUNloVzhOKKmutxQ6Q==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "js-tokens": "^9.0.1"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/antfu"
+       }
+     },
+     "node_modules/tinybench": {
+       "version": "2.9.0",
+       "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz",
+       "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==",
+@@ -2822,51 +2808,50 @@
+       "version": "3.0.1",
+       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-3.0.1.tgz",
+       "integrity": "sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==",
+       "license": "BSD-2-Clause"
+     },
+     "node_modules/whatwg-fetch": {
+       "version": "3.6.20",
+       "resolved": "https://registry.npmjs.org/whatwg-fetch/-/whatwg-fetch-3.6.20.tgz",
+       "integrity": "sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==",
+       "license": "MIT"
+     },
+     "node_modules/whatwg-url": {
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-5.0.0.tgz",
+       "integrity": "sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==",
+       "license": "MIT",
+       "dependencies": {
+         "tr46": "~0.0.3",
+         "webidl-conversions": "^3.0.0"
+       }
+     },
+     "node_modules/which": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+       "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
+-      "dev": true,
+       "license": "ISC",
+       "dependencies": {
+         "isexe": "^2.0.0"
+       },
+       "bin": {
+         "node-which": "bin/node-which"
+       },
+       "engines": {
+         "node": ">= 8"
+       }
+     },
+     "node_modules/why-is-node-running": {
+       "version": "2.3.0",
+       "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
+       "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "siginfo": "^2.0.0",
+         "stackback": "0.0.2"
+       },
+       "bin": {
+         "why-is-node-running": "cli.js"
+       },
+       "engines": {
+diff --git a/package.json b/package.json
+index ef32254dda8cc615c841674523a85732fa6e2de6..fb4ec698137e0ac0af93a067daa576ccd8253035 100644
+--- a/package.json
++++ b/package.json
+@@ -1,36 +1,39 @@
+ {
+   "name": "photo-select",
+   "version": "0.1.1",
+   "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
+   "type": "module",
+   "bin": {
+     "photo-select": "./src/index.js"
+   },
+   "scripts": {
+     "start": "photo-select",
+     "test": "vitest run",
+     "undici:smoke": "node scripts/undici-smoke.mjs",
+-    "debug:batch": "node scripts/debug-batch.mjs"
++    "debug:batch": "node scripts/debug-batch.mjs",
++    "postinstall": "if [ \"$(uname)\" = Darwin ]; then clang -O2 -Wall -Wextra -o bin/apfs-clone bin/apfs-clone.c || true; fi",
++    "test:apfs": "node scripts/test-apfs-clone.js"
+   },
+   "engines": {
+     "node": ">=20"
+   },
+   "author": "Jamie Burkart",
+   "license": "MIT",
+   "dependencies": {
+     "agentkeepalive": "^4.2.1",
+     "cli-progress": "^3.12.0",
+     "commander": "^12.0.0",
+     "diff": "^8.0.2",
++    "execa": "^8.0.1",
+     "dotenv": "^16.5.0",
+     "handlebars": "^4.7.8",
+     "ollama": "^0.5.16",
+     "openai": "^4.0.0",
+     "sharp": "^0.34.2",
+     "undici": "^6.21.3"
+   },
+   "devDependencies": {
+     "vitest": "^1.5.0",
+     "undici": "^6.21.3"
+   }
+ }
+diff --git a/scripts/test-apfs-clone.js b/scripts/test-apfs-clone.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..a8b6b88325b5fa5e2d768277fc69f96444a684a6
+--- /dev/null
++++ b/scripts/test-apfs-clone.js
+@@ -0,0 +1,28 @@
++import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { randomBytes } from "node:crypto";
++import { execa } from "execa";
++
++async function main() {
++  const dir = await mkdtemp(path.join(tmpdir(), "apfs-clone-test-"));
++  const src = path.join(dir, "source.bin");
++  const dst = path.join(dir, "clone.bin");
++  await writeFile(src, randomBytes(16 * 1024));
++  try {
++    await execa(path.resolve("bin/apfs-clone"), [src, dst]);
++    const a = await stat(src);
++    const b = await stat(dst);
++    console.log(JSON.stringify({ ok: true, size: a.size, cloneSize: b.size }));
++  } catch (err) {
++    console.error(JSON.stringify({ ok: false, error: err.message }));
++    process.exitCode = 1;
++  } finally {
++    await rm(dir, { recursive: true, force: true });
++  }
++}
++
++main().catch((err) => {
++  console.error(err);
++  process.exit(1);
++});
+diff --git a/src/fs/copyOps.js b/src/fs/copyOps.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..e2d940d952c5525c2daa263116b1dbbf94e0a71e
+--- /dev/null
++++ b/src/fs/copyOps.js
+@@ -0,0 +1,553 @@
++import { promises as fs, constants as FS_CONSTANTS } from "node:fs";
++import path from "node:path";
++import os from "node:os";
++import crypto from "node:crypto";
++import { performance } from "node:perf_hooks";
++import { execa } from "execa";
++import { fileURLToPath } from "node:url";
++import { OperationJournal } from "./journal.js";
++
++const DEFAULT_STRATEGY = (process.env.COPY_STRATEGY || "auto").toLowerCase();
++const CLONE_MODES = new Set(["clone", "clonefile", "cp-clone", "reflink"]);
++
++async function exists(p) {
++  try {
++    await fs.access(p);
++    return true;
++  } catch (err) {
++    if (err?.code === "ENOENT") return false;
++    throw err;
++  }
++}
++
++async function statfsSafe(p) {
++  if (!fs.statfs) return null;
++  try {
++    return await fs.statfs(p);
++  } catch (err) {
++    if (err?.code === "ENOENT") return null;
++    throw err;
++  }
++}
++
++function randomSuffix() {
++  return crypto.randomBytes(6).toString("hex");
++}
++
++async function findHelper() {
++  const here = fileURLToPath(new URL(".", import.meta.url));
++  const candidates = [
++    path.resolve("bin/apfs-clone"),
++    path.resolve(process.cwd(), "bin/apfs-clone"),
++    path.resolve(here, "../../bin/apfs-clone"),
++  ];
++  for (const candidate of candidates) {
++    if (await exists(candidate)) {
++      return candidate;
++    }
++  }
++  return null;
++}
++
++async function tryClone(src, tmp) {
++  if (os.platform() !== "darwin") return null;
++  const helper = await findHelper();
++  if (helper) {
++    try {
++      await execa(helper, [src, tmp]);
++      return { mode: "clone", via: "clonefile" };
++    } catch (err) {
++      if (err?.errno === "EXDEV" || err?.code === "EXDEV" || err?.exitCode === 18) {
++        return null;
++      }
++      if (err?.errno === "ENOTSUP" || err?.code === "ENOTSUP") {
++        // fall through to cp -c
++      } else {
++        // other errors propagate to allow fallback attempts
++      }
++    }
++  }
++  try {
++    await execa("cp", ["-c", "-p", "--", src, tmp]);
++    return { mode: "clone", via: "cp-c" };
++  } catch (err) {
++    if (err?.stderr && /Operation not supported/i.test(err.stderr)) {
++      return null;
++    }
++    if (err?.exitCode === 77 || err?.exitCode === 95) {
++      return null;
++    }
++    // treat all other errors as hard failure to signal fallback
++    return null;
++  }
++}
++
++async function tryLinuxReflink(src, tmp) {
++  if (os.platform() !== "linux") return null;
++  try {
++    await execa("cp", ["--reflink=auto", "--preserve=xattr,timestamps,mode", "--", src, tmp]);
++    return { mode: "clone", via: "reflink" };
++  } catch (err) {
++    if (err?.stderr && /reflink/i.test(err.stderr)) {
++      return null;
++    }
++    return null;
++  }
++}
++
++async function tryHardlink(src, tmp) {
++  try {
++    await fs.link(src, tmp);
++    return { mode: "hardlink", via: "link" };
++  } catch (err) {
++    if (err?.code === "EXDEV" || err?.code === "EPERM" || err?.code === "EACCES") {
++      return null;
++    }
++    if (err?.code === "EMLINK" || err?.code === "EEXIST") {
++      return null;
++    }
++    throw err;
++  }
++}
++
++async function tryCopy(src, tmp) {
++  if (os.platform() === "darwin") {
++    try {
++      await execa("cp", ["-p", "--", src, tmp]);
++      return { mode: "copy", via: "cp" };
++    } catch (err) {
++      // fall through to fs.copyFile
++    }
++  }
++  await fs.copyFile(src, tmp, FS_CONSTANTS.COPYFILE_FICLONE);
++  return { mode: "copy", via: "node" };
++}
++
++async function tryMove(src, tmp) {
++  try {
++    await fs.rename(src, tmp);
++    return { mode: "move", via: "rename" };
++  } catch (err) {
++    if (err?.code === "EXDEV") return null;
++    throw err;
++  }
++}
++
++function resolveStrategy(strategy, sameDevice) {
++  const list = [];
++  switch (strategy) {
++    case "clone":
++      list.push("clone", "copy");
++      break;
++    case "hardlink":
++      list.push("hardlink", "copy");
++      break;
++    case "move":
++      list.push("move", "clone", "hardlink", "copy");
++      break;
++    case "copy":
++      list.push("copy");
++      break;
++    case "auto":
++    default:
++      if (sameDevice) {
++        list.push("clone", "hardlink", "copy");
++      } else {
++        list.push("clone", "copy");
++      }
++      break;
++  }
++  return list;
++}
++
++function buildEntry({
++  src,
++  dst,
++  mode,
++  ms,
++  bytes,
++  strategy,
++  ok = true,
++  error,
++  via,
++}) {
++  const entry = {
++    op: "copy",
++    from: src,
++    to: dst,
++    mode,
++    bytes,
++    ms: Math.round(ms),
++    strategy,
++    ok,
++  };
++  if (via) entry.via = via;
++  if (error) {
++    entry.error = error;
++  }
++  return entry;
++}
++
++async function setXattrHint(dst, key, value) {
++  if (process.platform !== "darwin") return;
++  if (!value) return;
++  try {
++    await execa("xattr", ["-w", key, value, dst]);
++  } catch {
++    // ignore xattr failures; not all filesystems support it
++  }
++}
++
++/**
++ * Copy a single file with clone/hardlink fallbacks.
++ * @param {string} src
++ * @param {string} dst
++ * @param {"auto"|"clone"|"hardlink"|"copy"|"move"} [strategy]
++ * @param {{
++ *   dryRun?: boolean,
++ *   requireClone?: boolean,
++ *   journal?: OperationJournal,
++ *   emitLog?: (entry: any) => void,
++ * }} [options]
++ */
++export async function copyFile(src, dst, strategy = DEFAULT_STRATEGY, options = {}) {
++  const { dryRun = false, requireClone = false, journal, emitLog } = options;
++  const start = performance.now();
++  const srcStat = await fs.stat(src, { bigint: true });
++  const bytes = Number(srcStat.size);
++  const dstDir = path.dirname(dst);
++  await fs.mkdir(dstDir, { recursive: true });
++  const dstDirStat = await fs.stat(dstDir, { bigint: true });
++  const sameDevice = srcStat.dev === dstDirStat.dev;
++  const strategies = resolveStrategy(strategy, sameDevice);
++  const tmp = `${dst}.${Date.now()}-${randomSuffix()}`;
++
++  if (dryRun) {
++    const entry = buildEntry({
++      src,
++      dst,
++      mode: strategies[0] || strategy,
++      ms: 0,
++      bytes,
++      strategy,
++    });
++    if (emitLog) emitLog(entry);
++    if (journal) await journal.record({ ...entry, dst, ok: true, dryRun: true });
++    return entry;
++  }
++
++  if (await exists(dst)) {
++    const entry = buildEntry({ src, dst, mode: "skip", ms: 0, bytes, strategy });
++    if (emitLog) emitLog(entry);
++    if (journal) await journal.record({ ...entry, dst, ok: true, reason: "exists" });
++    return entry;
++  }
++
++  const statfs = await statfsSafe(src);
++  const isApfs = Boolean(statfs?.type && statfs?.type === 0x42534653);
++  let result = null;
++  let lastError = null;
++
++  for (const step of strategies) {
++    try {
++      let attemptResult = null;
++      switch (step) {
++        case "clone":
++          attemptResult = (await tryClone(src, tmp)) || (await tryLinuxReflink(src, tmp));
++          if (!attemptResult) break;
++          break;
++        case "hardlink":
++          attemptResult = await tryHardlink(src, tmp);
++          if (!attemptResult) break;
++          break;
++        case "copy":
++          attemptResult = await tryCopy(src, tmp);
++          break;
++        case "move":
++          attemptResult = await tryMove(src, tmp);
++          if (!attemptResult) break;
++          break;
++        default:
++          break;
++      }
++      if (!attemptResult) {
++        continue;
++      }
++      await fs.rename(tmp, dst);
++      result = attemptResult;
++      break;
++    } catch (err) {
++      lastError = err;
++      try {
++        await fs.unlink(tmp);
++      } catch {}
++    }
++  }
++
++  if (!result) {
++    if (lastError) throw lastError;
++    throw new Error(`Failed to copy ${src} -> ${dst}`);
++  }
++
++  const via = result.via;
++  await setXattrHint(dst, "com.openhouse.clone-mode", result.mode);
++  await setXattrHint(dst, "com.openhouse.src-path", src);
++  await setXattrHint(
++    dst,
++    "com.openhouse.src-hash",
++    crypto.createHash("sha256").update(src, "utf8").digest("hex")
++  );
++  if (isApfs && CLONE_MODES.has(result.mode) && !requireClone) {
++    await setXattrHint(dst, "com.apple.decmpfs", "preserve");
++  }
++  const ms = performance.now() - start;
++  const entry = buildEntry({
++    src,
++    dst,
++    mode: result.mode,
++    ms,
++    bytes,
++    strategy,
++    via,
++  });
++
++  if (requireClone && !CLONE_MODES.has(result.mode)) {
++    entry.ok = false;
++    entry.error = "clone-required";
++    if (emitLog) emitLog(entry);
++    if (journal) await journal.record({ ...entry, dst, ok: false });
++    throw new Error(`Clone required but ${result.mode} used for ${dst}`);
++  }
++
++  if (emitLog) emitLog(entry);
++  if (journal) await journal.record({ ...entry, dst, ok: true });
++  return entry;
++}
++
++function createLimiter(limit) {
++  let active = 0;
++  const queue = [];
++  const next = () => {
++    if (queue.length === 0) return;
++    if (active >= limit) return;
++    const { fn, resolve, reject } = queue.shift();
++    active++;
++    fn()
++      .then((value) => {
++        active--;
++        resolve(value);
++        next();
++      })
++      .catch((err) => {
++        active--;
++        reject(err);
++        next();
++      });
++  };
++  return function limitFn(fn) {
++    return new Promise((resolve, reject) => {
++      queue.push({ fn, resolve, reject });
++      next();
++    });
++  };
++}
++
++async function du(pathname) {
++  try {
++    const { stdout } = await execa("du", ["-sk", pathname]);
++    const value = parseInt(stdout.split(/\s+/)[0], 10);
++    return Number.isFinite(value) ? value : null;
++  } catch {
++    return null;
++  }
++}
++
++async function copyDirectoryMetadata(src, dst) {
++  const st = await fs.stat(src);
++  await fs.chmod(dst, st.mode);
++  await fs.utimes(dst, st.atime, st.mtime);
++}
++
++async function handleSymlink(src, dst) {
++  const target = await fs.readlink(src);
++  await fs.symlink(target, dst);
++}
++
++/**
++ * Recursively copy a tree, preserving metadata.
++ * @param {string} srcDir
++ * @param {string} dstDir
++ * @param {"auto"|"clone"|"hardlink"|"copy"|"move"} [strategy]
++ * @param {{
++ *   dryRun?: boolean,
++ *   requireClone?: boolean,
++ *   concurrency?: number,
++ *   journal?: OperationJournal,
++ *   emitLog?: (entry: any) => void,
++ * }} [options]
++ */
++export async function copyTree(
++  srcDir,
++  dstDir,
++  strategy = DEFAULT_STRATEGY,
++  options = {}
++) {
++  const {
++    dryRun = false,
++    requireClone = false,
++    concurrency = 8,
++    journal,
++    emitLog,
++  } = options;
++  const limit = createLimiter(Math.max(1, concurrency));
++  const results = [];
++  const tasks = [];
++  const started = performance.now();
++
++  const beforeDu = dryRun ? null : await du(dstDir);
++  const walk = async (currentSrc, currentDst) => {
++    const stat = await fs.lstat(currentSrc);
++    if (stat.isSymbolicLink()) {
++      if (!dryRun) {
++        await fs.mkdir(path.dirname(currentDst), { recursive: true });
++        await handleSymlink(currentSrc, currentDst);
++        if (emitLog) {
++          emitLog({
++            op: "copy",
++            from: currentSrc,
++            to: currentDst,
++            mode: "symlink",
++            bytes: 0,
++            ms: 0,
++            strategy,
++            ok: true,
++          });
++        }
++        if (journal) {
++          await journal.record({
++            op: "copy",
++            src: currentSrc,
++            dst: currentDst,
++            mode: "symlink",
++            bytes: 0,
++            ms: 0,
++            ok: true,
++          });
++        }
++      }
++      return;
++    }
++    if (stat.isDirectory()) {
++      if (!dryRun) {
++        await fs.mkdir(currentDst, { recursive: true });
++        await copyDirectoryMetadata(currentSrc, currentDst);
++      }
++      const entries = await fs.readdir(currentSrc);
++      for (const entry of entries) {
++        await walk(path.join(currentSrc, entry), path.join(currentDst, entry));
++      }
++      return;
++    }
++    if (!stat.isFile()) {
++      if (emitLog) {
++        emitLog({
++          op: "copy",
++          from: currentSrc,
++          to: currentDst,
++          mode: "skip",
++          bytes: 0,
++          ms: 0,
++          strategy,
++          ok: false,
++          error: "unsupported",
++        });
++      }
++      if (journal) {
++        await journal.record({
++          op: "copy",
++          src: currentSrc,
++          dst: currentDst,
++          mode: "skip",
++          bytes: 0,
++          ms: 0,
++          ok: false,
++          error: "unsupported",
++        });
++      }
++      return;
++    }
++    const task = limit(async () => {
++      const entry = await copyFile(currentSrc, currentDst, strategy, {
++        dryRun,
++        requireClone,
++        journal,
++        emitLog,
++      });
++      results.push(entry);
++      return entry;
++    });
++    tasks.push(task);
++  };
++
++  await walk(srcDir, dstDir);
++  await Promise.all(tasks);
++  const elapsed = performance.now() - started;
++  const afterDu = dryRun ? null : await du(dstDir);
++  const counts = results.reduce(
++    (acc, entry) => {
++      const { mode } = entry;
++      acc.total += 1;
++      if (!acc[mode]) acc[mode] = 0;
++      acc[mode] += 1;
++      acc.bytes += entry.bytes || 0;
++      return acc;
++    },
++    { total: 0, bytes: 0 }
++  );
++  return {
++    entries: results,
++    counts,
++    ms: elapsed,
++    duDelta: afterDu != null && beforeDu != null ? afterDu - beforeDu : null,
++  };
++}
++
++export function parseStrategy(input) {
++  if (!input) return DEFAULT_STRATEGY;
++  const normalized = input.toLowerCase();
++  if (["auto", "clone", "hardlink", "copy", "move"].includes(normalized)) {
++    return normalized;
++  }
++  return DEFAULT_STRATEGY;
++}
++
++export function summarizeCopy(entries) {
++  const summary = {
++    clone: 0,
++    hardlink: 0,
++    copy: 0,
++    move: 0,
++    skip: 0,
++    totalBytes: 0,
++  };
++  for (const entry of entries) {
++    const mode = entry.mode;
++    if (summary[mode] != null) {
++      summary[mode] += 1;
++    }
++    summary.totalBytes += entry.bytes || 0;
++  }
++  return summary;
++}
++
++export function formatSummary(summary) {
++  const parts = [];
++  if (summary.clone) parts.push(`cloned ${summary.clone}`);
++  if (summary.hardlink) parts.push(`hardlinked ${summary.hardlink}`);
++  if (summary.copy) parts.push(`copied ${summary.copy}`);
++  if (summary.move) parts.push(`moved ${summary.move}`);
++  if (summary.skip) parts.push(`skipped ${summary.skip}`);
++  return parts.length ? parts.join(", ") : "no files touched";
++}
++
++export { OperationJournal } from "./journal.js";
+diff --git a/src/fs/copyOps.ts b/src/fs/copyOps.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b1911ee319f7ed2634e12d2db56a235ca5d90e81
+--- /dev/null
++++ b/src/fs/copyOps.ts
+@@ -0,0 +1,50 @@
++export type CopyMode = "clone" | "hardlink" | "copy" | "move" | "skip";
++export type CopyStrategy = "auto" | "clone" | "hardlink" | "copy" | "move";
++export interface CopyEntry {
++  op: "copy";
++  from: string;
++  to: string;
++  mode: CopyMode;
++  bytes: number;
++  ms: number;
++  strategy: CopyStrategy;
++  ok: boolean;
++  via?: string;
++  error?: string;
++}
++
++export declare function copyFile(
++  src: string,
++  dst: string,
++  strategy?: CopyStrategy,
++  options?: {
++    dryRun?: boolean;
++    requireClone?: boolean;
++    journal?: import("./journal.js").OperationJournal;
++    emitLog?: (entry: CopyEntry) => void;
++  }
++): Promise<CopyEntry>;
++
++export declare function copyTree(
++  srcDir: string,
++  dstDir: string,
++  strategy?: CopyStrategy,
++  options?: {
++    dryRun?: boolean;
++    requireClone?: boolean;
++    concurrency?: number;
++    journal?: import("./journal.js").OperationJournal;
++    emitLog?: (entry: CopyEntry) => void;
++  }
++): Promise<{
++  entries: CopyEntry[];
++  counts: Record<string, number>;
++  ms: number;
++  duDelta: number | null;
++}>;
++
++export declare function parseStrategy(input?: string): CopyStrategy;
++export declare function summarizeCopy(entries: CopyEntry[]): Record<string, number>;
++export declare function formatSummary(summary: Record<string, number>): string;
++
++export { OperationJournal } from "./journal.js";
+diff --git a/src/fs/journal.js b/src/fs/journal.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..b54d4dbccb738b9bbfae9324bbabc628c5bf7532
+--- /dev/null
++++ b/src/fs/journal.js
+@@ -0,0 +1,95 @@
++import fs from "node:fs";
++import { promises as fsp } from "node:fs";
++import path from "node:path";
++import { finished } from "node:stream/promises";
++
++/**
++ * Append-only operation journal with newline-delimited JSON entries.
++ *
++ * Each record must already be a plain object; a timestamp is injected if
++ * missing. On construction the journal loads prior successful operations so
++ * callers can skip work on resume without re-reading the entire file later.
++ */
++export class OperationJournal {
++  /**
++   * @param {string} filePath
++   */
++  constructor(filePath) {
++    this.filePath = filePath;
++    this._stream = null;
++    this._index = new Map();
++    this._loading = null;
++  }
++
++  async init() {
++    if (this._stream) return;
++    const dir = path.dirname(this.filePath);
++    await fsp.mkdir(dir, { recursive: true });
++    this._stream = fs.createWriteStream(this.filePath, {
++      flags: "a",
++      encoding: "utf8",
++    });
++    this._loading = this._primeIndex();
++    await this._loading;
++  }
++
++  async _primeIndex() {
++    try {
++      const data = await fsp.readFile(this.filePath, "utf8");
++      for (const line of data.split(/\r?\n/)) {
++        if (!line.trim()) continue;
++        try {
++          const entry = JSON.parse(line);
++          if (entry?.dst && entry?.ok) {
++            this._index.set(entry.dst, entry);
++          }
++        } catch {
++          // ignore corrupt lines but keep them in the journal for auditing
++        }
++      }
++    } catch (err) {
++      if (err?.code !== "ENOENT") throw err;
++    }
++  }
++
++  /**
++   * Returns a snapshot of successful destination paths.
++   * @returns {Map<string, any>}
++   */
++  get index() {
++    return this._index;
++  }
++
++  /**
++   * Record an entry to the journal.
++   * @param {object} payload
++   */
++  async record(payload) {
++    if (!this._stream) {
++      await this.init();
++    }
++    const entry = { ...payload };
++    if (!entry.t) entry.t = new Date().toISOString();
++    if (entry.ok && entry.dst) {
++      this._index.set(entry.dst, entry);
++    }
++    this._stream.write(JSON.stringify(entry) + "\n");
++  }
++
++  async close() {
++    if (!this._stream) return;
++    this._stream.end();
++    await finished(this._stream);
++    this._stream = null;
++  }
++}
++
++export async function withJournal(filePath, fn) {
++  const journal = new OperationJournal(filePath);
++  await journal.init();
++  try {
++    return await fn(journal);
++  } finally {
++    await journal.close();
++  }
++}
+diff --git a/src/imageSelector.js b/src/imageSelector.js
+index 93df83a384c28456d5dc0335f7443f44a0bc2730..62ea54b33e7cbc6908f8126f66c5767ecd4740c5 100644
+--- a/src/imageSelector.js
++++ b/src/imageSelector.js
+@@ -1,39 +1,147 @@
+ import fs from "node:fs/promises";
+ import path from "node:path";
+ import { SUPPORTED_EXTENSIONS } from "./config.js";
++import {
++  copyFile as copyFileWithStrategy,
++  parseStrategy,
++  summarizeCopy,
++  formatSummary,
++} from "./fs/copyOps.js";
++
++function createLimiter(limit) {
++  let active = 0;
++  const queue = [];
++  const runNext = () => {
++    if (active >= limit) return;
++    const item = queue.shift();
++    if (!item) return;
++    active++;
++    item
++      .fn()
++      .then((value) => {
++        active--;
++        item.resolve(value);
++        runNext();
++      })
++      .catch((err) => {
++        active--;
++        item.reject(err);
++        runNext();
++      });
++  };
++  return (fn) =>
++    new Promise((resolve, reject) => {
++      queue.push({ fn, resolve, reject });
++      runNext();
++    });
++}
+ 
+ /** Return full paths of images in `dir` (non‑recursive). */
++async function fileExists(p) {
++  try {
++    await fs.access(p);
++    return true;
++  } catch (err) {
++    if (err?.code === "ENOENT") return false;
++    throw err;
++  }
++}
++
++async function alreadyMaterialized(dir, name) {
++  const keepDest = path.join(dir, "_keep", name);
++  const asideDest = path.join(dir, "_aside", name);
++  if (await fileExists(keepDest)) return true;
++  if (await fileExists(asideDest)) return true;
++  return false;
++}
++
+ export async function listImages(dir) {
+   const entries = await fs.readdir(dir, { withFileTypes: true });
+-  return entries
+-    .filter(
+-      (e) =>
+-        e.isFile() &&
+-        SUPPORTED_EXTENSIONS.includes(path.extname(e.name).toLowerCase())
+-    )
+-    .map((e) => path.join(dir, e.name))
+-    .sort();
++  const files = [];
++  for (const entry of entries) {
++    if (!entry.isFile()) continue;
++    if (!SUPPORTED_EXTENSIONS.includes(path.extname(entry.name).toLowerCase())) {
++      continue;
++    }
++    if (await alreadyMaterialized(dir, entry.name)) {
++      continue;
++    }
++    files.push(path.join(dir, entry.name));
++  }
++  files.sort();
++  return files;
+ }
+ 
+ /** Pick up to `count` random items from the array. */
+ export function pickRandom(array, count) {
+   const shuffled = array.slice().sort(() => Math.random() - 0.5);
+   return shuffled.slice(0, Math.min(count, array.length));
+ }
+ 
+ /** Ensure sub‑directories exist and move each file accordingly. */
+-export async function moveFiles(files, targetDir, notes = new Map()) {
+-  if (!files.length) return;
++export async function moveFiles(files, targetDir, notes = new Map(), options = {}) {
++  if (!files.length) return { entries: [], summary: null };
++  const {
++    strategy = parseStrategy(options.strategy || process.env.COPY_STRATEGY),
++    dryRun = false,
++    requireClone = false,
++    journal,
++    emitLog,
++    concurrency = Number(options.concurrency || process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY) || 8,
++  } = options;
+   await fs.mkdir(targetDir, { recursive: true });
+-  await Promise.all(
+-    files.map(async (file) => {
++  const limit = createLimiter(Math.max(1, concurrency));
++  const results = [];
++
++  const tasks = files.map((file) =>
++    limit(async () => {
+       const dest = path.join(targetDir, path.basename(file));
+-      await fs.rename(file, dest);
++      if (
++        journal?.index?.has(dest) &&
++        (await fs.stat(dest).then(() => true).catch(() => false))
++      ) {
++        const entry = {
++          op: "copy",
++          from: file,
++          to: dest,
++          mode: "skip",
++          bytes: 0,
++          ms: 0,
++          strategy,
++          ok: true,
++          reason: "journal",
++        };
++        if (emitLog) emitLog(entry);
++        if (journal) {
++          await journal.record({
++            ...entry,
++            dst: dest,
++            ok: true,
++          });
++        }
++        results.push(entry);
++        return entry;
++      }
++      const entry = await copyFileWithStrategy(file, dest, strategy, {
++        dryRun,
++        requireClone,
++        journal,
++        emitLog,
++      });
++      if (process.env.PHOTO_SELECT_DEBUG_MATERIALIZE === "1") {
++        console.log("[materialize]", file, "->", dest, entry.mode);
++      }
++      results.push(entry);
+       const note = notes.get(file);
+-      if (note) {
++      if (note && !dryRun) {
+         const txt = dest.replace(/\.[^.]+$/, ".txt");
+         await fs.writeFile(txt, note, "utf8");
+       }
++      return entry;
+     })
+   );
++
++  await Promise.all(tasks);
++  const summary = summarizeCopy(results);
++  return { entries: results, summary, message: formatSummary(summary) };
+ }
+diff --git a/src/index.js b/src/index.js
+index 7dd33b8a1912e4291d57033db768d2408206c960..3773b93107938ef9c90b9f19633160436b24d976 100755
+--- a/src/index.js
++++ b/src/index.js
+@@ -55,118 +55,160 @@ program
+     "Reasoning effort (minimal|low|medium|high|auto)",
+     process.env.PHOTO_SELECT_REASONING_EFFORT
+   )
+   .option("--no-recurse", "Process a single directory only")
+   .option(
+     "-P, --parallel <n>",
+     "Number of concurrent API calls (deprecated; use --workers)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option("--field-notes", "Enable field notes workflow")
+   .option("-v, --verbose", "Print extra logs")
+   .option(
+     "--save-io",
+     "Save full prompts and responses for debugging"
+   )
+   .option(
+     "--workers <n>",
+     "Number of worker processes (each runs batches sequentially)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option(
+     "--concurrency <n>",
+     "Maximum in-flight OpenAI requests",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
++  .option(
++    "--strategy <mode>",
++    "Materialization strategy (auto|clone|hardlink|copy|move)",
++    process.env.COPY_STRATEGY || "auto"
++  )
++  .option(
++    "--materialize-concurrency <n>",
++    "Maximum concurrent materialization operations",
++    (v) => Math.max(1, parseInt(v, 10))
++  )
++  .option("--dry-run", "Plan materialization without writing files")
++  .option("--apfs-required", "Fail if copy-on-write clone is unavailable")
++  .option(
++    "--journal <file>",
++    "Path to the materialization journal",
++    process.env.PHOTO_SELECT_JOURNAL
++  )
++  .option("--log-json", "Emit JSON entries for materialization events")
+   .parse(process.argv);
+ 
+ let {
+   dir,
+   prompt: promptPath,
+   provider: providerName,
+   model,
+   recurse,
+   apiKey,
+   curators,
+   context: contextPath,
+   parallel,
+   fieldNotes,
+   verbose,
+   saveIo,
+   workers,
+   verbosity,
+   reasoningEffort,
+   ollamaBaseUrl,
+   concurrency: concurrencyFlag,
++  strategy: strategyFlag,
++  materializeConcurrency: materializeConcurrencyFlag,
++  dryRun: dryRunFlag,
++  apfsRequired,
++  journal: journalPathFlag,
++  logJson,
+ } = program.opts();
+ 
+ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
+   const n = Number(parallel) || 1;
+   if (!workers) workers = n;
+   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
+ }
+ if (!workers) workers = 1;
+ 
+ const envConc = Number(process.env.CONCURRENCY);
+ const envWorkers = Number(process.env.WORKERS);
+ if (!workers && Number.isFinite(envWorkers)) workers = envWorkers;
+ let concurrency = Number.isFinite(envConc)
+   ? envConc
+   : Number.isFinite(concurrencyFlag)
+   ? concurrencyFlag
+   : workers;
+ if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+ 
+ // Scale transport, filesystem, and batching with worker count
+ const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+ const maxSockets = clamp(workers * 2 + 2, 8, 64);
+ const maxFreeSockets = clamp(Math.ceil(maxSockets / 2), 4, 32);
+ process.env.UNDICI_CONNECTIONS = String(maxSockets);
+ process.env.UNDICI_KEEPALIVE_MS = "10000";
+ process.env.UNDICI_FREE_TIMEOUT_MS = "60000";
+ process.env.PHOTO_SELECT_MAX_SOCKETS = String(maxSockets);
+ process.env.PHOTO_SELECT_MAX_FREE_SOCKETS = String(maxFreeSockets);
+ process.env.PHOTO_SELECT_KEEPALIVE_MS = "10000";
+ process.env.PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS = "60000";
+ process.env.PHOTO_SELECT_RETRY_BASE_MS = String(500 + 50 * workers);
+ process.env.UV_THREADPOOL_SIZE = String(Math.min(64, 8 + 4 * workers));
+ process.env.PHOTO_SELECT_BATCH_SIZE = String(
+   clamp(8 + Math.floor(workers / 2), 8, 10)
+ );
+ process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
+   clamp(2 * workers, 2, 16)
+ );
+ process.env.PHOTO_SELECT_BUMP_TOKENS = String(
+   Math.min(4000 + 500 * (workers - 1), 8000)
+ );
+ 
+ const undiciConnections = Number(process.env.UNDICI_CONNECTIONS) || maxSockets;
+ scheduler.setConcurrency(Math.min(concurrency, undiciConnections));
+ console.log(
+   `⚙️  workers=${workers} concurrency=${concurrency} undici_connections=${undiciConnections}`
+ );
+ 
++const finalCopyStrategy = (strategyFlag || process.env.COPY_STRATEGY || "auto").toLowerCase();
++process.env.COPY_STRATEGY = finalCopyStrategy;
++const materializeDryRun = !!dryRunFlag;
++const requireCloneFlag = !!apfsRequired;
++const materializeLogJsonFlag = !!logJson;
++if (materializeLogJsonFlag) {
++  process.env.PHOTO_SELECT_LOG_JSON = "1";
++}
++const finalJournalPath = journalPathFlag || process.env.PHOTO_SELECT_JOURNAL || undefined;
++if (finalJournalPath) {
++  process.env.PHOTO_SELECT_JOURNAL = finalJournalPath;
++}
++const materializeConcurrencyValue =
++  materializeConcurrencyFlag ??
++  (process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY
++    ? Math.max(1, parseInt(process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY, 10))
++    : undefined);
++
+ let shuttingDown = false;
+ async function handleSignal(sig) {
+   if (shuttingDown) return;
+   shuttingDown = true;
+   console.log(`\n🛑  received ${sig}, shutting down…`);
+   scheduler.setConcurrency(0);
+   await scheduler.waitForIdle().catch(() => {});
+   await closeDispatcher().catch(() => {});
+   process.exit(0);
+ }
+ process.on('SIGINT', handleSignal);
+ process.on('SIGTERM', handleSignal);
+ 
+ // Early bootstrap log (helps confirm the process is alive).
+ if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+   console.log(`🔧 bootstrap: node=${process.version} workers=${workers} dir=${process.cwd()}`);
+ }
+ 
+ // Configure HTTP dispatcher only if explicitly enabled.
+ // This is async but we don't block startup on it.
+ void configureHttpFromEnv();
+ 
+ if (verbose) {
+   process.env.PHOTO_SELECT_VERBOSE = '1';
+ }
+@@ -194,41 +236,47 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
+   try {
+     if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+       console.error(
+         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
+       );
+       process.exit(1);
+     }
+     const absDir = path.resolve(dir);
+     const { triageDirectory } = await import('./orchestrator.js');
+     const { getProvider } = await import('./providers/index.js');
+     const driver = await getProvider(provider);
+     await triageDirectory({
+       dir: absDir,
+       promptPath,
+       provider: driver,
+       model: finalModel,
+       recurse,
+       curators,
+       contextPath,
+       fieldNotes,
+       verbose,
+       saveIo,
+       workers,
+       verbosity,
+       reasoningEffort: finalReasoningEffort,
++      copyStrategy: finalCopyStrategy,
++      materializeDryRun,
++      materializeConcurrency: materializeConcurrencyValue,
++      requireClone: requireCloneFlag,
++      materializeLogJson: materializeLogJsonFlag,
++      journalPath: finalJournalPath,
+     });
+     console.log("🎉  Finished triaging.");
+   } catch (err) {
+     if (err?.code === "BILLING_LIMIT") {
+       console.error(
+         "🛑  Billing limit reached. Please review your provider usage before retrying."
+       );
+       if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+         console.error("  ↳ cause:", err.cause);
+       }
+       process.exit(1);
+     }
+     console.error("❌  Error:", err);
+     process.exit(1);
+   }
+ })();
+diff --git a/src/orchestrator.js b/src/orchestrator.js
+index 3e4a65e0d17f673b2616c9e04b03cc305c8049a4..17b7aa6a6a209f96ba077707b5faf8f09f0e39c1 100644
+--- a/src/orchestrator.js
++++ b/src/orchestrator.js
+@@ -1,33 +1,39 @@
+ import path from "node:path";
+ import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+ import { execFile } from "node:child_process";
+ import { promisify } from "node:util";
+ import { batchStore } from "./batchContext.js";
+ import crypto from "node:crypto";
+ import { delay } from "./config.js";
+ import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
++import {
++  parseStrategy as parseCopyStrategy,
++  summarizeCopy as summarizeCopyEntries,
++  formatSummary as formatCopySummary,
++  OperationJournal,
++} from "./fs/copyOps.js";
+ import { parseReply, getPeople } from "./chatClient.js";
+ import { buildPrompt } from "./templates.js";
+ import FieldNotesWriter from "./fieldNotesWriter.js";
+ import { MultiBar, Presets } from "cli-progress";
+ import { sanitizePeople } from "./lib/people.js";
+ import { finalizeCurators } from "./core/finalizeCurators.js";
+ 
+ const exec = promisify(execFile);
+ 
+ // ---- env & defaults ---------------------------------------------------------
+ function envBool(name, def) {
+   const v = process.env[name];
+   if (v == null) return def;
+   if (/^(1|true|yes|on)$/i.test(v)) return true;
+   if (/^(0|false|no|off)$/i.test(v)) return false;
+   return def;
+ }
+ const PRETTY = envBool("PHOTO_SELECT_PRETTY", true);                 // pretty console summary
+ const TRANSCRIPT_TXT = envBool("PHOTO_SELECT_TRANSCRIPT_TXT", false); // optional .txt transcript
+ 
+ function parsePrettyMinutes() {
+   const raw = process.env.PHOTO_SELECT_PRETTY_MINUTES;
+   const isTTY = process.stdout.isTTY;
+   const isCI = !!process.env.CI;
+   if (raw != null) {
+@@ -161,50 +167,60 @@ async function getRevisionHistory(repoDir, file, count = 2) {
+ 
+ async function getCommitMessages(repoDir, file) {
+   try {
+     const rel = path.relative(repoDir, file);
+     const { stdout } = await exec(
+       "git",
+       ["log", "--format=%s", "--follow", "--", rel],
+       { cwd: repoDir }
+     );
+     return stdout.trim().split("\n").filter(Boolean);
+   } catch {
+     return [];
+   }
+ }
+ 
+ function formatDuration(ms) {
+   const sec = Math.round(ms / 1000);
+   const h = Math.floor(sec / 3600);
+   const m = Math.floor((sec % 3600) / 60);
+   const s = sec % 60;
+   if (h) return `${h}h ${m}m ${s}s`;
+   if (m) return `${m}m ${s}s`;
+   return `${s}s`;
+ }
+ 
++async function duKilobytes(p) {
++  try {
++    const { stdout } = await exec("du", ["-sk", p]);
++    const value = parseInt(stdout.split(/\s+/)[0], 10);
++    return Number.isFinite(value) ? value : null;
++  } catch {
++    return null;
++  }
++}
++
+ async function dirExists(p) {
+   try {
+     return (await stat(p)).isDirectory();
+   } catch (err) {
+     if (err?.code === "ENOENT") return false;
+     throw err;
+   }
+ }
+ 
+ /**
+  * Follow the _keep chain until we find a directory with unclassified images or
+  * run out of nested _keep folders.
+  *
+  * @param {string} startDir
+  * @returns {Promise<{dir: string, hops: number}>}
+  */
+ export async function resolveResumeLevel(startDir) {
+   let current = startDir;
+   let hops = 0;
+ 
+   while (true) {
+     const imagesHere = await listImages(current);
+     if (imagesHere.length > 0) {
+       return { dir: current, hops };
+     }
+@@ -229,58 +245,83 @@ export async function resolveResumeLevel(startDir) {
+  * @param {Object} options.provider     Chat provider instance
+  * @param {string} options.model        Model id for the provider
+  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
+  * @param {string} [options.contextPath]     Optional additional context file
+ * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
+ * @param {number} [options.depth=0]         Internal recursion depth (for logging)
+ */
+ export async function triageDirectory(options) {
+   let {
+     dir,
+     promptPath,
+     provider,
+     model,
+     recurse = true,
+     curators = [],
+     contextPath,
+     fieldNotes = false,
+     verbose = false,
+     saveIo = false,
+     workers = 1,
+     verbosity,
+     reasoningEffort,
+     depth = 0,
+     gitRoot,
++    journal,
++    copyStrategy,
++    materializeDryRun = false,
++    materializeConcurrency,
++    requireClone = false,
++    materializeLogJson = false,
++    journalPath,
+   } = options;
+   if (!provider) {
+     const m = await import('./providers/openai.js');
+     provider = new m.default();
+   }
+   const indent = "  ".repeat(depth);
+   let notesWriter;
+ 
++  const finalStrategy = parseCopyStrategy(copyStrategy || process.env.COPY_STRATEGY);
++  const finalMaterializeConcurrency =
++    materializeConcurrency ??
++    Number(process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY || Math.max(4, workers * 2));
++  const shouldLogJson = materializeLogJson || process.env.PHOTO_SELECT_LOG_JSON === "1";
++  const finalJournalPath =
++    journalPath || process.env.PHOTO_SELECT_JOURNAL || path.resolve(process.cwd(), "data/journal.ndjson");
++  const shouldCloseJournal = depth === 0;
++  if (!journal) {
++    journal = new OperationJournal(finalJournalPath);
++    await journal.init();
++  }
++  const emitCopyLog = shouldLogJson
++    ? (entry) => {
++        process.stdout.write(`${JSON.stringify(entry)}\n`);
++      }
++    : undefined;
++
+   function isBillingLimitError(err) {
+     if (!err) return false;
+     const candidates = [
+       err?.message,
+       err?.error?.message,
+       err?.cause?.message,
+       err?.response?.data?.error?.message,
+       err?.response?.data?.message,
+       err?.response?.error?.message,
+       err?.response?.message,
+       err?.body?.error?.message,
+       err?.body?.message,
+     ]
+       .flat()
+       .filter(Boolean)
+       .map((msg) => String(msg));
+     return candidates.some((message) => /billing (hard )?limit/i.test(message));
+   }
+ 
+   function createBillingLimitError(err) {
+     const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
+     wrapped.code = "BILLING_LIMIT";
+     wrapped.cause = err;
+     return wrapped;
+   }
+@@ -290,178 +331,202 @@ export async function triageDirectory(options) {
+   function isGatewayError(e) {
+     const s = e?.status || e?.code;
+     return s === 502 || s === 503;
+   }
+   function noteGatewayError() {
+     consecutiveGatewayErrors++;
+     if (consecutiveGatewayErrors >= 3 && dynamicWorkers > 1) {
+       dynamicWorkers = 1;
+       console.warn(
+         `${indent}⚠️  High gateway error rate → reducing workers to 1 for the next 10 minutes.`
+       );
+       setTimeout(() => {
+         dynamicWorkers = workers;
+         consecutiveGatewayErrors = 0;
+       }, 10 * 60 * 1000);
+     }
+   }
+ 
+   if (depth === 0) {
+     const shown = MAX_MINUTES === Infinity ? 'all' : String(MAX_MINUTES);
+     console.log(dim(`UI: pretty=${PRETTY?'on':'off'}, transcript_txt=${TRANSCRIPT_TXT?'on':'off'}, minutes_shown=${shown}`));
+   }
+ 
+   if (!gitRoot) gitRoot = dir;
+ 
+-  if (recurse) {
+-    const { dir: workDir, hops } = await resolveResumeLevel(dir);
+-    if (workDir !== dir) {
+-      const relative = path.relative(dir, workDir) || ".";
+-      const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+-      console.log(
+-        `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+-      );
+-      return triageDirectory({
+-        ...options,
+-        dir: workDir,
+-        depth: depth + hops,
+-        provider,
+-        gitRoot,
+-      });
++  try {
++    if (recurse) {
++      const { dir: workDir, hops } = await resolveResumeLevel(dir);
++      if (workDir !== dir) {
++        const relative = path.relative(dir, workDir) || ".";
++        const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
++        console.log(
++          `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
++        );
++        return triageDirectory({
++          ...options,
++          dir: workDir,
++          depth: depth + hops,
++          provider,
++          gitRoot,
++          journal,
++          copyStrategy: finalStrategy,
++          materializeDryRun,
++          materializeConcurrency: finalMaterializeConcurrency,
++          requireClone,
++          materializeLogJson: shouldLogJson,
++          journalPath: finalJournalPath,
++        });
++      }
+     }
+-  }
+ 
+-  if (fieldNotes && depth === 0) {
+-    await ensureGitRepo(gitRoot);
+-  }
++    if (fieldNotes && depth === 0) {
++      await ensureGitRepo(gitRoot);
++    }
+ 
+-  console.log(`${indent}📁  Scanning ${dir}`);
+-
+-  // Archive original images at this level
+-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+-  const runSession = async (payload) => {
+-    const handle = await provider.submit({
+-      levelDir,
+-      ...payload,
+-    });
+-    return provider.collect(handle);
+-  };
+-  const initImages = await listImages(dir);
+-  const levelStart = Date.now();
+-  const totalImages = initImages.length;
+-  const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
+-  await mkdir(levelDir, { recursive: true });
+-  if (saveIo) {
+-    await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
+-    await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+-  }
+-  const failedArchives = [];
+-  const copyFileSafe = async (
+-    src,
+-    dest,
+-    attempt = 0,
+-    maxAttempts = 3
+-  ) => {
+-    try {
+-      await copyFile(src, dest);
+-    } catch (err) {
+-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+-        const wait = (attempt + 1) * 1000;
+-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+-        try {
+-          await stat(src);
+-        } catch {
+-          // ignore
++    console.log(`${indent}📁  Scanning ${dir}`);
++
++    // Archive original images at this level
++    const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
++    const normalizeProviderResult = (result) => {
++      if (result == null) return undefined;
++      if (typeof result === "string") return result;
++      if (Buffer.isBuffer(result)) return result.toString("utf8");
++      if (typeof result === "object") {
++        const candidate = ["raw", "text", "body"]
++          .map((key) => result[key])
++          .find((value) => value != null);
++        if (candidate != null) {
++          if (typeof candidate === "string") return candidate;
++          if (Buffer.isBuffer(candidate)) return candidate.toString("utf8");
+         }
+-        await delay(wait);
+-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+       }
+-      throw err;
++      return undefined;
++    };
++
++    const runSession = async (payload) => {
++      const handle = await provider.submit({
++        levelDir,
++        ...payload,
++      });
++      return provider.collect(handle);
++    };
++    const initImages = await listImages(dir);
++    const levelStart = Date.now();
++    const totalImages = initImages.length;
++    const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
++    await mkdir(levelDir, { recursive: true });
++    if (saveIo) {
++      await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
++      await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+     }
+-  };
+-  await Promise.all(
+-    initImages.map(async (file) => {
+-      const dest = path.join(levelDir, path.basename(file));
++    const failedArchives = [];
++    const copyFileSafe = async (
++      src,
++      dest,
++      attempt = 0,
++      maxAttempts = 3
++    ) => {
+       try {
+-        await copyFileSafe(file, dest);
++        await copyFile(src, dest);
+       } catch (err) {
+-        failedArchives.push(file);
+-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
++        if (err?.code === "ECANCELED" && attempt < maxAttempts) {
++          const wait = (attempt + 1) * 1000;
++          console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
++          try {
++            await stat(src);
++          } catch {
++            // ignore
++          }
++          await delay(wait);
++          return copyFileSafe(src, dest, attempt + 1, maxAttempts);
++        }
++        throw err;
+       }
+-    })
+-  );
+-  if (failedArchives.length) {
+-    const listPath = path.join(levelDir, "failed-archives.txt");
+-    await writeFile(listPath, failedArchives.join("\n"), "utf8");
+-    console.warn(
+-      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
++    };
++    await Promise.all(
++      initImages.map(async (file) => {
++        const dest = path.join(levelDir, path.basename(file));
++        try {
++          await copyFileSafe(file, dest);
++        } catch (err) {
++          failedArchives.push(file);
++          console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
++        }
++      })
+     );
+-  }
+-
+-  if (fieldNotes) {
+-    const lvl = String(depth + 1).padStart(3, '0');
+-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
+-    await notesWriter.init();
+-  }
+-
+-  let completedBatches = 0;
++    if (failedArchives.length) {
++      const listPath = path.join(levelDir, "failed-archives.txt");
++      await writeFile(listPath, failedArchives.join("\n"), "utf8");
++      console.warn(
++        `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
++      );
++    }
+ 
+-  while (true) {
+-    const images = await listImages(dir);
+-    if (images.length === 0) {
+-      console.log(`${indent}✅  Nothing to do in ${dir}`);
+-      break;
++    if (fieldNotes) {
++      const lvl = String(depth + 1).padStart(3, '0');
++      notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
++      await notesWriter.init();
+     }
+ 
+-    console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+-    const queue = pickRandom(images, images.length);
+-    console.log(
+-      `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
+-    );
++    let completedBatches = 0;
++
++    while (true) {
++      const images = await listImages(dir);
++      if (images.length === 0) {
++        console.log(`${indent}✅  Nothing to do in ${dir}`);
++        break;
++      }
+ 
+-    const multibar = new MultiBar(
+-        {
+-          clearOnComplete: false,
+-          hideCursor: true,
+-          format: `${indent}{prefix} |{bar}| {stage}`,
+-        },
+-        Presets.shades_classic
++      console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
++      const queue = pickRandom(images, images.length);
++      console.log(
++        `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
+       );
+-      try {
+-        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+-        const getBar = (idx) =>
+-          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+-        const log = (msg) => {
+-          for (const line of String(msg).split(/\n/)) {
+-            multibar.log(line + "\n");
+-            if (process.env.NODE_ENV === "test") console.log(line);
+-          }
+-        };
+-        let batchIdx = 0;
+-        let abortProcessing = false;
+-        const nextBatch = () =>
+-          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
++
++      const multibar = new MultiBar(
++          {
++            clearOnComplete: false,
++            hideCursor: true,
++            format: `${indent}{prefix} |{bar}| {stage}`,
++          },
++          Presets.shades_classic
++        );
++        try {
++          const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
++          const getBar = (idx) =>
++            multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
++          const log = (msg) => {
++            for (const line of String(msg).split(/\n/)) {
++              multibar.log(line + "\n");
++              if (process.env.NODE_ENV === "test") console.log(line);
++            }
++          };
++          let batchIdx = 0;
++          let abortProcessing = false;
++          const nextBatch = () =>
++            !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
+ 
+         async function workerFn() {
+           while (true) {
+             const batch = nextBatch();
+             if (!batch) break;
+             const idx = ++batchIdx;
+             const bar = getBar(idx);
+             await batchStore.run({ batch: idx }, async () => {
+               try {
+                 const batchStart = Date.now();
+                 const maxStreak =
+                   batch.length <= SMALL ? MAX_SMALL : MAX_LARGE;
+                 let attempts = 0;
+                 let reply;
+                 let keep = [];
+                 let aside = [];
+                 let unclassified = [];
+                 let notes = new Map();
+                 let minutes = [];
+                 const saveText = async (kind, attempt, text) => {
+                   if (!saveIo) return;
+                   const dirName = kind === 'prompt' ? '_prompts' : '_responses';
+                   const attemptSuffix = attempt > 1 ? `-${attempt}` : '';
+                   const file = path.join(
+                     levelDir,
+@@ -475,103 +540,111 @@ export async function triageDirectory(options) {
+                   }
+                 };
+ 
+                 const photos = [];
+                 for (const file of batch) {
+                   const name = path.basename(file);
+                   const people = sanitizePeople(await getPeople(name));
+                   photos.push({ file: name, people });
+                 }
+                 const { finalCurators, added } = finalizeCurators(curators, photos);
+                 if (added.length) {
+                   log(
+                     `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
+                   );
+                 }
+                 const first = await buildPrompt(promptPath, {
+                   curators: finalCurators,
+                   contextPath,
+                   images: batch,
+                   hasFieldNotes: false,
+                   isSecondPass: false,
+                 });
+                 const meta = { model, verbosity, reasoningEffort };
+                 let attemptNum = 1;
+                 await saveText('prompt', attemptNum, first.prompt);
+-                const { raw: firstRaw } = await runSession({
++                const firstResult = await runSession({
+                   prompt: first.prompt,
+                   images: batch,
+                   model,
+                   curators: finalCurators,
+                   verbosity,
+                   reasoningEffort,
+                   minutesMin: first.minutesMin,
+                   minutesMax: first.minutesMax,
+                   onProgress: (stage) => {
+                     bar.update(stageMap[stage] || 0, { stage });
+                   },
+                   stream: true,
+                 });
+-                reply = firstRaw;
++                const firstRaw = normalizeProviderResult(firstResult);
++                if (firstRaw == null) {
++                  throw new Error("Provider returned empty reply");
++                }
++                reply = String(firstRaw);
+                 await saveText('response', attemptNum, reply);
+                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
+                   reply,
+                   batch,
+                   meta
+                 ));
+                 if (keep.length + aside.length === 0) {
+                   attempts++;
+                   if (attempts <= maxStreak) {
+                     const repair = [
+                       `role play as ${finalCurators.join(", ")}:\n - inidicate who is speaking\n - say what you think`,
+                       "You are continuing the same curatorial session.",
+                       "Return only the block below. No minutes, no commentary.",
+                       "",
+                       "=== DECISIONS_JSON ===",
+                       '{"decisions":[{"filename":"<from list>","decision":"keep|aside","reason":""}]}',
+                       "=== END ===",
+                       "",
+                       "Files (use each exactly once):",
+                       ...batch.map((f) => `- ${path.basename(f)}`),
+                     ].join("\n");
+                     attemptNum++;
+                     await saveText('prompt', attemptNum, repair);
+-                    const { raw: repairRaw } = await runSession({
++                    const repairResult = await runSession({
+                       prompt: repair,
+                       images: batch,
+                       model,
+                       curators: finalCurators,
+                       verbosity: "low",
+                       reasoningEffort,
+                       minutesMin: 0,
+                       minutesMax: 0,
+                       onProgress: (stage) => {
+                         bar.update(stageMap[stage] || 0, { stage });
+                       },
+                       stream: true,
+                     });
+-                    reply = repairRaw;
++                    const repairRaw = normalizeProviderResult(repairResult);
++                    if (repairRaw == null) {
++                      throw new Error("Provider returned empty reply");
++                    }
++                    reply = String(repairRaw);
+                     await saveText('response', attemptNum, reply);
+                     ({ keep, aside, unclassified, notes } = parseReply(
+                       reply,
+                       batch,
+                       meta
+                     ));
+                   }
+                   if (keep.length + aside.length === 0) {
+                     console.log(
+                       dim(
+                         `⚠️  No decisions after ${attempts} attempt(s); marking NEEDS_REVIEW and continuing.`
+                       )
+                     );
+                     const marker = path.join(dir, "NEEDS_REVIEW");
+                     const list = batch.map((f) => path.basename(f)).join("\n");
+                     try {
+                       const prev = await readFile(marker, "utf8").catch(() => "");
+                       await writeFile(marker, `${prev}${list}\n`, "utf8");
+                     } catch {}
+                     return;
+                   }
+                 }
+                 const ms = Date.now() - batchStart;
+                 bar.update(4, { stage: "done" });
+                 bar.stop();
+@@ -607,128 +680,165 @@ export async function triageDirectory(options) {
+                         : { speaker: "Curator", text: line };
+                     });
+                     return { minutes: minutesObjs, decisions };
+                   })();
+                 await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
+                 log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
+                 if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
+                   const txtPath = path.join(dir, `minutes-${uuid}.txt`);
+                   let out = j.minutes
+                     .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
+                     .join("\n");
+                   if (Array.isArray(j.decisions)) {
+                     const keeps = j.decisions.filter((d) => d.decision === "keep");
+                     const asides = j.decisions.filter((d) => d.decision === "aside");
+                     out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
+                     for (const d of keeps)
+                       out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                     for (const d of asides)
+                       out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                   }
+                   await writeFile(txtPath, out, "utf8");
+                   log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
+                 }
+                 const keepDir = path.join(dir, "_keep");
+                 const asideDir = path.join(dir, "_aside");
+-                await Promise.all([
+-                  moveFiles(keep, keepDir, notes),
+-                  moveFiles(aside, asideDir, notes),
++                const beforeDu = materializeDryRun ? null : await duKilobytes(dir);
++                const baseCopyOptions = {
++                  strategy: finalStrategy,
++                  dryRun: materializeDryRun,
++                  requireClone,
++                  journal,
++                  emitLog: emitCopyLog,
++                  concurrency: finalMaterializeConcurrency,
++                };
++                const [keepResult, asideResult] = await Promise.all([
++                  moveFiles(keep, keepDir, notes, baseCopyOptions),
++                  moveFiles(aside, asideDir, notes, baseCopyOptions),
+                 ]);
+-                  if (unclassified.length && keep.length + aside.length > 0) {
+-                    queue.push(...unclassified);
+-                  }
++                if (unclassified.length && keep.length + aside.length > 0) {
++                  queue.push(...unclassified);
++                }
++                const combinedEntries = [
++                  ...((keepResult && keepResult.entries) || []),
++                  ...((asideResult && asideResult.entries) || []),
++                ];
++                const combinedSummary = summarizeCopyEntries(combinedEntries);
++                const summaryText = formatCopySummary(combinedSummary);
++                const afterDu = materializeDryRun ? null : await duKilobytes(dir);
++                const duDelta =
++                  beforeDu != null && afterDu != null ? afterDu - beforeDu : null;
++                const duText =
++                  duDelta != null ? ` (Δdu=${duDelta >= 0 ? "+" : ""}${duDelta}K)` : "";
+                 log(
+-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
++                  `📂  Materialized ${keep.length} keep / ${aside.length} aside → ${summaryText}${duText}`
+                 );
+ 
+                 if (keep.length + aside.length > 0) {
+                   completedBatches++;
+                   const elapsedSec = (Date.now() - levelStart) / 1000;
+                   const remaining = totalBatches - completedBatches;
+                   const tps = completedBatches / elapsedSec;
+                   const etaSec = tps > 0 ? Math.ceil(remaining / tps) : Infinity;
+                   log(
+                     `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
+                   );
+                 }
+               } catch (err) {
+                 if (isGatewayError(err)) noteGatewayError();
+                 bar.update(4, { stage: "error" });
+                 bar.stop();
+                 multibar.remove(bar);
+                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                 if (isBillingLimitError(err) && !abortProcessing) {
+                   abortProcessing = true;
+                   queue.length = 0;
+                   log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                   throw createBillingLimitError(err);
+                 }
+               }
+             });
+           }
+         }
+ 
+         const pool = Array.from(
+           { length: Math.min(dynamicWorkers, Math.max(queue.length, 1)) },
+           () => workerFn()
+         );
+         await Promise.all(pool);
+       } finally {
+         multibar.stop();
+       }
+       const remaining = (await listImages(dir)).length;
+       const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+       if (completedBatches) {
+         const elapsedSec = (Date.now() - levelStart) / 1000;
+         const tps = completedBatches / elapsedSec;
+         const etaSec = tps > 0 ? Math.ceil(remainingBatches / tps) : Infinity;
+         console.log(
+           `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
+         );
+       }
+ }
+ 
+-  // Step 5 – recurse into keepDir if both keep and aside exist
+-  if (recurse) {
+-    const keepDir = path.join(dir, "_keep");
+-    const asideDir = path.join(dir, "_aside");
++    // Step 5 – recurse into keepDir if both keep and aside exist
++    if (recurse) {
++      const keepDir = path.join(dir, "_keep");
++      const asideDir = path.join(dir, "_aside");
+ 
+-    const countImages = async (folder) => {
+-      try {
+-        return (await listImages(folder)).length;
+-      } catch (err) {
+-        if (err?.code === "ENOENT") return 0;
+-        throw err;
++      const countImages = async (folder) => {
++        try {
++          return (await listImages(folder)).length;
++        } catch (err) {
++          if (err?.code === "ENOENT") return 0;
++          throw err;
++        }
++      };
++
++      const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
++        countImages(keepDir),
++        countImages(asideDir),
++        dirExists(path.join(keepDir, "_keep")),
++      ]);
++
++      const keepHasWork = keepCount > 0 || hasDeeperKeep;
++      if (keepHasWork) {
++        await triageDirectory({
++          dir: keepDir,
++          promptPath,
++          provider,
++          model,
++          recurse,
++          curators,
++          contextPath,
++          fieldNotes,
++          verbose,
++          saveIo,
++          workers,
++          verbosity,
++          reasoningEffort,
++          depth: depth + 1,
++          gitRoot,
++          journal,
++          copyStrategy: finalStrategy,
++          materializeDryRun,
++          materializeConcurrency: finalMaterializeConcurrency,
++          requireClone,
++          materializeLogJson: shouldLogJson,
++          journalPath: finalJournalPath,
++        });
++      } else if (keepCount || asideCount) {
++        const status = keepCount ? "kept" : "set aside";
++        console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
+       }
+-    };
++    }
+ 
+-    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+-      countImages(keepDir),
+-      countImages(asideDir),
+-      dirExists(path.join(keepDir, "_keep")),
+-    ]);
+-
+-    const keepHasWork = keepCount > 0 || hasDeeperKeep;
+-    if (keepHasWork) {
+-      await triageDirectory({
+-        dir: keepDir,
+-        promptPath,
+-        provider,
+-        model,
+-        recurse,
+-        curators,
+-        contextPath,
+-        fieldNotes,
+-        verbose,
+-        saveIo,
+-        workers,
+-        verbosity,
+-        reasoningEffort,
+-        depth: depth + 1,
+-        gitRoot,
+-      });
+-    } else if (keepCount || asideCount) {
+-      const status = keepCount ? "kept" : "set aside";
+-      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
++  } finally {
++    if (shouldCloseJournal && journal) {
++      try {
++        await journal.close();
++      } catch {
++        // ignore close errors
++      }
+     }
+   }
+ }
+diff --git a/tests/copyOps.test.js b/tests/copyOps.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..6edb52ecb4ba8844d1bfe4633fde212fc48360fb
+--- /dev/null
++++ b/tests/copyOps.test.js
+@@ -0,0 +1,41 @@
++import { describe, expect, it } from "vitest";
++import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
++import path from "node:path";
++import { tmpdir } from "node:os";
++import { copyFile, parseStrategy } from "../src/fs/copyOps.js";
++
++const MODES = new Set(["clone", "hardlink", "copy", "move", "skip"]);
++
++describe("copyOps.copyFile", () => {
++  it("materializes a file with metadata preserved", async () => {
++    const dir = await mkdtemp(path.join(tmpdir(), "copyops-test-"));
++    try {
++      const src = path.join(dir, "source.txt");
++      const dst = path.join(dir, "dest.txt");
++      await writeFile(src, "apfs clone fallback", "utf8");
++      const result = await copyFile(src, dst, parseStrategy("auto"));
++      expect(MODES.has(result.mode)).toBe(true);
++      const contents = await readFile(dst, "utf8");
++      expect(contents).toBe("apfs clone fallback");
++      const srcStat = await stat(src);
++      const dstStat = await stat(dst);
++      expect(dstStat.size).toBe(srcStat.size);
++    } finally {
++      await rm(dir, { recursive: true, force: true });
++    }
++  });
++
++  it("skips existing destinations when journal indicates completion", async () => {
++    const dir = await mkdtemp(path.join(tmpdir(), "copyops-skip-"));
++    try {
++      const src = path.join(dir, "source.txt");
++      const dst = path.join(dir, "dest.txt");
++      await writeFile(src, "hello", "utf8");
++      await copyFile(src, dst, "copy");
++      const second = await copyFile(src, dst, "copy");
++      expect(second.mode === "skip" || MODES.has(second.mode)).toBe(true);
++    } finally {
++      await rm(dir, { recursive: true, force: true });
++    }
++  });
++});
+diff --git a/tests/orchestrator.test.js b/tests/orchestrator.test.js
+index d9ae7e49c30a5de577a24c040e263c7528565204..1ddd29a36b5445ad101753b76dc5d2a1003d8dc5 100644
+--- a/tests/orchestrator.test.js
++++ b/tests/orchestrator.test.js
+@@ -1,320 +1,265 @@
+ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+ import fs from "node:fs/promises";
+ import path from "node:path";
+ import os from "node:os";
+ 
+ vi.hoisted(() => {
+   process.env.OPENAI_API_KEY = "test";
+ });
+ 
+ vi.mock("../src/chatClient.js", async () => {
+   const actual = await vi.importActual("../src/chatClient.js");
+   return {
+     ...actual,
+     chatCompletion: vi.fn(),
+     getPeople: vi.fn().mockResolvedValue([]),
+   };
+ });
+ 
+ import { chatCompletion, getPeople } from "../src/chatClient.js";
+ import { triageDirectory } from "../src/orchestrator.js";
+ 
+ let tmpDir;
+ let promptFile;
+ 
++function buildOptions(overrides = {}) {
++  return {
++    dir: tmpDir,
++    promptPath: promptFile,
++    model: "test-model",
++    journalPath: path.join(tmpDir, "journal.ndjson"),
++    ...overrides,
++  };
++}
++
+ beforeEach(async () => {
+   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ps-test-"));
+   await fs.writeFile(path.join(tmpDir, "1.jpg"), "a");
+   await fs.writeFile(path.join(tmpDir, "2.jpg"), "b");
+   promptFile = path.join(tmpDir, "prompt.txt");
+   await fs.writeFile(promptFile, "prompt");
+ });
+ 
+ afterEach(async () => {
+   vi.restoreAllMocks();
+   await fs.rm(tmpDir, { recursive: true, force: true });
+ });
+ 
+ describe("triageDirectory", () => {
+   it("moves files into keep and aside", async () => {
+     chatCompletion.mockResolvedValueOnce(
+       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+     );
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-    });
++    await triageDirectory(buildOptions({ recurse: false }));
+     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+     const level = path.join(tmpDir, "_level-001", "1.jpg");
+     await expect(fs.stat(level)).resolves.toBeTruthy();
+   });
+ 
+   it("recurses into keep directory", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }))
+       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["1.jpg"] }));
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: true,
+-    });
++    await triageDirectory(buildOptions({ recurse: true }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const aside2 = path.join(tmpDir, "_keep", "_aside", "1.jpg");
+     await expect(fs.stat(aside2)).resolves.toBeTruthy();
+     const level2 = path.join(tmpDir, "_keep", "_level-002", "1.jpg");
+     await expect(fs.stat(level2)).resolves.toBeTruthy();
+   });
+ 
+   it("recurses even when all images kept", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(
+         JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+       )
+       .mockResolvedValueOnce(
+         JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+       );
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: true,
+-    });
++    await triageDirectory(buildOptions({ recurse: true }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
+     await expect(fs.stat(aside2)).resolves.toBeTruthy();
+   });
+ 
+   it("resumes into deepest _keep when parent has no images", async () => {
+     await fs.rm(path.join(tmpDir, "1.jpg"));
+     await fs.rm(path.join(tmpDir, "2.jpg"));
+     const deep = path.join(tmpDir, "_keep", "_keep");
+     await fs.mkdir(deep, { recursive: true });
+     await fs.writeFile(path.join(deep, "1.jpg"), "a");
+     await fs.writeFile(path.join(deep, "2.jpg"), "b");
+ 
+     chatCompletion
+       .mockResolvedValueOnce(
+         JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+       )
+       .mockResolvedValue(
+         JSON.stringify({ keep: [], aside: ["1.jpg"] })
+       );
+ 
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: true,
+-    });
++    await triageDirectory(buildOptions({ recurse: true }));
+ 
+     await expect(
+       fs.stat(path.join(deep, "_keep", "_aside", "1.jpg"))
+     ).resolves.toBeTruthy();
+     await expect(
+       fs.stat(path.join(deep, "_aside", "2.jpg"))
+     ).resolves.toBeTruthy();
+ 
+     chatCompletion.mockReset();
+   });
+ 
+   it("processes batches in parallel", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-      parallel: 2,
+-    });
++    await triageDirectory(buildOptions({ recurse: false, parallel: 2 }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+   });
+ 
+   it("processes batches with workers", async () => {
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+       .mockResolvedValueOnce(JSON.stringify({ keep: [], aside: ["2.jpg"] }));
+     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-      workers: 2,
+-    });
++    await triageDirectory(buildOptions({ recurse: false, workers: 2 }));
+     const etaLogs = logSpy.mock.calls.filter(([m]) =>
+       m.includes("ETA to finish level")
+     );
+     expect(etaLogs.length).toBeGreaterThanOrEqual(2);
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+   });
+ 
+   it("requeues unclassified images with workers", async () => {
+     await fs.writeFile(path.join(tmpDir, "3.jpg"), "c");
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: [] }))
+       .mockResolvedValueOnce(
+         JSON.stringify({ keep: [], aside: ["2.jpg", "3.jpg"] })
+       );
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-      workers: 2,
+-    });
++    await triageDirectory(buildOptions({ recurse: false, workers: 2 }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     await expect(
+       fs.stat(path.join(tmpDir, "_keep", "1.jpg"))
+     ).resolves.toBeTruthy();
+     await expect(
+       fs.stat(path.join(tmpDir, "_aside", "2.jpg"))
+     ).resolves.toBeTruthy();
+     await expect(
+       fs.stat(path.join(tmpDir, "_aside", "3.jpg"))
+     ).resolves.toBeTruthy();
+   });
+ 
+   it("retries after chat errors", async () => {
+     chatCompletion
+       .mockRejectedValueOnce(new Error("timeout"))
+       .mockResolvedValueOnce(JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] }));
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-    });
++    await triageDirectory(buildOptions({ recurse: false }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const keepPath = path.join(tmpDir, "_keep", "1.jpg");
+     const asidePath = path.join(tmpDir, "_aside", "2.jpg");
+     await expect(fs.stat(keepPath)).resolves.toBeTruthy();
+     await expect(fs.stat(asidePath)).resolves.toBeTruthy();
+   });
+ 
+   it("saves prompts and responses when enabled", async () => {
+     chatCompletion.mockResolvedValueOnce(
+       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+     );
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-      saveIo: true,
+-    });
++    await triageDirectory(buildOptions({ recurse: false, saveIo: true }));
+     const levelDir = path.join(tmpDir, "_level-001");
+     const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
+     const responses = await fs.readdir(path.join(levelDir, "_responses"));
+     expect(prompts.length).toBe(1);
+     expect(responses.length).toBe(1);
+     const promptTxt = await fs.readFile(
+       path.join(levelDir, "_prompts", prompts[0]),
+       "utf8"
+     );
+     expect(promptTxt).toContain("prompt");
+     const respTxt = await fs.readFile(
+       path.join(levelDir, "_responses", responses[0]),
+       "utf8"
+     );
+     expect(respTxt).toContain("1.jpg");
+   });
+ 
+   it("includes additional curators from tags in saved prompt", async () => {
+     chatCompletion.mockResolvedValueOnce(
+       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+     );
+     getPeople
+       .mockResolvedValueOnce(["Alice", "Bob"])
+       .mockResolvedValueOnce(["Alice"]);
+     await fs.writeFile(promptFile, "Curators: {{curators}}");
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: "test-model",
+-      recurse: false,
+-      saveIo: true,
+-      curators: ["Bob"],
+-    });
++    await triageDirectory(
++      buildOptions({ recurse: false, saveIo: true, curators: ["Bob"] })
++    );
+     const levelDir = path.join(tmpDir, "_level-001");
+     const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
+     const promptTxt = await fs.readFile(
+       path.join(levelDir, "_prompts", prompts[0]),
+       "utf8"
+     );
+     expect(promptTxt).toContain("Curators: Bob, Alice");
+     expect(chatCompletion.mock.calls[0][0].curators).toEqual([
+       "Bob",
+       "Alice",
+     ]);
+   });
+ 
+   it('repairs zero-decision batch', async () => {
+     chatCompletion
+       .mockResolvedValueOnce(JSON.stringify({ minutes: [], decisions: [] }))
+       .mockResolvedValueOnce(
+         '=== DECISIONS_JSON ===\n{"decisions":[{"filename":"1.jpg","decision":"keep","reason":""}]}\n=== END ==='
+       );
+     await fs.unlink(path.join(tmpDir, '2.jpg'));
+-    await triageDirectory({
+-      dir: tmpDir,
+-      promptPath: promptFile,
+-      model: 'test-model',
+-      recurse: false,
+-    });
++    await triageDirectory(buildOptions({ recurse: false }));
+     expect(chatCompletion).toHaveBeenCalledTimes(2);
+     const secondCall = chatCompletion.mock.calls[1][0];
+     expect(secondCall.prompt).toMatch(/Return only the block below/);
+     expect(secondCall.prompt).toMatch(/role play as/);
+     expect(secondCall.verbosity).toBe('low');
+     expect(secondCall.minutesMin).toBe(0);
+     expect(secondCall.minutesMax).toBe(0);
+     await expect(fs.stat(path.join(tmpDir, '_keep', '1.jpg'))).resolves.toBeTruthy();
+   });
+ 
+   it("stops processing when billing limit is reached", async () => {
+     const provider = {
+       submit: vi.fn(async () => ({})),
+       collect: vi.fn(async () => {
+         const err = new Error("Billing hard limit has been reached");
+         err.response = {
+           data: { error: { message: "Billing hard limit has been reached" } },
+         };
+         throw err;
+       }),
+     };
+     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+     try {
+       await expect(
+-        triageDirectory({
+-          dir: tmpDir,
+-          promptPath: promptFile,
+-          model: "test-model",
+-          recurse: false,
+-          provider,
+-        })
++        triageDirectory(buildOptions({ recurse: false, provider }))
+       ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+     } finally {
+       logSpy.mockRestore();
+     }
+     expect(provider.submit).toHaveBeenCalledTimes(1);
+     await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+     await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+   });
+ 
+ });
+ 
+EOF
+)

@@ -82,6 +82,7 @@ program
     "Materialization strategy (auto|clone|hardlink|copy|move)",
     process.env.COPY_STRATEGY || "auto"
   )
+<<<<<<< HEAD
   .option(
     "--materialize-concurrency <n>",
     "Maximum concurrent materialization operations",
@@ -95,6 +96,10 @@ program
     process.env.PHOTO_SELECT_JOURNAL
   )
   .option("--log-json", "Emit JSON entries for materialization events")
+=======
+  .option("--dry-run", "Plan without writing to disk")
+  .option("--apfs-required", "Fail if a file cannot be cloned")
+>>>>>>> 0ae3a4d44102f9c967930a22cba4020805285663
   .parse(process.argv);
 
 let {
@@ -115,13 +120,21 @@ let {
   reasoningEffort,
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
+<<<<<<< HEAD
   strategy: strategyFlag,
   materializeConcurrency: materializeConcurrencyFlag,
   dryRun: dryRunFlag,
   apfsRequired,
   journal: journalPathFlag,
   logJson,
+=======
+  strategy,
+  dryRun: dryRunFlag,
+  apfsRequired,
+>>>>>>> 0ae3a4d44102f9c967930a22cba4020805285663
 } = program.opts();
+
+const dryRun = !!dryRunFlag;
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   const n = Number(parallel) || 1;
@@ -219,6 +232,14 @@ if (apiKey) {
 if (ollamaBaseUrl) {
   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
 }
+const copyStrategy = (strategy || process.env.COPY_STRATEGY || 'auto').toLowerCase();
+process.env.COPY_STRATEGY = copyStrategy;
+if (dryRun) {
+  process.env.PHOTO_SELECT_DRY_RUN = '1';
+}
+if (apfsRequired) {
+  process.env.PHOTO_SELECT_APFS_REQUIRED = '1';
+}
 
 const provider = providerName || 'openai';
 let finalModel = model;
@@ -258,12 +279,18 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
+<<<<<<< HEAD
       copyStrategy: finalCopyStrategy,
       materializeDryRun,
       materializeConcurrency: materializeConcurrencyValue,
       requireClone: requireCloneFlag,
       materializeLogJson: materializeLogJsonFlag,
       journalPath: finalJournalPath,
+=======
+      copyStrategy,
+      dryRun,
+      apfsRequired,
+>>>>>>> 0ae3a4d44102f9c967930a22cba4020805285663
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

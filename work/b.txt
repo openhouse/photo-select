@@ -1,0 +1,1156 @@
+b )
+
+---
+
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/README.md b/README.md
+index 1a1b40a91c66586a7db716e30c84e19eb818d5f8..8cea8ded9904680ab5a9f9fdaa168c8f96098ee3 100644
+--- a/README.md
++++ b/README.md
+@@ -445,56 +445,80 @@ so you can compare the results side by side.
+ # prepare two identical folders
+ mkdir trial-gpt-4o trial-gpt-5
+ cp /path/to/source/*.jpg trial-gpt-4o/
+ cp /path/to/source/*.jpg trial-gpt-5/
+ 
+ # run with GPT‑4o
+ /path/to/photo-select/photo-select-here.sh --model gpt-4o --dir trial-gpt-4o --api-key sk-... --context /path/to/context.txt
+ 
+ # run with GPT‑5
+ /path/to/photo-select/photo-select-here.sh --model gpt-5 --dir trial-gpt-5 --api-key sk-... --context /path/to/context.txt
+ ```
+ 
+ If you see repeated `OpenAI error (404)` messages, your API key may not have
+ access to that model or the id is misspelled. Check `openai models:list` to
+ confirm which ids are enabled for your account. Models that require the
+ `/v1/responses` endpoint—such as `o1-pro` or `o3-pro`—are automatically routed
+ through that API, so no extra flags are needed.
+ 
+ 
+ ## Recursion logic
+ 
+ 1. Pick up to 10 random images (all common photo extensions).
+ 2. Send them to ChatGPT with the prompt (filenames included).
+ 3. ChatGPT replies with meeting minutes summarising a short discussion among the curators, followed by a JSON object indicating which files to keep or set aside and why.
+ 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
+-5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
++5. Materialize those files into the corresponding sub‑folders using APFS clones when available (falling back to hardlinks or byte copies) and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
+ 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
+    If every photo at a level is kept or every photo is set aside, recursion stops early.
+ 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
+ 8. Stop when a directory has zero unclassified images.
+ 
++### APFS clone workflow
++
++Every `_keep`, `_aside`, and `_level-XXX` materialization runs through `src/fs/copyOps.js`, which:
++
++- Prefers APFS clonefile operations on macOS when source and destination share a volume.
++- Falls back to same-device hardlinks, then metadata-preserving byte copies.
++- Preserves permissions, ACLs, timestamps, and extended attributes while treating clones as read-only.
++- Emits a JSON log line per file to `data/journal.ndjson` and prints a summary (mode counts, elapsed wall clock, `du -sk` delta).
++- Skips work when a destination already matches size and mtime (idempotent reruns).
++
++CLI helpers:
++
++```bash
++photo-select --strategy clone --copy-concurrency 16 \
++  --copy-journal ~/photo-runs/journal.ndjson --dry-run
++```
++
++- `--strategy` (or `COPY_STRATEGY`) accepts `auto`, `clone`, `hardlink`, or `copy`.
++- `--dry-run` prints the plan without writing files.
++- `--copy-journal` overrides the journal path (defaults to `data/journal.ndjson`).
++- `--copy-concurrency` limits parallel filesystem work.
++
++Because originals stay in `_all`, rebuilding `_keep`/`_aside` is safe and storage-efficient on APFS.
++
+ ### Structured outputs (OpenAI)
+ 
+ OpenAI requests now include a JSON schema so the API returns typed responses.
+ Set `PHOTO_SELECT_OPENAI_FORMAT` to override this or provide an empty string to
+ skip the format parameter entirely on chat.completions.
+ 
+ ```bash
+ export PHOTO_SELECT_OPENAI_FORMAT='{"type":"json_object","schema":{...}}'
+ export PHOTO_SELECT_OPENAI_FORMAT=""  # disable the parameter
+ ```
+ 
+ For chat.completions the request uses
+ `response_format: { type: "json_object" }`.
+ For the Responses API (gpt-5 models) the schema is supplied under
+ `text.format` with top-level `name`, `schema`, and `strict: true`.
+ In both cases the assistant replies with strict JSON, avoiding the need to
+ strip Markdown fences.
+ The CLI allows up to 32000 tokens in each reply (see `MAX_RESPONSE_TOKENS` in
+ `src/chatClient.js`) so the minutes and JSON decision block are returned in
+ full.
+ 
+ ## Caching
+ 
+ Responses from OpenAI are cached under a `.cache` directory using a hash of the
+ prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
+diff --git a/data/.gitignore b/data/.gitignore
+new file mode 100644
+index 0000000000000000000000000000000000000000..a0e18da43dc9b895fd455eec972ebca915eb6aa7
+--- /dev/null
++++ b/data/.gitignore
+@@ -0,0 +1,2 @@
++# Runtime copy journals are generated per run
++journal.ndjson
+diff --git a/src/fs/copyOps.js b/src/fs/copyOps.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f6199e058aa0efb8f20f0044724bcd08ff5564d
+--- /dev/null
++++ b/src/fs/copyOps.js
+@@ -0,0 +1,446 @@
++import fs from "node:fs/promises";
++import fscb from "node:fs";
++import path from "node:path";
++import os from "node:os";
++import { execFile as execFileCb } from "node:child_process";
++import { promisify } from "node:util";
++
++const execFile = promisify(execFileCb);
++
++const DEFAULT_CONCURRENCY = 8;
++
++const metrics = {
++  active: false,
++  start: 0,
++  counts: new Map(),
++  bytes: new Map(),
++  entries: 0,
++  duRoots: new Map(),
++  journalPath: null,
++  journalStream: null,
++  logStream: process.stdout,
++};
++
++function ensureMetricKeys(mode) {
++  if (!metrics.counts.has(mode)) metrics.counts.set(mode, 0);
++  if (!metrics.bytes.has(mode)) metrics.bytes.set(mode, 0);
++}
++
++function updateMetrics({ mode, bytes }) {
++  ensureMetricKeys(mode);
++  metrics.counts.set(mode, metrics.counts.get(mode) + 1);
++  metrics.bytes.set(mode, metrics.bytes.get(mode) + bytes);
++  metrics.entries += 1;
++}
++
++async function ensureJournal(journalPath) {
++  if (!journalPath) return null;
++  if (metrics.journalStream) return metrics.journalStream;
++  metrics.journalPath = journalPath;
++  await fs.mkdir(path.dirname(journalPath), { recursive: true });
++  metrics.journalStream = fscb.createWriteStream(journalPath, {
++    flags: "a",
++    encoding: "utf8",
++  });
++  return metrics.journalStream;
++}
++
++function logOperation(entry, { journalPath } = {}) {
++  if (!metrics.active) {
++    metrics.start = Date.now();
++    metrics.active = true;
++  }
++  const line = JSON.stringify(entry);
++  metrics.logStream.write(`${line}\n`);
++  const stream = metrics.journalStream;
++  if (stream) {
++    stream.write(`${line}\n`);
++  }
++}
++
++async function statMaybe(file) {
++  try {
++    return await fs.lstat(file);
++  } catch (err) {
++    if (err?.code === "ENOENT") return null;
++    throw err;
++  }
++}
++
++function normalizeStrategy(strategy) {
++  if (!strategy) return "auto";
++  if (typeof strategy === "string") return strategy.toLowerCase();
++  return "auto";
++}
++
++async function isApfs(directory) {
++  if (os.platform() !== "darwin") return false;
++  try {
++    const { stdout } = await execFile("stat", ["-f", "%T", directory]);
++    return stdout.trim().toLowerCase() === "apfs";
++  } catch {
++    return false;
++  }
++}
++
++async function du(pathname) {
++  try {
++    const { stdout } = await execFile("du", ["-sk", pathname]);
++    const value = parseInt(stdout.trim().split(/\s+/)[0], 10);
++    return Number.isFinite(value) ? value : 0;
++  } catch {
++    return 0;
++  }
++}
++
++function msSince(start) {
++  return Date.now() - start;
++}
++
++function pickTmpPath(dest) {
++  const dir = path.dirname(dest);
++  const base = path.basename(dest);
++  const unique = `${Date.now().toString(36)}-${Math.random()
++    .toString(16)
++    .slice(2)}`;
++  return path.join(dir, `.${base}.${process.pid}.${unique}.tmp`);
++}
++
++async function applySymlink(src, dst, entry, options) {
++  const { dryRun = false, journalPath } = options;
++  const start = Date.now();
++  const target = await fs.readlink(src);
++  await fs.mkdir(path.dirname(dst), { recursive: true });
++  const existing = await statMaybe(dst);
++  if (existing) {
++    if (dryRun) {
++      return {
++        mode: "symlink",
++        bytes: 0,
++        ms: msSince(start),
++      };
++    }
++    await fs.unlink(dst);
++  }
++  if (!dryRun) {
++    await fs.symlink(target, dst);
++  }
++  const result = { mode: "symlink", bytes: 0, ms: msSince(start) };
++  logOperation({ ...entry, mode: "symlink", bytes: 0, ms: result.ms }, { journalPath });
++  updateMetrics({ mode: "symlink", bytes: 0 });
++  return result;
++}
++
++async function tryClone(src, tmpPath) {
++  try {
++    await fs.copyFile(src, tmpPath, fscb.constants.COPYFILE_FICLONE);
++    return "clone";
++  } catch (err) {
++    if (!err || !["ENOTSUP", "EXDEV", "EINVAL"].includes(err.code)) throw err;
++    return null;
++  }
++}
++
++async function tryCopyfileClone(src, tmpPath) {
++  try {
++    await fs.copyFile(src, tmpPath, fscb.constants.COPYFILE_FICLONE_FORCE);
++    return "clone";
++  } catch {
++    return null;
++  }
++}
++
++async function tryCpClone(src, tmpPath) {
++  try {
++    await execFile("cp", ["-c", "-p", "--", src, tmpPath]);
++    return "clone";
++  } catch {
++    return null;
++  }
++}
++
++async function tryHardlink(src, tmpPath) {
++  try {
++    await fs.link(src, tmpPath);
++    return "hardlink";
++  } catch (err) {
++    if (!err || !["EXDEV", "EPERM", "EACCES", "EEXIST"].includes(err.code)) throw err;
++    return null;
++  }
++}
++
++async function metadataCopy(src, tmpPath, srcStat) {
++  try {
++    await execFile("cp", ["-p", "-X", "--", src, tmpPath]);
++  } catch (err) {
++    if (err?.code === "ENOENT") throw err;
++    await fs.copyFile(src, tmpPath);
++    const stat = srcStat || (await fs.stat(src));
++    await fs.chmod(tmpPath, stat.mode);
++    await fs.utimes(tmpPath, stat.atime, stat.mtime);
++  }
++  return "copy";
++}
++
++function resolveModeOrder(strategy, context) {
++  if (strategy === "clone") return ["clone", "hardlink", "copy"];
++  if (strategy === "hardlink") return ["hardlink", "copy"];
++  if (strategy === "copy") return ["copy"];
++  const order = ["clone", "hardlink", "copy"];
++  if (!context.sameDevice) {
++    return ["copy"];
++  }
++  return order;
++}
++
++async function performCopy(src, dst, strategy, options = {}) {
++  const { dryRun = false, journalPath } = options;
++  const effectiveStrategy = normalizeStrategy(
++    options.strategy ?? process.env.COPY_STRATEGY ?? strategy
++  );
++  const entry = { op: "copy", from: src, to: dst };
++  const start = Date.now();
++  const srcStat = await fs.lstat(src);
++  if (!srcStat.isFile() && !srcStat.isSymbolicLink()) {
++    const result = { mode: "skip", bytes: 0, ms: msSince(start) };
++    logOperation({ ...entry, mode: "skip", bytes: 0, ms: result.ms }, { journalPath });
++    updateMetrics({ mode: "skip", bytes: 0 });
++    return result;
++  }
++  if (srcStat.isSymbolicLink()) {
++    return applySymlink(src, dst, entry, options);
++  }
++  await fs.mkdir(path.dirname(dst), { recursive: true });
++  const tmpPath = pickTmpPath(dst);
++  const existing = await statMaybe(dst);
++  if (existing && !dryRun) {
++    // Idempotency: skip if file already exists with same size and mtime.
++    if (
++      existing.isFile() &&
++      existing.size === srcStat.size &&
++      Math.abs(existing.mtimeMs - srcStat.mtimeMs) < 5
++    ) {
++      const result = { mode: "skip", bytes: 0, ms: msSince(start) };
++      logOperation({ ...entry, mode: "skip", bytes: 0, ms: result.ms }, { journalPath });
++      updateMetrics({ mode: "skip", bytes: 0 });
++      return result;
++    }
++    await fs.unlink(dst);
++  }
++
++  const destDirStat = await fs.stat(path.dirname(dst));
++  const sameDevice = destDirStat.dev === srcStat.dev;
++  const apfs = sameDevice ? await isApfs(path.dirname(dst)) : false;
++
++  const order = resolveModeOrder(effectiveStrategy, { sameDevice, apfs });
++  let mode = "copy";
++  let success = false;
++  let error = null;
++  try {
++    if (dryRun) {
++      mode = order[0] || "copy";
++      success = true;
++    } else {
++      for (const candidate of order) {
++        if (candidate === "clone") {
++          if (!sameDevice) continue;
++          let cloneMode = await tryClone(src, tmpPath);
++          if (!cloneMode && apfs) cloneMode = await tryCopyfileClone(src, tmpPath);
++          if (!cloneMode && apfs) cloneMode = await tryCpClone(src, tmpPath);
++          if (cloneMode) {
++            mode = "clone";
++            success = true;
++            break;
++          }
++        } else if (candidate === "hardlink") {
++          if (!sameDevice) continue;
++          const hardlinked = await tryHardlink(src, tmpPath);
++          if (hardlinked) {
++            mode = "hardlink";
++            success = true;
++            break;
++          }
++        } else if (candidate === "copy") {
++          mode = await metadataCopy(src, tmpPath, srcStat);
++          success = true;
++          break;
++        }
++      }
++      if (!success) {
++        mode = await metadataCopy(src, tmpPath, srcStat);
++        success = true;
++      }
++      await fs.rename(tmpPath, dst);
++    }
++  } catch (err) {
++    error = err;
++    success = false;
++    try {
++      await fs.unlink(tmpPath);
++    } catch (cleanupErr) {
++      if (cleanupErr?.code !== "ENOENT") {
++        // ignore cleanup errors otherwise
++      }
++    }
++  }
++
++  const duration = msSince(start);
++  if (!success) {
++    logOperation(
++      {
++        ...entry,
++        mode: "error",
++        bytes: 0,
++        ms: duration,
++        error: error?.message,
++        code: error?.code,
++      },
++      { journalPath }
++    );
++    throw error;
++  }
++
++  const result = { mode, bytes: srcStat.size, ms: duration };
++  logOperation({ ...entry, mode, bytes: result.bytes, ms: duration }, { journalPath });
++  updateMetrics({ mode, bytes: result.bytes });
++  return result;
++}
++
++async function walkTree(srcDir) {
++  const directories = [];
++  const files = [];
++  const stack = [{ src: srcDir, dst: null }];
++  while (stack.length) {
++    const { src } = stack.pop();
++    const entries = await fs.readdir(src, { withFileTypes: true });
++    for (const entry of entries) {
++      const srcPath = path.join(src, entry.name);
++      const rel = path.relative(srcDir, srcPath);
++      const info = { src: srcPath, rel, entry };
++      if (entry.isDirectory()) {
++        directories.push(info);
++        stack.push({ src: srcPath, dst: null });
++      } else {
++        files.push(info);
++      }
++    }
++  }
++  directories.sort((a, b) => a.rel.localeCompare(b.rel));
++  files.sort((a, b) => a.rel.localeCompare(b.rel));
++  return { directories, files };
++}
++
++async function withLimit(items, limit, fn) {
++  const queue = items.slice();
++  const workers = Array.from({ length: Math.min(limit, queue.length) }, () =>
++    (async function worker() {
++      while (queue.length) {
++        const item = queue.shift();
++        await fn(item);
++      }
++    })()
++  );
++  await Promise.all(workers);
++}
++
++export async function copyFile(src, dst, strategy = "auto", options = {}) {
++  if (typeof strategy === "object") {
++    options = strategy;
++    strategy = "auto";
++  }
++  if (options.journalPath && !metrics.journalStream) {
++    await ensureJournal(options.journalPath);
++  }
++  return performCopy(src, dst, strategy, options);
++}
++
++export async function copyTree(srcDir, dstDir, strategy = "auto", options = {}) {
++  if (typeof strategy === "object") {
++    options = strategy;
++    strategy = "auto";
++  }
++  if (options.journalPath && !metrics.journalStream) {
++    await ensureJournal(options.journalPath);
++  }
++  const start = Date.now();
++  const entry = { op: "copy-tree", from: srcDir, to: dstDir };
++  const stats = await walkTree(srcDir);
++  await fs.mkdir(dstDir, { recursive: true });
++  for (const dir of stats.directories) {
++    const dest = path.join(dstDir, dir.rel);
++    const srcPath = dir.src;
++    const srcStat = await fs.stat(srcPath);
++    if (!options.dryRun) {
++      await fs.mkdir(dest, { recursive: true, mode: srcStat.mode });
++      await fs.chmod(dest, srcStat.mode);
++      await fs.utimes(dest, srcStat.atime, srcStat.mtime);
++    }
++  }
++  const concurrency = options.concurrency || DEFAULT_CONCURRENCY;
++  await withLimit(stats.files, concurrency, async ({ src, rel, entry: dirent }) => {
++    const dest = path.join(dstDir, rel);
++    if (dirent.isFile() || dirent.isSymbolicLink()) {
++      await copyFile(src, dest, strategy, options);
++    } else {
++      const mode = dirent.isSymbolicLink() ? "symlink" : "skip";
++      logOperation(
++        { op: "copy", from: src, to: dest, mode, bytes: 0, ms: 0 },
++        options
++      );
++    }
++  });
++  const duration = msSince(start);
++  logOperation({ ...entry, mode: "done", bytes: 0, ms: duration }, options);
++  return { ms: duration };
++}
++
++export async function startCopySession({ roots = [], journalPath } = {}) {
++  metrics.start = Date.now();
++  metrics.active = true;
++  metrics.duRoots = new Map();
++  metrics.counts.clear();
++  metrics.bytes.clear();
++  metrics.entries = 0;
++  if (journalPath) {
++    await ensureJournal(journalPath);
++  }
++  for (const root of roots) {
++    metrics.duRoots.set(root, await du(root));
++  }
++}
++
++export async function summarizeCopySession({ roots = [] } = {}) {
++  const elapsed = metrics.active ? Date.now() - metrics.start : 0;
++  const summary = {
++    elapsedMs: elapsed,
++    counts: Object.fromEntries(metrics.counts),
++    bytes: Object.fromEntries(metrics.bytes),
++    duDelta: {},
++  };
++  for (const root of roots) {
++    const before = metrics.duRoots.get(root) ?? 0;
++    const after = await du(root);
++    summary.duDelta[root] = after - before;
++  }
++  const formattedCounts = Array.from(metrics.counts.entries())
++    .map(([mode, count]) => `${mode}=${count}`)
++    .join(", ");
++  const formattedDu = Object.entries(summary.duDelta)
++    .map(([root, delta]) => `${root}: ${delta} KB`)
++    .join(", ");
++  const message =
++    `📊  Copy summary – ${formattedCounts || "no ops"}; ` +
++    `elapsed=${(elapsed / 1000).toFixed(2)}s; duΔ ${formattedDu || "n/a"}`;
++  metrics.logStream.write(`${message}\n`);
++  metrics.active = false;
++  metrics.duRoots.clear();
++  metrics.counts.clear();
++  metrics.bytes.clear();
++  metrics.entries = 0;
++  return summary;
++}
++
++export function configureCopyLogging({ stream } = {}) {
++  if (stream) metrics.logStream = stream;
++}
++
+diff --git a/src/imageSelector.js b/src/imageSelector.js
+index 93df83a384c28456d5dc0335f7443f44a0bc2730..89176bb215c10cb859a29a318925447e35a651fe 100644
+--- a/src/imageSelector.js
++++ b/src/imageSelector.js
+@@ -1,39 +1,67 @@
+ import fs from "node:fs/promises";
+ import path from "node:path";
++import { copyFile } from "./fs/copyOps.js";
+ import { SUPPORTED_EXTENSIONS } from "./config.js";
+ 
++async function fileExists(p) {
++  try {
++    const st = await fs.stat(p);
++    return st.isFile();
++  } catch (err) {
++    if (err?.code === "ENOENT") return false;
++    throw err;
++  }
++}
++
+ /** Return full paths of images in `dir` (non‑recursive). */
+-export async function listImages(dir) {
++export async function listImages(dir, { includeProcessed = false } = {}) {
+   const entries = await fs.readdir(dir, { withFileTypes: true });
+-  return entries
+-    .filter(
+-      (e) =>
+-        e.isFile() &&
+-        SUPPORTED_EXTENSIONS.includes(path.extname(e.name).toLowerCase())
+-    )
+-    .map((e) => path.join(dir, e.name))
+-    .sort();
++  const keepDir = path.join(dir, "_keep");
++  const asideDir = path.join(dir, "_aside");
++  const files = [];
++  for (const entry of entries) {
++    if (!entry.isFile()) continue;
++    const ext = path.extname(entry.name).toLowerCase();
++    if (!SUPPORTED_EXTENSIONS.includes(ext)) continue;
++    const absolute = path.join(dir, entry.name);
++    if (!includeProcessed) {
++      const processed =
++        (await fileExists(path.join(keepDir, entry.name))) ||
++        (await fileExists(path.join(asideDir, entry.name)));
++      if (processed) continue;
++    }
++    files.push(absolute);
++  }
++  return files.sort();
+ }
+ 
+ /** Pick up to `count` random items from the array. */
+ export function pickRandom(array, count) {
+   const shuffled = array.slice().sort(() => Math.random() - 0.5);
+   return shuffled.slice(0, Math.min(count, array.length));
+ }
+ 
+ /** Ensure sub‑directories exist and move each file accordingly. */
+-export async function moveFiles(files, targetDir, notes = new Map()) {
+-  if (!files.length) return;
++export async function moveFiles(
++  files,
++  targetDir,
++  notes = new Map(),
++  options = {}
++) {
++  if (!files.length) return [];
++  const results = [];
+   await fs.mkdir(targetDir, { recursive: true });
+-  await Promise.all(
+-    files.map(async (file) => {
+-      const dest = path.join(targetDir, path.basename(file));
+-      await fs.rename(file, dest);
+-      const note = notes.get(file);
+-      if (note) {
+-        const txt = dest.replace(/\.[^.]+$/, ".txt");
+-        await fs.writeFile(txt, note, "utf8");
+-      }
+-    })
+-  );
++  for (const file of files) {
++    const dest = path.join(targetDir, path.basename(file));
++    const outcome = await copyFile(file, dest, options.strategy ?? "auto", options);
++    const note = notes.get(file);
++    if (note && !options.dryRun) {
++      const txt = dest.replace(/\.[^.]+$/, ".txt");
++      const tmp = `${txt}.${process.pid}.${Date.now()}.tmp`;
++      await fs.writeFile(tmp, note, "utf8");
++      await fs.rename(tmp, txt);
++    }
++    results.push({ source: file, destination: dest, mode: outcome.mode });
++  }
++  return results;
+ }
+diff --git a/src/index.js b/src/index.js
+index 7dd33b8a1912e4291d57033db768d2408206c960..ffcab6b1bb067d9fd2c5e4002dc097900ea90fab 100755
+--- a/src/index.js
++++ b/src/index.js
+@@ -55,70 +55,90 @@ program
+     "Reasoning effort (minimal|low|medium|high|auto)",
+     process.env.PHOTO_SELECT_REASONING_EFFORT
+   )
+   .option("--no-recurse", "Process a single directory only")
+   .option(
+     "-P, --parallel <n>",
+     "Number of concurrent API calls (deprecated; use --workers)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option("--field-notes", "Enable field notes workflow")
+   .option("-v, --verbose", "Print extra logs")
+   .option(
+     "--save-io",
+     "Save full prompts and responses for debugging"
+   )
+   .option(
+     "--workers <n>",
+     "Number of worker processes (each runs batches sequentially)",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
+   .option(
+     "--concurrency <n>",
+     "Maximum in-flight OpenAI requests",
+     (v) => Math.max(1, parseInt(v, 10))
+   )
++  .option(
++    "--strategy <mode>",
++    "Materialization strategy: auto|clone|hardlink|copy",
++    process.env.COPY_STRATEGY || "auto"
++  )
++  .option("--dry-run", "Log file operations without writing changes")
++  .option(
++    "--copy-journal <file>",
++    "Path to copy journal (default data/journal.ndjson)",
++    process.env.COPY_JOURNAL
++  )
++  .option(
++    "--copy-concurrency <n>",
++    "Max parallel filesystem copies",
++    (v) => Math.max(1, parseInt(v, 10))
++  )
+   .parse(process.argv);
+ 
+ let {
+   dir,
+   prompt: promptPath,
+   provider: providerName,
+   model,
+   recurse,
+   apiKey,
+   curators,
+   context: contextPath,
+   parallel,
+   fieldNotes,
+   verbose,
+   saveIo,
+   workers,
+   verbosity,
+   reasoningEffort,
+   ollamaBaseUrl,
+   concurrency: concurrencyFlag,
++  strategy: copyStrategyFlag,
++  dryRun: dryRunFlag,
++  copyJournal: copyJournalFlag,
++  copyConcurrency: copyConcurrencyFlag,
+ } = program.opts();
+ 
+ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
+   const n = Number(parallel) || 1;
+   if (!workers) workers = n;
+   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
+ }
+ if (!workers) workers = 1;
+ 
+ const envConc = Number(process.env.CONCURRENCY);
+ const envWorkers = Number(process.env.WORKERS);
+ if (!workers && Number.isFinite(envWorkers)) workers = envWorkers;
+ let concurrency = Number.isFinite(envConc)
+   ? envConc
+   : Number.isFinite(concurrencyFlag)
+   ? concurrencyFlag
+   : workers;
+ if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+ 
+ // Scale transport, filesystem, and batching with worker count
+ const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+ const maxSockets = clamp(workers * 2 + 2, 8, 64);
+ const maxFreeSockets = clamp(Math.ceil(maxSockets / 2), 4, 32);
+ process.env.UNDICI_CONNECTIONS = String(maxSockets);
+ process.env.UNDICI_KEEPALIVE_MS = "10000";
+@@ -194,41 +214,45 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
+   try {
+     if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+       console.error(
+         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
+       );
+       process.exit(1);
+     }
+     const absDir = path.resolve(dir);
+     const { triageDirectory } = await import('./orchestrator.js');
+     const { getProvider } = await import('./providers/index.js');
+     const driver = await getProvider(provider);
+     await triageDirectory({
+       dir: absDir,
+       promptPath,
+       provider: driver,
+       model: finalModel,
+       recurse,
+       curators,
+       contextPath,
+       fieldNotes,
+       verbose,
+       saveIo,
+       workers,
+       verbosity,
+       reasoningEffort: finalReasoningEffort,
++      copyStrategy: copyStrategyFlag,
++      dryRun: !!dryRunFlag,
++      copyJournalPath: copyJournalFlag,
++      copyConcurrency: copyConcurrencyFlag,
+     });
+     console.log("🎉  Finished triaging.");
+   } catch (err) {
+     if (err?.code === "BILLING_LIMIT") {
+       console.error(
+         "🛑  Billing limit reached. Please review your provider usage before retrying."
+       );
+       if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+         console.error("  ↳ cause:", err.cause);
+       }
+       process.exit(1);
+     }
+     console.error("❌  Error:", err);
+     process.exit(1);
+   }
+ })();
+diff --git a/src/orchestrator.js b/src/orchestrator.js
+index 3e4a65e0d17f673b2616c9e04b03cc305c8049a4..1c67e49ef70612d6444f922e7303a312cb3d4c3f 100644
+--- a/src/orchestrator.js
++++ b/src/orchestrator.js
+@@ -1,39 +1,44 @@
+ import path from "node:path";
+-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
++import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+ import { execFile } from "node:child_process";
+ import { promisify } from "node:util";
+ import { batchStore } from "./batchContext.js";
+ import crypto from "node:crypto";
+ import { delay } from "./config.js";
+ import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
+ import { parseReply, getPeople } from "./chatClient.js";
+ import { buildPrompt } from "./templates.js";
+ import FieldNotesWriter from "./fieldNotesWriter.js";
+ import { MultiBar, Presets } from "cli-progress";
+ import { sanitizePeople } from "./lib/people.js";
+ import { finalizeCurators } from "./core/finalizeCurators.js";
++import {
++  copyFile as materializeFile,
++  startCopySession,
++  summarizeCopySession,
++} from "./fs/copyOps.js";
+ 
+ const exec = promisify(execFile);
+ 
+ // ---- env & defaults ---------------------------------------------------------
+ function envBool(name, def) {
+   const v = process.env[name];
+   if (v == null) return def;
+   if (/^(1|true|yes|on)$/i.test(v)) return true;
+   if (/^(0|false|no|off)$/i.test(v)) return false;
+   return def;
+ }
+ const PRETTY = envBool("PHOTO_SELECT_PRETTY", true);                 // pretty console summary
+ const TRANSCRIPT_TXT = envBool("PHOTO_SELECT_TRANSCRIPT_TXT", false); // optional .txt transcript
+ 
+ function parsePrettyMinutes() {
+   const raw = process.env.PHOTO_SELECT_PRETTY_MINUTES;
+   const isTTY = process.stdout.isTTY;
+   const isCI = !!process.env.CI;
+   if (raw != null) {
+     if (/^(all|∞|infinity|0)$/i.test(raw)) return Infinity;
+     const n = Number(raw);
+     if (Number.isFinite(n) && n >= 0) return n === 0 ? Infinity : n;
+   }
+   return isTTY && !isCI ? Infinity : 20;
+ }
+@@ -229,50 +234,54 @@ export async function resolveResumeLevel(startDir) {
+  * @param {Object} options.provider     Chat provider instance
+  * @param {string} options.model        Model id for the provider
+  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
+  * @param {string} [options.contextPath]     Optional additional context file
+ * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
+ * @param {number} [options.depth=0]         Internal recursion depth (for logging)
+ */
+ export async function triageDirectory(options) {
+   let {
+     dir,
+     promptPath,
+     provider,
+     model,
+     recurse = true,
+     curators = [],
+     contextPath,
+     fieldNotes = false,
+     verbose = false,
+     saveIo = false,
+     workers = 1,
+     verbosity,
+     reasoningEffort,
+     depth = 0,
+     gitRoot,
++    copyStrategy,
++    copyConcurrency,
++    copyJournalPath,
++    dryRun = false,
+   } = options;
+   if (!provider) {
+     const m = await import('./providers/openai.js');
+     provider = new m.default();
+   }
+   const indent = "  ".repeat(depth);
+   let notesWriter;
+ 
+   function isBillingLimitError(err) {
+     if (!err) return false;
+     const candidates = [
+       err?.message,
+       err?.error?.message,
+       err?.cause?.message,
+       err?.response?.data?.error?.message,
+       err?.response?.data?.message,
+       err?.response?.error?.message,
+       err?.response?.message,
+       err?.body?.error?.message,
+       err?.body?.message,
+     ]
+       .flat()
+       .filter(Boolean)
+       .map((msg) => String(msg));
+     return candidates.some((message) => /billing (hard )?limit/i.test(message));
+@@ -312,105 +321,132 @@ export async function triageDirectory(options) {
+ 
+   if (!gitRoot) gitRoot = dir;
+ 
+   if (recurse) {
+     const { dir: workDir, hops } = await resolveResumeLevel(dir);
+     if (workDir !== dir) {
+       const relative = path.relative(dir, workDir) || ".";
+       const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+       console.log(
+         `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+       );
+       return triageDirectory({
+         ...options,
+         dir: workDir,
+         depth: depth + hops,
+         provider,
+         gitRoot,
+       });
+     }
+   }
+ 
+   if (fieldNotes && depth === 0) {
+     await ensureGitRepo(gitRoot);
+   }
+ 
++  const resolvedStrategy = (copyStrategy || process.env.COPY_STRATEGY || "auto").toLowerCase();
++  const journalPath = path.resolve(
++    copyJournalPath || process.env.COPY_JOURNAL || "data/journal.ndjson"
++  );
++  const copyOptions = {
++    strategy: resolvedStrategy,
++    dryRun,
++    journalPath,
++  };
++  if (copyConcurrency) copyOptions.concurrency = copyConcurrency;
++
+   console.log(`${indent}📁  Scanning ${dir}`);
+ 
+   // Archive original images at this level
+   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+   const runSession = async (payload) => {
+     const handle = await provider.submit({
+       levelDir,
+       ...payload,
+     });
+     return provider.collect(handle);
+   };
+   const initImages = await listImages(dir);
+   const levelStart = Date.now();
+   const totalImages = initImages.length;
+   const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
+   await mkdir(levelDir, { recursive: true });
+   if (saveIo) {
+     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
+     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
+   }
+   const failedArchives = [];
+   const copyFileSafe = async (
+     src,
+     dest,
+     attempt = 0,
+     maxAttempts = 3
+   ) => {
+     try {
+-      await copyFile(src, dest);
++      return await materializeFile(src, dest, copyOptions.strategy, copyOptions);
+     } catch (err) {
+       if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+         const wait = (attempt + 1) * 1000;
+         console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+         try {
+           await stat(src);
+         } catch {
+           // ignore
+         }
+         await delay(wait);
+         return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+       }
+       throw err;
+     }
+   };
++  if (initImages.length) {
++    await startCopySession({ roots: [levelDir], journalPath });
++  }
++  const archiveModes = new Map();
+   await Promise.all(
+     initImages.map(async (file) => {
+       const dest = path.join(levelDir, path.basename(file));
+       try {
+-        await copyFileSafe(file, dest);
++        const result = await copyFileSafe(file, dest);
++        if (result?.mode) {
++          archiveModes.set(result.mode, (archiveModes.get(result.mode) || 0) + 1);
++        }
+       } catch (err) {
+         failedArchives.push(file);
+         console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+       }
+     })
+   );
++  if (initImages.length) {
++    await summarizeCopySession({ roots: [levelDir] });
++    const modeSummary = Array.from(archiveModes.entries())
++      .map(([mode, count]) => `${mode}:${count}`)
++      .join(", ");
++    console.log(
++      `${indent}🗂️  Archived ${initImages.length} file(s) to ${levelDir} (${modeSummary || "none"})`
++    );
++  }
+   if (failedArchives.length) {
+     const listPath = path.join(levelDir, "failed-archives.txt");
+     await writeFile(listPath, failedArchives.join("\n"), "utf8");
+     console.warn(
+       `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+     );
+   }
+ 
+   if (fieldNotes) {
+     const lvl = String(depth + 1).padStart(3, '0');
+     notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
+     await notesWriter.init();
+   }
+ 
+   let completedBatches = 0;
+ 
+   while (true) {
+     const images = await listImages(dir);
+     if (images.length === 0) {
+       console.log(`${indent}✅  Nothing to do in ${dir}`);
+       break;
+     }
+ 
+     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+     const queue = pickRandom(images, images.length);
+@@ -607,59 +643,79 @@ export async function triageDirectory(options) {
+                         : { speaker: "Curator", text: line };
+                     });
+                     return { minutes: minutesObjs, decisions };
+                   })();
+                 await writeFile(jsonPath, JSON.stringify(j, null, 2), "utf8");
+                 log(`${indent}📝  Saved minutes JSON to ${jsonPath}`);
+                 if (TRANSCRIPT_TXT && Array.isArray(j.minutes)) {
+                   const txtPath = path.join(dir, `minutes-${uuid}.txt`);
+                   let out = j.minutes
+                     .map((m) => `${m.speaker || "Curator"}: ${m.text || ""}`)
+                     .join("\n");
+                   if (Array.isArray(j.decisions)) {
+                     const keeps = j.decisions.filter((d) => d.decision === "keep");
+                     const asides = j.decisions.filter((d) => d.decision === "aside");
+                     out += `\n\n— Decisions — ${keeps.length} keep / ${asides.length} aside\n`;
+                     for (const d of keeps)
+                       out += `  KEEP  ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                     for (const d of asides)
+                       out += `  ASIDE ${d.filename}${d.reason ? ' — ' + d.reason : ''}\n`;
+                   }
+                   await writeFile(txtPath, out, "utf8");
+                   log(`${indent}📝  Saved transcript TXT to ${txtPath}`);
+                 }
+                 const keepDir = path.join(dir, "_keep");
+                 const asideDir = path.join(dir, "_aside");
+-                await Promise.all([
+-                  moveFiles(keep, keepDir, notes),
+-                  moveFiles(aside, asideDir, notes),
++                const materializeRoots = [keepDir, asideDir];
++                if (keep.length + aside.length > 0) {
++                  await startCopySession({ roots: materializeRoots, journalPath });
++                }
++                const [keepResults, asideResults] = await Promise.all([
++                  moveFiles(keep, keepDir, notes, copyOptions),
++                  moveFiles(aside, asideDir, notes, copyOptions),
+                 ]);
++                if (keep.length + aside.length > 0) {
++                  await summarizeCopySession({ roots: materializeRoots });
++                }
+                   if (unclassified.length && keep.length + aside.length > 0) {
+                     queue.push(...unclassified);
+                   }
++                const modeCount = (results) =>
++                  results.reduce((acc, item) => {
++                    const mode = item?.mode || "unknown";
++                    acc.set(mode, (acc.get(mode) || 0) + 1);
++                    return acc;
++                  }, new Map());
++                const keepModes = modeCount(keepResults);
++                const asideModes = modeCount(asideResults);
++                const formatModes = (map) =>
++                  Array.from(map.entries())
++                    .map(([mode, count]) => `${mode}:${count}`)
++                    .join(", ") || "none";
+                 log(
+-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
++                  `📂  Materialized keep → ${keepDir} (${formatModes(keepModes)}); ` +
++                    `aside → ${asideDir} (${formatModes(asideModes)})`
+                 );
+ 
+                 if (keep.length + aside.length > 0) {
+                   completedBatches++;
+                   const elapsedSec = (Date.now() - levelStart) / 1000;
+                   const remaining = totalBatches - completedBatches;
+                   const tps = completedBatches / elapsedSec;
+                   const etaSec = tps > 0 ? Math.ceil(remaining / tps) : Infinity;
+                   log(
+                     `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
+                   );
+                 }
+               } catch (err) {
+                 if (isGatewayError(err)) noteGatewayError();
+                 bar.update(4, { stage: "error" });
+                 bar.stop();
+                 multibar.remove(bar);
+                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                 if (isBillingLimitError(err) && !abortProcessing) {
+                   abortProcessing = true;
+                   queue.length = 0;
+                   log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                   throw createBillingLimitError(err);
+                 }
+               }
+diff --git a/tests/copyOps.test.js b/tests/copyOps.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..c71abf45938437765fdff25ffa88a0e8772fa65d
+--- /dev/null
++++ b/tests/copyOps.test.js
+@@ -0,0 +1,37 @@
++import { describe, it, expect, beforeEach, afterEach } from "vitest";
++import fs from "node:fs/promises";
++import path from "node:path";
++import os from "node:os";
++import {
++  copyFile,
++  startCopySession,
++  summarizeCopySession,
++} from "../src/fs/copyOps.js";
++
++let tmpDir;
++
++beforeEach(async () => {
++  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "copy-ops-"));
++});
++
++afterEach(async () => {
++  await fs.rm(tmpDir, { recursive: true, force: true });
++});
++
++describe("copyOps", () => {
++  it("copies a file and skips when rerun", async () => {
++    const src = path.join(tmpDir, "source.txt");
++    const dst = path.join(tmpDir, "dest.txt");
++    await fs.writeFile(src, "hello world", "utf8");
++    const journalPath = path.join(tmpDir, "journal.ndjson");
++    await startCopySession({ roots: [tmpDir], journalPath });
++    const first = await copyFile(src, dst, "copy", { journalPath });
++    expect(["copy", "clone", "hardlink"]).toContain(first.mode);
++    const contents = await fs.readFile(dst, "utf8");
++    expect(contents).toBe("hello world");
++    const second = await copyFile(src, dst, "auto", { journalPath });
++    expect(second.mode === "skip" || second.mode === first.mode).toBe(true);
++    const summary = await summarizeCopySession({ roots: [tmpDir] });
++    expect(summary.counts).toBeDefined();
++  });
++});
+ 
+EOF
+)
