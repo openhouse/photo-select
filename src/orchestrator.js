@@ -6,6 +6,12 @@ import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
+import {
+  parseStrategy as parseCopyStrategy,
+  summarizeCopy as summarizeCopyEntries,
+  formatSummary as formatCopySummary,
+  OperationJournal,
+} from "./fs/copyOps.js";
 import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
@@ -183,6 +189,16 @@ function formatDuration(ms) {
   return `${s}s`;
 }
 
+async function duKilobytes(p) {
+  try {
+    const { stdout } = await exec("du", ["-sk", p]);
+    const value = parseInt(stdout.split(/\s+/)[0], 10);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 async function dirExists(p) {
   try {
     return (await stat(p)).isDirectory();
@@ -251,6 +267,13 @@ export async function triageDirectory(options) {
     reasoningEffort,
     depth = 0,
     gitRoot,
+    journal,
+    copyStrategy,
+    materializeDryRun = false,
+    materializeConcurrency,
+    requireClone = false,
+    materializeLogJson = false,
+    journalPath,
   } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
@@ -258,6 +281,24 @@ export async function triageDirectory(options) {
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
+
+  const finalStrategy = parseCopyStrategy(copyStrategy || process.env.COPY_STRATEGY);
+  const finalMaterializeConcurrency =
+    materializeConcurrency ??
+    Number(process.env.PHOTO_SELECT_MATERIALIZE_CONCURRENCY || Math.max(4, workers * 2));
+  const shouldLogJson = materializeLogJson || process.env.PHOTO_SELECT_LOG_JSON === "1";
+  const finalJournalPath =
+    journalPath || process.env.PHOTO_SELECT_JOURNAL || path.resolve(process.cwd(), "data/journal.ndjson");
+  const shouldCloseJournal = depth === 0;
+  if (!journal) {
+    journal = new OperationJournal(finalJournalPath);
+    await journal.init();
+  }
+  const emitCopyLog = shouldLogJson
+    ? (entry) => {
+        process.stdout.write(`${JSON.stringify(entry)}\n`);
+      }
+    : undefined;
 
   function isBillingLimitError(err) {
     if (!err) return false;
@@ -312,134 +353,158 @@ export async function triageDirectory(options) {
 
   if (!gitRoot) gitRoot = dir;
 
-  if (recurse) {
-    const { dir: workDir, hops } = await resolveResumeLevel(dir);
-    if (workDir !== dir) {
-      const relative = path.relative(dir, workDir) || ".";
-      const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
-      console.log(
-        `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
-      );
-      return triageDirectory({
-        ...options,
-        dir: workDir,
-        depth: depth + hops,
-        provider,
-        gitRoot,
-      });
+  try {
+    if (recurse) {
+      const { dir: workDir, hops } = await resolveResumeLevel(dir);
+      if (workDir !== dir) {
+        const relative = path.relative(dir, workDir) || ".";
+        const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+        console.log(
+          `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+        );
+        return triageDirectory({
+          ...options,
+          dir: workDir,
+          depth: depth + hops,
+          provider,
+          gitRoot,
+          journal,
+          copyStrategy: finalStrategy,
+          materializeDryRun,
+          materializeConcurrency: finalMaterializeConcurrency,
+          requireClone,
+          materializeLogJson: shouldLogJson,
+          journalPath: finalJournalPath,
+        });
+      }
     }
-  }
 
-  if (fieldNotes && depth === 0) {
-    await ensureGitRepo(gitRoot);
-  }
+    if (fieldNotes && depth === 0) {
+      await ensureGitRepo(gitRoot);
+    }
 
-  console.log(`${indent}📁  Scanning ${dir}`);
+    console.log(`${indent}📁  Scanning ${dir}`);
 
-  // Archive original images at this level
-  const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
-  const runSession = async (payload) => {
-    const handle = await provider.submit({
-      levelDir,
-      ...payload,
-    });
-    return provider.collect(handle);
-  };
-  const initImages = await listImages(dir);
-  const levelStart = Date.now();
-  const totalImages = initImages.length;
-  const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
-  await mkdir(levelDir, { recursive: true });
-  if (saveIo) {
-    await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
-    await mkdir(path.join(levelDir, '_responses'), { recursive: true });
-  }
-  const failedArchives = [];
-  const copyFileSafe = async (
-    src,
-    dest,
-    attempt = 0,
-    maxAttempts = 3
-  ) => {
-    try {
-      await copyFile(src, dest);
-    } catch (err) {
-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
-        try {
-          await stat(src);
-        } catch {
-          // ignore
+    // Archive original images at this level
+    const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+    const normalizeProviderResult = (result) => {
+      if (result == null) return undefined;
+      if (typeof result === "string") return result;
+      if (Buffer.isBuffer(result)) return result.toString("utf8");
+      if (typeof result === "object") {
+        const candidate = ["raw", "text", "body"]
+          .map((key) => result[key])
+          .find((value) => value != null);
+        if (candidate != null) {
+          if (typeof candidate === "string") return candidate;
+          if (Buffer.isBuffer(candidate)) return candidate.toString("utf8");
         }
-        await delay(wait);
-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
       }
-      throw err;
+      return undefined;
+    };
+
+    const runSession = async (payload) => {
+      const handle = await provider.submit({
+        levelDir,
+        ...payload,
+      });
+      return provider.collect(handle);
+    };
+    const initImages = await listImages(dir);
+    const levelStart = Date.now();
+    const totalImages = initImages.length;
+    const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
+    await mkdir(levelDir, { recursive: true });
+    if (saveIo) {
+      await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
+      await mkdir(path.join(levelDir, '_responses'), { recursive: true });
     }
-  };
-  await Promise.all(
-    initImages.map(async (file) => {
-      const dest = path.join(levelDir, path.basename(file));
+    const failedArchives = [];
+    const copyFileSafe = async (
+      src,
+      dest,
+      attempt = 0,
+      maxAttempts = 3
+    ) => {
       try {
-        await copyFileSafe(file, dest);
+        await copyFile(src, dest);
       } catch (err) {
-        failedArchives.push(file);
-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+        if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+          const wait = (attempt + 1) * 1000;
+          console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+          try {
+            await stat(src);
+          } catch {
+            // ignore
+          }
+          await delay(wait);
+          return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+        }
+        throw err;
       }
-    })
-  );
-  if (failedArchives.length) {
-    const listPath = path.join(levelDir, "failed-archives.txt");
-    await writeFile(listPath, failedArchives.join("\n"), "utf8");
-    console.warn(
-      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+    };
+    await Promise.all(
+      initImages.map(async (file) => {
+        const dest = path.join(levelDir, path.basename(file));
+        try {
+          await copyFileSafe(file, dest);
+        } catch (err) {
+          failedArchives.push(file);
+          console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+        }
+      })
     );
-  }
-
-  if (fieldNotes) {
-    const lvl = String(depth + 1).padStart(3, '0');
-    notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
-    await notesWriter.init();
-  }
-
-  let completedBatches = 0;
-
-  while (true) {
-    const images = await listImages(dir);
-    if (images.length === 0) {
-      console.log(`${indent}✅  Nothing to do in ${dir}`);
-      break;
+    if (failedArchives.length) {
+      const listPath = path.join(levelDir, "failed-archives.txt");
+      await writeFile(listPath, failedArchives.join("\n"), "utf8");
+      console.warn(
+        `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+      );
     }
 
-    console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
-    const queue = pickRandom(images, images.length);
-    console.log(
-      `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
-    );
+    if (fieldNotes) {
+      const lvl = String(depth + 1).padStart(3, '0');
+      notesWriter = new FieldNotesWriter(path.join(levelDir, 'field-notes.md'), lvl);
+      await notesWriter.init();
+    }
 
-    const multibar = new MultiBar(
-        {
-          clearOnComplete: false,
-          hideCursor: true,
-          format: `${indent}{prefix} |{bar}| {stage}`,
-        },
-        Presets.shades_classic
+    let completedBatches = 0;
+
+    while (true) {
+      const images = await listImages(dir);
+      if (images.length === 0) {
+        console.log(`${indent}✅  Nothing to do in ${dir}`);
+        break;
+      }
+
+      console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
+      const queue = pickRandom(images, images.length);
+      console.log(
+        `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
       );
-      try {
-        const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
-        const getBar = (idx) =>
-          multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
-        const log = (msg) => {
-          for (const line of String(msg).split(/\n/)) {
-            multibar.log(line + "\n");
-            if (process.env.NODE_ENV === "test") console.log(line);
-          }
-        };
-        let batchIdx = 0;
-        let abortProcessing = false;
-        const nextBatch = () =>
-          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
+
+      const multibar = new MultiBar(
+          {
+            clearOnComplete: false,
+            hideCursor: true,
+            format: `${indent}{prefix} |{bar}| {stage}`,
+          },
+          Presets.shades_classic
+        );
+        try {
+          const stageMap = { encoding: 1, request: 2, waiting: 3, stream: 3, done: 4 };
+          const getBar = (idx) =>
+            multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
+          const log = (msg) => {
+            for (const line of String(msg).split(/\n/)) {
+              multibar.log(line + "\n");
+              if (process.env.NODE_ENV === "test") console.log(line);
+            }
+          };
+          let batchIdx = 0;
+          let abortProcessing = false;
+          const nextBatch = () =>
+            !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
 
         async function workerFn() {
           while (true) {
@@ -497,7 +562,7 @@ export async function triageDirectory(options) {
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
                 await saveText('prompt', attemptNum, first.prompt);
-                const { raw: firstRaw } = await runSession({
+                const firstResult = await runSession({
                   prompt: first.prompt,
                   images: batch,
                   model,
@@ -511,7 +576,11 @@ export async function triageDirectory(options) {
                   },
                   stream: true,
                 });
-                reply = firstRaw;
+                const firstRaw = normalizeProviderResult(firstResult);
+                if (firstRaw == null) {
+                  throw new Error("Provider returned empty reply");
+                }
+                reply = String(firstRaw);
                 await saveText('response', attemptNum, reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
@@ -535,7 +604,7 @@ export async function triageDirectory(options) {
                     ].join("\n");
                     attemptNum++;
                     await saveText('prompt', attemptNum, repair);
-                    const { raw: repairRaw } = await runSession({
+                    const repairResult = await runSession({
                       prompt: repair,
                       images: batch,
                       model,
@@ -549,7 +618,11 @@ export async function triageDirectory(options) {
                       },
                       stream: true,
                     });
-                    reply = repairRaw;
+                    const repairRaw = normalizeProviderResult(repairResult);
+                    if (repairRaw == null) {
+                      throw new Error("Provider returned empty reply");
+                    }
+                    reply = String(repairRaw);
                     await saveText('response', attemptNum, reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
@@ -629,15 +702,35 @@ export async function triageDirectory(options) {
                 }
                 const keepDir = path.join(dir, "_keep");
                 const asideDir = path.join(dir, "_aside");
-                await Promise.all([
-                  moveFiles(keep, keepDir, notes),
-                  moveFiles(aside, asideDir, notes),
+                const beforeDu = materializeDryRun ? null : await duKilobytes(dir);
+                const baseCopyOptions = {
+                  strategy: finalStrategy,
+                  dryRun: materializeDryRun,
+                  requireClone,
+                  journal,
+                  emitLog: emitCopyLog,
+                  concurrency: finalMaterializeConcurrency,
+                };
+                const [keepResult, asideResult] = await Promise.all([
+                  moveFiles(keep, keepDir, notes, baseCopyOptions),
+                  moveFiles(aside, asideDir, notes, baseCopyOptions),
                 ]);
-                  if (unclassified.length && keep.length + aside.length > 0) {
-                    queue.push(...unclassified);
-                  }
+                if (unclassified.length && keep.length + aside.length > 0) {
+                  queue.push(...unclassified);
+                }
+                const combinedEntries = [
+                  ...((keepResult && keepResult.entries) || []),
+                  ...((asideResult && asideResult.entries) || []),
+                ];
+                const combinedSummary = summarizeCopyEntries(combinedEntries);
+                const summaryText = formatCopySummary(combinedSummary);
+                const afterDu = materializeDryRun ? null : await duKilobytes(dir);
+                const duDelta =
+                  beforeDu != null && afterDu != null ? afterDu - beforeDu : null;
+                const duText =
+                  duDelta != null ? ` (Δdu=${duDelta >= 0 ? "+" : ""}${duDelta}K)` : "";
                 log(
-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                  `📂  Materialized ${keep.length} keep / ${aside.length} aside → ${summaryText}${duText}`
                 );
 
                 if (keep.length + aside.length > 0) {
@@ -687,48 +780,65 @@ export async function triageDirectory(options) {
       }
 }
 
-  // Step 5 – recurse into keepDir if both keep and aside exist
-  if (recurse) {
-    const keepDir = path.join(dir, "_keep");
-    const asideDir = path.join(dir, "_aside");
+    // Step 5 – recurse into keepDir if both keep and aside exist
+    if (recurse) {
+      const keepDir = path.join(dir, "_keep");
+      const asideDir = path.join(dir, "_aside");
 
-    const countImages = async (folder) => {
-      try {
-        return (await listImages(folder)).length;
-      } catch (err) {
-        if (err?.code === "ENOENT") return 0;
-        throw err;
+      const countImages = async (folder) => {
+        try {
+          return (await listImages(folder)).length;
+        } catch (err) {
+          if (err?.code === "ENOENT") return 0;
+          throw err;
+        }
+      };
+
+      const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+        countImages(keepDir),
+        countImages(asideDir),
+        dirExists(path.join(keepDir, "_keep")),
+      ]);
+
+      const keepHasWork = keepCount > 0 || hasDeeperKeep;
+      if (keepHasWork) {
+        await triageDirectory({
+          dir: keepDir,
+          promptPath,
+          provider,
+          model,
+          recurse,
+          curators,
+          contextPath,
+          fieldNotes,
+          verbose,
+          saveIo,
+          workers,
+          verbosity,
+          reasoningEffort,
+          depth: depth + 1,
+          gitRoot,
+          journal,
+          copyStrategy: finalStrategy,
+          materializeDryRun,
+          materializeConcurrency: finalMaterializeConcurrency,
+          requireClone,
+          materializeLogJson: shouldLogJson,
+          journalPath: finalJournalPath,
+        });
+      } else if (keepCount || asideCount) {
+        const status = keepCount ? "kept" : "set aside";
+        console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
       }
-    };
+    }
 
-    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
-      countImages(keepDir),
-      countImages(asideDir),
-      dirExists(path.join(keepDir, "_keep")),
-    ]);
-
-    const keepHasWork = keepCount > 0 || hasDeeperKeep;
-    if (keepHasWork) {
-      await triageDirectory({
-        dir: keepDir,
-        promptPath,
-        provider,
-        model,
-        recurse,
-        curators,
-        contextPath,
-        fieldNotes,
-        verbose,
-        saveIo,
-        workers,
-        verbosity,
-        reasoningEffort,
-        depth: depth + 1,
-        gitRoot,
-      });
-    } else if (keepCount || asideCount) {
-      const status = keepCount ? "kept" : "set aside";
-      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
+  } finally {
+    if (shouldCloseJournal && journal) {
+      try {
+        await journal.close();
+      } catch {
+        // ignore close errors
+      }
     }
   }
 }

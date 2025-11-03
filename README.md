@@ -143,6 +143,25 @@ This helps you stay within the three‑thumbnail budget when curating notes.
 All CLI flags—including `--api-key`, `--model`, and `--no-recurse`—can be passed
 through to the script unchanged.
 
+## APFS Clone workflow
+
+Materializing curator decisions now prefers APFS copy-on-write clones. When
+cloning isn’t available the pipeline falls back to same-device hard links and
+finally to metadata-preserving byte copies.
+
+Key CLI additions:
+
+- `--strategy <auto|clone|hardlink|copy|move>` – choose the materialization mode.
+- `--dry-run` – log planned operations without touching the filesystem.
+- `--apfs-required` – exit non-zero if a file can’t be cloned on APFS.
+- `--materialize-concurrency <n>` – bound simultaneous file work.
+- `--log-json` / `--journal <file>` – stream NDJSON entries for each file.
+
+Every operation is appended to `data/journal.ndjson`, enabling idempotent
+reruns that skip completed destinations. End-of-level summaries report clone vs.
+hardlink vs. copy counts and include a `du -sk` delta for observability. On
+macOS you can validate clone support quickly with `npm run test:apfs`.
+
 ### Flags
 
 | flag       | default                      | description                                     |
