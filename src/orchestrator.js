@@ -1,16 +1,17 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
-import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
+import { listImages, pickRandom, materializeFiles } from "./imageSelector.js";
 import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 import { sanitizePeople } from "./lib/people.js";
+import { copyFile as copyFileWithStrategy } from "./fs/copyOps.js";
 import { finalizeCurators } from "./core/finalizeCurators.js";
 
 const exec = promisify(execFile);
@@ -251,6 +252,9 @@ export async function triageDirectory(options) {
     reasoningEffort,
     depth = 0,
     gitRoot,
+    copyStrategy = process.env.COPY_STRATEGY || "auto",
+    dryRun = false,
+    apfsRequired = false,
   } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
@@ -287,11 +291,42 @@ export async function triageDirectory(options) {
 
   let dynamicWorkers = workers;
   let consecutiveGatewayErrors = 0;
+  const recentOutcomes = [];
+  let lastAdjustMs = 0;
+  function pruneOutcomes(now = Date.now()) {
+    while (recentOutcomes.length && now - recentOutcomes[0].now > 120_000) {
+      recentOutcomes.shift();
+    }
+  }
+  function recordOutcome({ ok, error }) {
+    const now = Date.now();
+    pruneOutcomes(now);
+    recentOutcomes.push({ now, ok, error });
+    pruneOutcomes(now);
+    const window = recentOutcomes.filter((item) => now - item.now <= 60_000);
+    if (window.length < 5) return;
+    const failures = window.filter((item) => !item.ok).length;
+    const rate = failures / window.length;
+    if (now - lastAdjustMs < 30_000) return;
+    if (rate > 0.25 && dynamicWorkers > 1) {
+      dynamicWorkers = Math.max(1, Math.floor(dynamicWorkers / 2));
+      lastAdjustMs = now;
+      console.warn(
+        `${indent}⚖️  Error rate ${(rate * 100).toFixed(1)}% → reducing workers to ${dynamicWorkers}.`
+      );
+    } else if (rate < 0.05 && dynamicWorkers < workers) {
+      dynamicWorkers = Math.min(workers, dynamicWorkers + 1);
+      lastAdjustMs = now;
+      console.log(
+        `${indent}⚖️  Error rate ${(rate * 100).toFixed(1)}% → increasing workers to ${dynamicWorkers}.`
+      );
+    }
+  }
   function isGatewayError(e) {
     const s = e?.status || e?.code;
     return s === 502 || s === 503;
   }
-  function noteGatewayError() {
+  function noteGatewayError(err) {
     consecutiveGatewayErrors++;
     if (consecutiveGatewayErrors >= 3 && dynamicWorkers > 1) {
       dynamicWorkers = 1;
@@ -303,6 +338,7 @@ export async function triageDirectory(options) {
         consecutiveGatewayErrors = 0;
       }, 10 * 60 * 1000);
     }
+    recordOutcome({ ok: false, error: err });
   }
 
   if (depth === 0) {
@@ -355,40 +391,43 @@ export async function triageDirectory(options) {
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
   }
   const failedArchives = [];
-  const copyFileSafe = async (
-    src,
-    dest,
-    attempt = 0,
-    maxAttempts = 3
-  ) => {
-    try {
-      await copyFile(src, dest);
-    } catch (err) {
-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
-        try {
-          await stat(src);
-        } catch {
-          // ignore
-        }
-        await delay(wait);
-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
-      }
-      throw err;
-    }
-  };
-  await Promise.all(
-    initImages.map(async (file) => {
-      const dest = path.join(levelDir, path.basename(file));
+  if (!dryRun) {
+    const copyFileSafe = async (
+      src,
+      dest,
+      attempt = 0,
+      maxAttempts = 3
+    ) => {
       try {
-        await copyFileSafe(file, dest);
+        const archiveStrategy = copyStrategy === "move" ? "copy" : copyStrategy;
+        await copyFileWithStrategy(src, dest, archiveStrategy);
       } catch (err) {
-        failedArchives.push(file);
-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+        if (err?.code === "ECANCELED" && attempt < maxAttempts) {
+          const wait = (attempt + 1) * 1000;
+          console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
+          try {
+            await stat(src);
+          } catch {
+            // ignore
+          }
+          await delay(wait);
+          return copyFileSafe(src, dest, attempt + 1, maxAttempts);
+        }
+        throw err;
       }
-    })
-  );
+    };
+    await Promise.all(
+      initImages.map(async (file) => {
+        const dest = path.join(levelDir, path.basename(file));
+        try {
+          await copyFileSafe(file, dest);
+        } catch (err) {
+          failedArchives.push(file);
+          console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
+        }
+      })
+    );
+  }
   if (failedArchives.length) {
     const listPath = path.join(levelDir, "failed-archives.txt");
     await writeFile(listPath, failedArchives.join("\n"), "utf8");
@@ -407,13 +446,25 @@ export async function triageDirectory(options) {
 
   while (true) {
     const images = await listImages(dir);
-    if (images.length === 0) {
+    const keepDir = path.join(dir, "_keep");
+    const asideDir = path.join(dir, "_aside");
+    const [existingKeep, existingAside] = await Promise.all([
+      listImages(keepDir).catch(() => []),
+      listImages(asideDir).catch(() => []),
+    ]);
+    const processedNames = new Set(
+      existingKeep.concat(existingAside).map((p) => path.basename(p))
+    );
+    const pending = images.filter(
+      (file) => !processedNames.has(path.basename(file))
+    );
+    if (pending.length === 0) {
       console.log(`${indent}✅  Nothing to do in ${dir}`);
       break;
     }
 
-    console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
-    const queue = pickRandom(images, images.length);
+    console.log(`${indent}📊  ${pending.length} unclassified image(s) found`);
+    const queue = pickRandom(pending, pending.length);
     console.log(
       `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
     );
@@ -569,6 +620,7 @@ export async function triageDirectory(options) {
                       const prev = await readFile(marker, "utf8").catch(() => "");
                       await writeFile(marker, `${prev}${list}\n`, "utf8");
                     } catch {}
+                    recordOutcome({ ok: false, error: new Error("no decisions") });
                     return;
                   }
                 }
@@ -629,16 +681,34 @@ export async function triageDirectory(options) {
                 }
                 const keepDir = path.join(dir, "_keep");
                 const asideDir = path.join(dir, "_aside");
-                await Promise.all([
-                  moveFiles(keep, keepDir, notes),
-                  moveFiles(aside, asideDir, notes),
+                const [keepResult, asideResult] = await Promise.all([
+                  materializeFiles(keep, keepDir, notes, {
+                    strategy: copyStrategy,
+                    dryRun,
+                    apfsRequired,
+                  }),
+                  materializeFiles(aside, asideDir, notes, {
+                    strategy: copyStrategy,
+                    dryRun,
+                    apfsRequired,
+                  }),
                 ]);
+                const formatCounts = (result) => {
+                  if (!result || !result.counts) return "";
+                  const entries = Object.entries(result.counts)
+                    .map(([mode, count]) => `${mode}:${count}`)
+                    .join(", ");
+                  return entries ? ` (${entries})` : "";
+                };
                   if (unclassified.length && keep.length + aside.length > 0) {
                     queue.push(...unclassified);
                   }
                 log(
-                  `📂  Moved: ${keep.length} keep → ${keepDir}, ${aside.length} aside → ${asideDir}`
+                  `📂  Materialized: ${keep.length} keep → ${keepDir}${formatCounts(
+                    keepResult
+                  )}, ${aside.length} aside → ${asideDir}${formatCounts(asideResult)}`
                 );
+                recordOutcome({ ok: true });
 
                 if (keep.length + aside.length > 0) {
                   completedBatches++;
@@ -651,7 +721,8 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
-                if (isGatewayError(err)) noteGatewayError();
+                if (isGatewayError(err)) noteGatewayError(err);
+                else recordOutcome({ ok: false, error: err });
                 bar.update(4, { stage: "error" });
                 bar.stop();
                 multibar.remove(bar);
@@ -725,6 +796,9 @@ export async function triageDirectory(options) {
         reasoningEffort,
         depth: depth + 1,
         gitRoot,
+        copyStrategy,
+        dryRun,
+        apfsRequired,
       });
     } else if (keepCount || asideCount) {
       const status = keepCount ? "kept" : "set aside";

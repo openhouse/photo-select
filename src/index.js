@@ -77,6 +77,13 @@ program
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option(
+    "--strategy <mode>",
+    "Materialization strategy (auto|clone|hardlink|copy|move)",
+    process.env.COPY_STRATEGY || "auto"
+  )
+  .option("--dry-run", "Plan without writing to disk")
+  .option("--apfs-required", "Fail if a file cannot be cloned")
   .parse(process.argv);
 
 let {
@@ -97,7 +104,12 @@ let {
   reasoningEffort,
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
+  strategy,
+  dryRun: dryRunFlag,
+  apfsRequired,
 } = program.opts();
+
+const dryRun = !!dryRunFlag;
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   const n = Number(parallel) || 1;
@@ -177,6 +189,14 @@ if (apiKey) {
 if (ollamaBaseUrl) {
   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
 }
+const copyStrategy = (strategy || process.env.COPY_STRATEGY || 'auto').toLowerCase();
+process.env.COPY_STRATEGY = copyStrategy;
+if (dryRun) {
+  process.env.PHOTO_SELECT_DRY_RUN = '1';
+}
+if (apfsRequired) {
+  process.env.PHOTO_SELECT_APFS_REQUIRED = '1';
+}
 
 const provider = providerName || 'openai';
 let finalModel = model;
@@ -216,6 +236,9 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
+      copyStrategy,
+      dryRun,
+      apfsRequired,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

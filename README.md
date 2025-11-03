@@ -1,7 +1,7 @@
 # photo‑select
 
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
-moves the files accordingly, and then recurses until a directory is fully triaged.**
+materializes APFS clones (or hardlinks/copies when cloning is unavailable), and then recurses until a directory is fully triaged.**
 
 You can run sessions in two “gears”:
 
@@ -158,6 +158,9 @@ through to the script unchanged.
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--strategy` | `auto` | Materialization strategy: `auto`, `clone`, `hardlink`, `copy`, or `move` |
+| `--dry-run` | `false` | Emit the plan and journal entries without writing to disk |
+| `--apfs-required` | `false` | Exit with an error if any file falls back from clone to hardlink/copy |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
@@ -166,6 +169,23 @@ through to the script unchanged.
 | `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
 | `--batch-window` | `24h` | Completion window requested for batch jobs |
 | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
+
+### APFS clone workflow
+
+Materialization prefers copy-on-write clones whenever the source and destination reside on the same APFS volume. Each file operation appends a JSON line to `data/journal.ndjson`:
+
+```json
+{"op":"copy","from":"/Volumes/photos/_all/1.jpg","to":"/Volumes/photos/_keep/1.jpg","mode":"clone","bytes":24837912,"ms":12}
+```
+
+- On macOS the CLI calls `bin/apfs-clone` (compiled during `npm install`) which wraps `clonefile(2)` / `copyfile(…, COPYFILE_CLONE | COPYFILE_ALL)`. If cloning is unsupported we fall back to `cp -c -p`, then to same-device hardlinks, and finally to metadata-preserving byte copies.
+- Linux/other platforms attempt `cp --reflink=auto --preserve=xattr,timestamps` before copying.
+- Override the strategy per run with `--strategy=<auto|clone|hardlink|copy|move>` or by exporting `COPY_STRATEGY`.
+- `--dry-run` keeps the journal and console summary while skipping filesystem writes (entries use `"mode":"dry-run"`).
+- `--apfs-required` exits non-zero if any file would fall back to hardlink or copy.
+- Final summaries include per-mode counts, total bytes, elapsed wall time, and `du -sk` deltas for the destination tree.
+
+Run `npm run test:apfs` (or invoke `scripts/test-apfs-clone.js` directly) to smoke-test the helper on your machine.
 
 People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
