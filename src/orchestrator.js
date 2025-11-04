@@ -1,10 +1,11 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { delay } from "./config.js";
+import { copyFilePreferClone } from "./fs-clone.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
@@ -362,7 +363,7 @@ export async function triageDirectory(options) {
     maxAttempts = 3
   ) => {
     try {
-      await copyFile(src, dest);
+      await copyFilePreferClone(src, dest);
     } catch (err) {
       if (err?.code === "ECANCELED" && attempt < maxAttempts) {
         const wait = (attempt + 1) * 1000;
