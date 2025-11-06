@@ -339,6 +339,23 @@ describe("curatorsFromTags", () => {
     expect(names).toContain("_UNKNOWN_");
     global.fetch.mockReset();
   });
+
+  it("skips network calls when disabled", async () => {
+    const imgs = ["/tmp/a.jpg", "/tmp/b.jpg"];
+    global.fetch.mockReset();
+    process.env.PHOTO_SELECT_DISABLE_PEOPLE = "1";
+    try {
+      const names = await curatorsFromTags(imgs);
+      expect(names).toEqual([]);
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.PHOTO_SELECT_DISABLE_PEOPLE;
+      global.fetch.mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ data: [] }),
+      }));
+    }
+  });
 });
 
 describe("chatCompletion", () => {

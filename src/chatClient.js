@@ -24,6 +24,19 @@ function numEnv(name, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function boolEnv(name, fallback = false) {
+  const v = process.env[name];
+  if (v == null || v === "") return fallback;
+  if (typeof v === "boolean") return v;
+  if (/^(1|true|yes|on)$/i.test(String(v))) return true;
+  if (/^(0|false|no|off)$/i.test(String(v))) return false;
+  return fallback;
+}
+
+function isPeopleLookupDisabled() {
+  return boolEnv("PHOTO_SELECT_DISABLE_PEOPLE", false);
+}
+
 const HTTP_DRIVER = String(
   process.env.PHOTO_SELECT_HTTP_DRIVER || ""
 ).toLowerCase();
@@ -65,7 +78,7 @@ const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
 let peopleAgent;
-if (!USE_UNDICI) {
+if (!USE_UNDICI && !isPeopleLookupDisabled()) {
   peopleAgent = PEOPLE_API_BASE.startsWith("https")
     ? new KeepAliveAgent.HttpsAgent({
         keepAlive: true,
@@ -188,6 +201,10 @@ async function extractTextWithLogging(rsp) {
 
 export async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
+  if (isPeopleLookupDisabled()) {
+    peopleCache.set(filename, []);
+    return [];
+  }
   try {
     const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
       filename
@@ -211,6 +228,7 @@ export async function getPeople(filename) {
 
 /** Return any people who appear in more than one file */
 export async function curatorsFromTags(files) {
+  if (isPeopleLookupDisabled()) return [];
   const counts = new Map();
   for (const file of files) {
     const name = path.basename(file);

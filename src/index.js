@@ -9,6 +9,19 @@ import { DEFAULT_PROMPT_PATH } from "./templates.js";
 import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
 
+function parseEnvFlag(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (/^(1|true|yes|on)$/i.test(String(value))) return true;
+  if (/^(0|false|no|off)$/i.test(String(value))) return false;
+  return fallback;
+}
+
+const disablePhotoFilterDefault = parseEnvFlag(
+  process.env.PHOTO_SELECT_DISABLE_PEOPLE,
+  false
+);
+
 const program = new Command();
 program
   .name("photo-select")
@@ -77,6 +90,11 @@ program
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option(
+    "--disable-photo-filter",
+    "Disable photo-filter API lookups for this job",
+    disablePhotoFilterDefault
+  )
   .parse(process.argv);
 
 let {
@@ -97,6 +115,7 @@ let {
   reasoningEffort,
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
+  disablePhotoFilter,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -176,6 +195,9 @@ if (apiKey) {
 }
 if (ollamaBaseUrl) {
   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
+}
+if (disablePhotoFilter) {
+  process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
 }
 
 const provider = providerName || 'openai';
