@@ -162,6 +162,9 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
 | `--save-io` | `false` | Save prompts and responses for debugging |
+| `--update [bool]` | `true` | Reuse archived files when unchanged; `false` forces re-clone |
+| `--force-rebuild` | `false` | Ignore the archive manifest and rebuild every file |
+| `--stage-concurrency` | *(unset)* | Override filesystem staging concurrency (`PHOTO_SELECT_STAGE_CONCURRENCY` / `PHOTO_SELECT_FS_CONCURRENCY`) |
 | `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
 | `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
 | `--batch-window` | `24h` | Completion window requested for batch jobs |
@@ -188,6 +191,18 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
+
+#### Resume semantics
+
+Interrupted runs resume quickly. Each `_level-*` archive keeps an append-only manifest
+(`.ps-manifest.jsonl` plus a snapshot `.manifest.json`), a staging log (`.staged.jsonl`),
+and a heartbeat file (`.run.json`). After all files finish cloning, a `.ok` sentinel is
+written. On restart, `photo-select` skips any level that already has `.ok`, and for
+other levels it skips individual files whose size/mtime match the manifest. Use
+`--update false` to disable this cache (re-cloning every file) or `--force-rebuild`
+to ignore existing manifests. Filesystem concurrency defaults to 12 (from
+`PHOTO_SELECT_FS_CONCURRENCY`); override it with `PHOTO_SELECT_STAGE_CONCURRENCY`
+or the `--stage-concurrency` flag when staging needs to be throttled.
 
 ### Concurrency: `--workers` (recommended)
 
