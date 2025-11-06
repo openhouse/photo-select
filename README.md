@@ -319,7 +319,7 @@ on startup.
 
 ### People metadata (optional)
 
-Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip these lookups for a single job.
 
 Example:
 
