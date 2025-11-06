@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import Handlebars from 'handlebars';
 
@@ -6,7 +7,7 @@ const fmin = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MIN || 1.5);
 const fmax = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MAX || 2.5);
 
 export const DEFAULT_PROMPT_PATH = path.resolve(
-  new URL('../prompts/default_prompt.hbs', import.meta.url).pathname
+  fileURLToPath(new URL('../prompts/default_prompt.hbs', import.meta.url))
 );
 
 export async function renderTemplate(filePath = DEFAULT_PROMPT_PATH, data = {}) {
