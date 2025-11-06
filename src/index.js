@@ -81,6 +81,18 @@ program
     "Save full prompts and responses for debugging"
   )
   .option(
+    "--update [bool]",
+    "Idempotent archive (skip unchanged files)",
+    (value) => parseEnvFlag(value, true),
+    true
+  )
+  .option("--force-rebuild", "Ignore manifest; rebuild archive")
+  .option(
+    "--stage-concurrency <n>",
+    "Maximum concurrent archive clones",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
+  .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
     (v) => Math.max(1, parseInt(v, 10))
@@ -110,6 +122,9 @@ let {
   fieldNotes,
   verbose,
   saveIo,
+  update,
+  forceRebuild,
+  stageConcurrency,
   workers,
   verbosity,
   reasoningEffort,
@@ -235,6 +250,9 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       fieldNotes,
       verbose,
       saveIo,
+      update,
+      forceRebuild,
+      stageConcurrency,
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,

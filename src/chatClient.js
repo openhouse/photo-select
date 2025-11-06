@@ -16,6 +16,7 @@ import {
 import { enforceEffortGuard } from "./effortGuard.js";
 import { getSurrogateImage } from "./imagePreprocessor.js";
 import { drain } from "./net.js";
+import { SimpleSemaphore } from "./lib/semaphore.js";
 
 function numEnv(name, fallback) {
   const v = process.env[name];
@@ -90,26 +91,6 @@ if (!USE_UNDICI && !isPeopleLookupDisabled()) {
         maxSockets: PEOPLE_CONCURRENCY,
         maxFreeSockets: PEOPLE_CONCURRENCY,
       });
-}
-class SimpleSemaphore {
-  constructor(max) {
-    this.max = max;
-    this.inUse = 0;
-    this.q = [];
-  }
-  async run(fn) {
-    if (this.inUse >= this.max) {
-      await new Promise((resolve) => this.q.push(resolve));
-    }
-    this.inUse++;
-    try {
-      return await fn();
-    } finally {
-      this.inUse = Math.max(0, this.inUse - 1);
-      const next = this.q.shift();
-      if (next) next();
-    }
-  }
 }
 const peopleSem = new SimpleSemaphore(PEOPLE_CONCURRENCY);
 const peopleCache = new Map();

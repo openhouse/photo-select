@@ -4,8 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
-import { delay } from "./config.js";
-import { copyFilePreferClone } from "./fs-clone.js";
+import { ensureArchiveLevel } from "./archive/ensureArchiveLevel.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
@@ -252,6 +251,9 @@ export async function triageDirectory(options) {
     reasoningEffort,
     depth = 0,
     gitRoot,
+    update = true,
+    forceRebuild = false,
+    stageConcurrency,
   } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
@@ -327,6 +329,9 @@ export async function triageDirectory(options) {
         depth: depth + hops,
         provider,
         gitRoot,
+        update,
+        forceRebuild,
+        stageConcurrency,
       });
     }
   }
@@ -355,46 +360,22 @@ export async function triageDirectory(options) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
   }
-  const failedArchives = [];
-  const copyFileSafe = async (
-    src,
-    dest,
-    attempt = 0,
-    maxAttempts = 3
-  ) => {
-    try {
-      await copyFilePreferClone(src, dest);
-    } catch (err) {
-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
-        try {
-          await stat(src);
-        } catch {
-          // ignore
-        }
-        await delay(wait);
-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
-      }
-      throw err;
-    }
-  };
-  await Promise.all(
-    initImages.map(async (file) => {
-      const dest = path.join(levelDir, path.basename(file));
-      try {
-        await copyFileSafe(file, dest);
-      } catch (err) {
-        failedArchives.push(file);
-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
-      }
-    })
-  );
-  if (failedArchives.length) {
+  if (!update && depth === 0) {
+    console.warn("⚠️ archive update disabled — will re-clone all files");
+  }
+  const archiveResult = await ensureArchiveLevel({
+    levelDir,
+    files: initImages,
+    update,
+    forceRebuild,
+    stageConcurrency,
+    verbose,
+  });
+  if (archiveResult.failed?.length) {
     const listPath = path.join(levelDir, "failed-archives.txt");
-    await writeFile(listPath, failedArchives.join("\n"), "utf8");
+    await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
     console.warn(
-      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+      `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
     );
   }
 
@@ -726,6 +707,9 @@ export async function triageDirectory(options) {
         reasoningEffort,
         depth: depth + 1,
         gitRoot,
+        update,
+        forceRebuild,
+        stageConcurrency,
       });
     } else if (keepCount || asideCount) {
       const status = keepCount ? "kept" : "set aside";
