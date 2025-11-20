@@ -227,6 +227,11 @@ function optNumEnv(name) {
   return Number.isFinite(n) ? n : undefined;
 }
 
+const gpt5Budget = {
+  tpm: numEnv("PHOTO_SELECT_TPM_GPT5", 2_000_000),
+  rpm: numEnv("PHOTO_SELECT_RPM_GPT5", 600),
+};
+
 /** Create a process-wide singleton with sane defaults. */
 export const scheduler = new TokenScheduler({
   maxConcurrent: numEnv("PHOTO_SELECT_MAX_CONCURRENT", 10),
@@ -234,10 +239,10 @@ export const scheduler = new TokenScheduler({
   perModel: {
     // Soft budgets — feel free to lower from your org hard caps:
     // Your org: gpt-5 → 40,000,000 TPM, 15,000 RPM
-    "gpt-5": {
-      tpm: numEnv("PHOTO_SELECT_TPM_GPT5", 2_000_000),
-      rpm: numEnv("PHOTO_SELECT_RPM_GPT5", 600),
-    },
+    "gpt-5": gpt5Budget,
+    "gpt-5.1": gpt5Budget,
+    "gpt-5-chat-latest": gpt5Budget,
+    "gpt-5.1-chat-latest": gpt5Budget,
     "gpt-5-mini": {
       tpm: numEnv("PHOTO_SELECT_TPM_GPT5_MINI", 4_000_000),
       rpm: numEnv("PHOTO_SELECT_RPM_GPT5_MINI", 900),

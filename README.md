@@ -349,7 +349,8 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
 
 The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. In batch mode, each session is serialized to a single JSONL line and submitted to the Batch API with the same structured-output schema. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
-* **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, and `gpt-5-chat-latest`
+* **GPT‑5.1 / GPT‑5 family** – `gpt-5.1`, `gpt-5`, `gpt-5-mini`,
+  `gpt-5-nano`, `gpt-5.1-chat-latest`, and `gpt-5-chat-latest`
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
 * **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
   `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
@@ -414,25 +415,26 @@ full 315‑photo set therefore uses about 2.5 million input tokens plus roughl
 
 Approximate price per run:
 
-| model                | input $/1M | output $/1M | est. cost on 315 photos |
-| -------------------- | ---------- | ----------- | ---------------------- |
-| `gpt-5`              | $1.25      | $10.00      | ~$5.62 |
-| `gpt-5-mini`         | $0.25      | $2.00       | ~$1.12 |
-| `gpt-5-nano`         | $0.05      | $0.40       | ~$0.23 |
-| `gpt-4.1`            | $2.00      | $8.00       | ~$7.00 |
-| `gpt-4.1-mini`       | $0.40      | $1.60       | ~$1.40 |
-| `gpt-4.1-nano`       | $0.10      | $0.40       | ~$0.35 |
-| `gpt-4o`             | $2.50      | $10.00      | ~$8.75 |
-| `gpt-4o-mini`        | $0.15      | $0.60       | ~$0.53 |
-| `o4-mini`            | $1.10      | $4.40       | ~$3.85 |
-| `o4-mini-deep-research` | $2.00   | $8.00       | ~$7.00 |
-| `o3`                 | $2.00      | $8.00       | ~$7.00 |
-| `o3-pro`             | $20.00     | $80.00      | ~$70.00 |
-| `o3-mini`            | $1.10      | $4.40       | ~$3.85 |
-| `o3-deep-research`   | $10.00     | $40.00      | ~$35.00 |
-| `o1`                 | $15.00     | $60.00      | ~$52.50 |
-| `o1-pro`             | $150.00    | $600.00     | ~$525.00 |
-| `o1-mini`            | $1.10      | $4.40       | ~$3.85 |
+| model                      | input $/1M | output $/1M | est. cost on 315 photos |
+| -------------------------- | ---------- | ----------- | ---------------------- |
+| `gpt-5.1`                  | $1.25      | $10.00      | ~$5.62 |
+| `gpt-5`                    | $1.25      | $10.00      | ~$5.62 |
+| `gpt-5-mini`               | $0.25      | $2.00       | ~$1.12 |
+| `gpt-5-nano`               | $0.05      | $0.40       | ~$0.23 |
+| `gpt-4.1`                  | $2.00      | $8.00       | ~$7.00 |
+| `gpt-4.1-mini`             | $0.40      | $1.60       | ~$1.40 |
+| `gpt-4.1-nano`             | $0.10      | $0.40       | ~$0.35 |
+| `gpt-4o`                   | $2.50      | $10.00      | ~$8.75 |
+| `gpt-4o-mini`              | $0.15      | $0.60       | ~$0.53 |
+| `o4-mini`                  | $1.10      | $4.40       | ~$3.85 |
+| `o4-mini-deep-research`    | $2.00      | $8.00       | ~$7.00 |
+| `o3`                       | $2.00      | $8.00       | ~$7.00 |
+| `o3-pro`                   | $20.00     | $80.00      | ~$70.00 |
+| `o3-mini`                  | $1.10      | $4.40       | ~$3.85 |
+| `o3-deep-research`         | $10.00     | $40.00      | ~$35.00 |
+| `o1`                       | $15.00     | $60.00      | ~$52.50 |
+| `o1-pro`                   | $150.00    | $600.00     | ~$525.00 |
+| `o1-mini`                  | $1.10      | $4.40       | ~$3.85 |
 
 These figures are approximate and based on current
 [OpenAI pricing](https://openai.com/pricing). Actual costs will vary with output
