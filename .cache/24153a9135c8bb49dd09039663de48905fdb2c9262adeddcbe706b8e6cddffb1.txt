@@ -1,9 +1,0 @@
-{
-  "keep": {
-    "20250607T000911000000Z-DSCF0387.jpg": "Rich colors and dynamic movement of the water make this image compelling. The composition captures a serene yet lively scene, ideal for an exhibit.",
-    "20250606T233311000000Z-DSCF0235.jpg": "Captures a vibrant group moment with excellent lighting and expressions. The sense of joy and community shines through, offering a captivating human element."
-  },
-  "aside": {
-    "20250607T000854000000Z-DSCF0377.jpg": "Similar to the first one but less dynamic in water movement, making it less striking for an exhibit setting."
-  }
-}
