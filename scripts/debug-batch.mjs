@@ -44,13 +44,37 @@ async function peekJsonl(text, n = 10) {
   return { totalLines: lines.length, first };
 }
 
+function extractError(row) {
+  let err = row?.error || null;
+  if (!err && row?.response?.body) {
+    try {
+      const body =
+        typeof row.response.body === "string"
+          ? JSON.parse(row.response.body)
+          : row.response.body;
+      if (body?.error) {
+        err = body.error;
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return err;
+}
+
 function logErrorRow(row) {
   const cid = row.custom_id ?? "(no custom_id)";
-  const err = row.error || {};
+  const err = extractError(row) || {};
   const code = err.code ?? err.type ?? "unknown";
   const msg = err.message ?? "(no message)";
   const param = err.param ? ` param=${err.param}` : "";
   console.error(`  • ${cid}: [${code}] ${msg}${param}`);
+  if ((code === "unknown" || msg === "(no message)") && (row.error || row.response)) {
+    console.error(
+      "    raw error object:",
+      JSON.stringify(row.error ?? row.response, null, 2)
+    );
+  }
 }
 
 export async function debugBatch(batchId, { peek = 10 } = {}) {
@@ -91,7 +115,10 @@ export async function debugBatch(batchId, { peek = 10 } = {}) {
     const { totalLines, first } = await peekJsonl(errText, peek);
 
     const errorCodes = countBy(
-      first.map((r) => r?.error?.code ?? r?.error?.type ?? "unknown")
+      first.map((r) => {
+        const err = extractError(r);
+        return err?.code ?? err?.type ?? "unknown";
+      })
     );
     console.error(`❗ ${totalLines} error row(s). Summary by code/type:`);
     Object.entries(errorCodes).forEach(([k, v]) =>

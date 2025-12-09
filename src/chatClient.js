@@ -186,6 +186,29 @@ export async function getPeople(filename) {
     peopleCache.set(filename, []);
     return [];
   }
+  const normalizePeople = (payload) => {
+    let rawNames;
+    if (Array.isArray(payload?.people)) {
+      rawNames = payload.people;
+    } else if (Array.isArray(payload?.data)) {
+      rawNames = payload.data;
+    } else {
+      rawNames = [];
+      if (process.env.PHOTO_SELECT_VERBOSE === "1") {
+        console.warn(
+          `⚠️ Unexpected people payload for ${filename}: ${JSON.stringify(payload)}`
+        );
+      }
+    }
+    const names = rawNames
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry.name === "string") return entry.name;
+        return null;
+      })
+      .filter(Boolean);
+    return sanitizePeople(names);
+  };
   try {
     const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
       filename
@@ -195,7 +218,7 @@ export async function getPeople(filename) {
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    const names = Array.isArray(json.data) ? json.data : [];
+    const names = normalizePeople(json);
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
