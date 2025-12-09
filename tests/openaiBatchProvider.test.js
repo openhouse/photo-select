@@ -177,4 +177,54 @@ describe('OpenAIBatchProvider', () => {
     const resultsPath = path.join(tmpDir, '.batch', 'results', `${handle.batchId}.jsonl`);
     await expect(fs.stat(resultsPath)).resolves.toBeTruthy();
   });
+
+  it('wraps chat completions fallback schema and preserves messages', async () => {
+    const imagePath = path.join(tmpDir, 'with-people.jpg');
+    await fs.writeFile(imagePath, 'data');
+
+    const messagePayload = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: JSON.stringify({ filename: 'with-people.jpg', people: ['Ada', { name: 'Bob' }] }),
+          },
+          { type: 'input_image_url', image_url: { url: 'data:image/jpeg;base64,AAA' } },
+        ],
+      },
+    ];
+    const replySchema = { type: 'object', properties: { minutes: { type: 'array' } } };
+
+    helpers.buildMessages = vi.fn(async () => ({ messages: messagePayload, used: [imagePath] }));
+    helpers.buildReplySchema = vi.fn(() => replySchema);
+
+    const provider = new OpenAIBatchProvider({ client, helpers });
+    client.batches.create
+      .mockRejectedValueOnce(new Error('responses submit failed'))
+      .mockResolvedValueOnce({ id: 'batch_fb', status: 'validating' });
+    client.files.create
+      .mockResolvedValueOnce({ id: 'file_default' })
+      .mockResolvedValueOnce({ id: 'file_fallback' });
+
+    const handle = await provider.submit({
+      levelDir: tmpDir,
+      prompt: 'prompt',
+      images: [imagePath],
+      model: 'gpt-5',
+      curators: ['Curator'],
+    });
+
+    expect(handle.endpoint).toBe('/v1/chat/completions');
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    const jsonl = await fs.readFile(path.join(inputsDir, files[0]), 'utf8');
+    const line = JSON.parse(jsonl.trim());
+    expect(line.url).toBe('/v1/chat/completions');
+    expect(line.body.messages).toEqual(messagePayload);
+    expect(line.body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: { name: 'photo_select_reply', schema: replySchema, strict: true },
+    });
+  });
 });

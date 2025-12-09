@@ -438,7 +438,14 @@ export default class OpenAIBatchProvider {
     const body = {
       model,
       messages,
-      response_format: { type: 'json_schema', json_schema: schema },
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'photo_select_reply',
+          schema,
+          strict: true,
+        },
+      },
       max_tokens,
       temperature: 0.7,
     };

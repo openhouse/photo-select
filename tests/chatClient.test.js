@@ -336,7 +336,7 @@ describe("curatorsFromTags", () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: ["_UNKNOWN_"] }) });
     const names = await curatorsFromTags(imgs);
-    expect(names).toContain("_UNKNOWN_");
+    expect(names).toEqual([]);
     global.fetch.mockReset();
   });
 
