@@ -457,12 +457,14 @@ export async function triageDirectory(options) {
                   }
                 };
 
-                const photos = [];
-                for (const file of batch) {
-                  const name = path.basename(file);
-                  const people = sanitizePeople(await getPeople(name));
-                  photos.push({ file: name, people });
-                }
+                const names = batch.map((file) => path.basename(file));
+                const peopleLists = await Promise.all(
+                  names.map((name) => getPeople(name))
+                );
+                const photos = names.map((name, i) => ({
+                  file: name,
+                  people: sanitizePeople(peopleLists[i]),
+                }));
                 const { finalCurators, added } = finalizeCurators(curators, photos);
                 if (added.length) {
                   log(
