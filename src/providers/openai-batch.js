@@ -110,6 +110,17 @@ function extractStructured(payload) {
   return { text: JSON.stringify(payload), json: null };
 }
 
+function inferMissingScope(err) {
+  const msg = String(
+    err?.error?.message ||
+    err?.message ||
+    err?.response?.data?.error?.message ||
+    ''
+  );
+  const match = msg.match(/api\.[a-z]+\.[a-z]+/i);
+  return match ? match[0] : null;
+}
+
 async function streamToText(resp) {
   if (typeof resp.text === 'function') {
     return resp.text();
@@ -322,15 +333,55 @@ export default class OpenAIBatchProvider {
       });
       if (job.status === 'completed') {
         if (!job.output_file_id) {
-          console.error(
-            `⚠️  Batch ${handle.batchId} completed without output — running diagnostics…`
-          );
+          let rootCause;
+          if (job.error_file_id) {
+            try {
+              const errResp = await this.client.files.content(job.error_file_id);
+              const errText = await streamToText(errResp);
+              const firstError = errText
+                .split(/\r?\n/)
+                .filter(Boolean)
+                .map((line) => {
+                  try {
+                    return JSON.parse(line);
+                  } catch {
+                    return null;
+                  }
+                })
+                .find((row) => row?.error || row?.response?.body);
+              if (firstError?.error?.message) {
+                rootCause = firstError.error.message;
+              } else {
+                const body = typeof firstError?.response?.body === 'string'
+                  ? JSON.parse(firstError.response.body)
+                  : firstError?.response?.body;
+                if (body?.error?.message) {
+                  rootCause = body.error.message;
+                }
+              }
+            } catch (err) {
+              const scope = inferMissingScope(err);
+              if (scope) {
+                console.error(`⚠️  Missing scope ${scope} while reading batch error file ${job.error_file_id}.`);
+              }
+            }
+          }
+          console.error(`⚠️  Batch ${handle.batchId} completed without output${rootCause ? `: ${rootCause}` : ''}`);
           try {
             await debugBatch(handle.batchId);
           } catch (diagErr) {
-            console.error('❌ debugBatch helper failed:', diagErr);
+            const scope = inferMissingScope(diagErr);
+            if (scope) {
+              console.error(`⚠️  Missing scope ${scope}; skipping extended batch diagnostics.`);
+            } else {
+              console.error('❌ debugBatch helper failed:', diagErr?.message || diagErr);
+            }
           }
-          throw new Error(`Batch ${handle.batchId} completed without output`);
+          throw new Error(
+            rootCause
+              ? `Batch ${handle.batchId} completed without output: ${rootCause}`
+              : `Batch ${handle.batchId} completed without output`
+          );
         }
         const resp = await this.client.files.content(job.output_file_id);
         const text = await streamToText(resp);
@@ -430,7 +481,7 @@ export default class OpenAIBatchProvider {
       minutesMax,
       images: used.map((file) => path.basename(file)),
     });
-    const max_tokens = computeMaxOutputTokens({
+    const max_completion_tokens = computeMaxOutputTokens({
       decisionsCount: used.length,
       minutesCount: minutesMax,
       effort: 'low',
@@ -446,7 +497,7 @@ export default class OpenAIBatchProvider {
           strict: true,
         },
       },
-      max_tokens,
+      max_completion_tokens,
       temperature: 0.7,
     };
     if (verbosity) {

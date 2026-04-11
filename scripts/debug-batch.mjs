@@ -26,10 +26,31 @@ const safeParse = (line) => {
 const countBy = (arr) =>
   arr.reduce((acc, k) => ((acc[k] = (acc[k] || 0) + 1), acc), {});
 
+function missingScopeMessage(err, operation) {
+  const msg = String(
+    err?.error?.message ||
+    err?.message ||
+    err?.response?.data?.error?.message ||
+    ""
+  );
+  const scope = msg.match(/api\.[a-z]+\.[a-z]+/i)?.[0];
+  if (!scope) return null;
+  return `⚠️ Missing scope ${scope} required for ${operation}; skipping that diagnostic step.`;
+}
+
 async function fetchTextFile(fileId) {
   const client = getClient();
-  const res = await client.files.content(fileId);
-  return await res.text();
+  try {
+    const res = await client.files.content(fileId);
+    return await res.text();
+  } catch (err) {
+    const scopeMsg = missingScopeMessage(err, `reading file ${fileId}`);
+    if (scopeMsg) {
+      console.error(scopeMsg);
+      return null;
+    }
+    throw err;
+  }
 }
 
 async function saveToTmp(name, text) {
@@ -80,7 +101,17 @@ function logErrorRow(row) {
 export async function debugBatch(batchId, { peek = 10 } = {}) {
   console.error(`🔎 Debugging batch ${batchId} …`);
   const client = getClient();
-  const b = await client.batches.retrieve(batchId);
+  let b;
+  try {
+    b = await client.batches.retrieve(batchId);
+  } catch (err) {
+    const scopeMsg = missingScopeMessage(err, `retrieving batch ${batchId}`);
+    if (scopeMsg) {
+      console.error(scopeMsg);
+      return;
+    }
+    throw err;
+  }
 
   console.error("📋 Batch status:");
   console.error(pretty({
@@ -98,6 +129,7 @@ export async function debugBatch(batchId, { peek = 10 } = {}) {
 
   try {
     const inputText = await fetchTextFile(b.input_file_id);
+    if (!inputText) return;
     const inputLines = inputText.trim().split("\n").filter(Boolean);
     console.error(`📥 Input JSONL: ${inputLines.length} line(s).`);
     if (inputLines.length) {
@@ -110,6 +142,7 @@ export async function debugBatch(batchId, { peek = 10 } = {}) {
 
   if (b.error_file_id) {
     const errText = await fetchTextFile(b.error_file_id);
+    if (!errText) return;
     const errPath = await saveToTmp(`batch-${b.id}-errors.jsonl`, errText);
     console.error(`🧾 Saved error JSONL → ${errPath}`);
     const { totalLines, first } = await peekJsonl(errText, peek);
@@ -133,6 +166,7 @@ export async function debugBatch(batchId, { peek = 10 } = {}) {
 
   if (b.output_file_id) {
     const outText = await fetchTextFile(b.output_file_id);
+    if (!outText) return;
     const outPath = await saveToTmp(`batch-${b.id}-output.jsonl`, outText);
     console.error(`✅ Saved output JSONL → ${outPath}`);
     const { totalLines, first } = await peekJsonl(outText, peek);
