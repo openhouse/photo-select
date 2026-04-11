@@ -9,6 +9,19 @@ import { DEFAULT_PROMPT_PATH } from "./templates.js";
 import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
 
+function parseEnvFlag(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (/^(1|true|yes|on)$/i.test(String(value))) return true;
+  if (/^(0|false|no|off)$/i.test(String(value))) return false;
+  return fallback;
+}
+
+const disablePhotoFilterDefault = parseEnvFlag(
+  process.env.PHOTO_SELECT_DISABLE_PEOPLE,
+  false
+);
+
 const program = new Command();
 program
   .name("photo-select")
@@ -68,6 +81,18 @@ program
     "Save full prompts and responses for debugging"
   )
   .option(
+    "--update [bool]",
+    "Idempotent archive (skip unchanged files)",
+    (value) => parseEnvFlag(value, true),
+    true
+  )
+  .option("--force-rebuild", "Ignore manifest; rebuild archive")
+  .option(
+    "--stage-concurrency <n>",
+    "Maximum concurrent archive clones",
+    (v) => Math.max(1, parseInt(v, 10))
+  )
+  .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
     (v) => Math.max(1, parseInt(v, 10))
@@ -76,6 +101,11 @@ program
     "--concurrency <n>",
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
+  )
+  .option(
+    "--disable-photo-filter",
+    "Disable photo-filter API lookups for this job",
+    disablePhotoFilterDefault
   )
   .parse(process.argv);
 
@@ -92,11 +122,15 @@ let {
   fieldNotes,
   verbose,
   saveIo,
+  update,
+  forceRebuild,
+  stageConcurrency,
   workers,
   verbosity,
   reasoningEffort,
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
+  disablePhotoFilter,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -177,6 +211,9 @@ if (apiKey) {
 if (ollamaBaseUrl) {
   process.env.OLLAMA_BASE_URL = ollamaBaseUrl;
 }
+if (disablePhotoFilter) {
+  process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
+}
 
 const provider = providerName || 'openai';
 let finalModel = model;
@@ -213,12 +250,24 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       fieldNotes,
       verbose,
       saveIo,
+      update,
+      forceRebuild,
+      stageConcurrency,
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {
+    if (err?.code === "BILLING_LIMIT") {
+      console.error(
+        "🛑  Billing limit reached. Please review your provider usage before retrying."
+      );
+      if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
+        console.error("  ↳ cause:", err.cause);
+      }
+      process.exit(1);
+    }
     console.error("❌  Error:", err);
     process.exit(1);
   }

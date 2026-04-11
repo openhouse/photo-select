@@ -16,12 +16,26 @@ import {
 import { enforceEffortGuard } from "./effortGuard.js";
 import { getSurrogateImage } from "./imagePreprocessor.js";
 import { drain } from "./net.js";
+import { SimpleSemaphore } from "./lib/semaphore.js";
 
 function numEnv(name, fallback) {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function boolEnv(name, fallback = false) {
+  const v = process.env[name];
+  if (v == null || v === "") return fallback;
+  if (typeof v === "boolean") return v;
+  if (/^(1|true|yes|on)$/i.test(String(v))) return true;
+  if (/^(0|false|no|off)$/i.test(String(v))) return false;
+  return fallback;
+}
+
+function isPeopleLookupDisabled() {
+  return boolEnv("PHOTO_SELECT_DISABLE_PEOPLE", false);
 }
 
 const HTTP_DRIVER = String(
@@ -65,7 +79,7 @@ const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
 let peopleAgent;
-if (!USE_UNDICI) {
+if (!USE_UNDICI && !isPeopleLookupDisabled()) {
   peopleAgent = PEOPLE_API_BASE.startsWith("https")
     ? new KeepAliveAgent.HttpsAgent({
         keepAlive: true,
@@ -77,26 +91,6 @@ if (!USE_UNDICI) {
         maxSockets: PEOPLE_CONCURRENCY,
         maxFreeSockets: PEOPLE_CONCURRENCY,
       });
-}
-class SimpleSemaphore {
-  constructor(max) {
-    this.max = max;
-    this.inUse = 0;
-    this.q = [];
-  }
-  async run(fn) {
-    if (this.inUse >= this.max) {
-      await new Promise((resolve) => this.q.push(resolve));
-    }
-    this.inUse++;
-    try {
-      return await fn();
-    } finally {
-      this.inUse = Math.max(0, this.inUse - 1);
-      const next = this.q.shift();
-      if (next) next();
-    }
-  }
 }
 const peopleSem = new SimpleSemaphore(PEOPLE_CONCURRENCY);
 const peopleCache = new Map();
@@ -150,12 +144,15 @@ async function extractTextWithLogging(rsp) {
     rsp.output?.flatMap((o) =>
       o.type === "message" ? (o.content || []).map((c) => c.type) : [o.type]
     ) || [];
-  console.log(
-    `\uD83D\uDD0E responses.create content types: ${types.join(", ")}`
-  );
-  console.log(
-    `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
-  );
+  const verbose = process.env.PHOTO_SELECT_VERBOSE === "1";
+  if (verbose) {
+    console.error(
+      `\uD83D\uDD0E responses.create content types: ${types.join(", ")}`
+    );
+    console.error(
+      `\uD83D\uDD0E output_text length: ${rsp.output_text?.length || 0}`
+    );
+  }
   const { text, json, hasMessage } = extractPayload(rsp);
   const debug = process.env.PHOTO_SELECT_DEBUG;
   if (!hasMessage || !text.trim() || debug) {
@@ -173,7 +170,7 @@ async function extractTextWithLogging(rsp) {
     if (!hasMessage || !text.trim()) {
       await logWarn(`⚠️ Empty text; full Responses payload saved to ${f}`);
     } else {
-      console.log(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
+      console.error(`\uD83D\uDC1B  Saved raw Responses payload to ${f}`);
       await appendFile(
         path.join(dir, "warnings.log"),
         `Saved Responses payload to ${f}\n`
@@ -181,13 +178,40 @@ async function extractTextWithLogging(rsp) {
     }
   }
   if (debug) {
-    console.log(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
+    console.error(`\uD83D\uDC1B  First 400 chars: ${text.slice(0, 400)}`);
   }
   return { text, json, hasMessage };
 }
 
 export async function getPeople(filename) {
   if (peopleCache.has(filename)) return peopleCache.get(filename);
+  if (isPeopleLookupDisabled()) {
+    peopleCache.set(filename, []);
+    return [];
+  }
+  const normalizePeople = (payload) => {
+    let rawNames;
+    if (Array.isArray(payload?.people)) {
+      rawNames = payload.people;
+    } else if (Array.isArray(payload?.data)) {
+      rawNames = payload.data;
+    } else {
+      rawNames = [];
+      if (process.env.PHOTO_SELECT_VERBOSE === "1") {
+        console.warn(
+          `⚠️ Unexpected people payload for ${filename}: ${JSON.stringify(payload)}`
+        );
+      }
+    }
+    const names = rawNames
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry.name === "string") return entry.name;
+        return null;
+      })
+      .filter(Boolean);
+    return sanitizePeople(names);
+  };
   try {
     const url = `${PEOPLE_API_BASE}/api/photos/by-filename/${encodeURIComponent(
       filename
@@ -197,7 +221,7 @@ export async function getPeople(filename) {
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    const names = Array.isArray(json.data) ? json.data : [];
+    const names = normalizePeople(json);
     peopleCache.set(filename, names);
     return names;
   } catch (err) {
@@ -211,6 +235,7 @@ export async function getPeople(filename) {
 
 /** Return any people who appear in more than one file */
 export async function curatorsFromTags(files) {
+  if (isPeopleLookupDisabled()) return [];
   const counts = new Map();
   for (const file of files) {
     const name = path.basename(file);
@@ -294,6 +319,21 @@ function useColor() {
 }
 const dim = (s) => (useColor() ? `\x1b[2m${s}\x1b[0m` : s);
 
+function buildImageDataUrl({ buffer, file, mimeType = "image/jpeg" }) {
+  if (!buffer || buffer.length <= 0) {
+    throw new Error(`Empty image buffer for ${file}`);
+  }
+  const base64 = buffer.toString("base64");
+  if (!base64) {
+    throw new Error(`Empty base64 image payload for ${file}`);
+  }
+  const url = `data:${mimeType};base64,${base64}`;
+  if (!url.startsWith("data:image/") || !url.includes(";base64,")) {
+    throw new Error(`Malformed data URL for ${file}`);
+  }
+  return url;
+}
+
 async function getCachedReply(key, used = []) {
   try {
     const file = path.join(CACHE_DIR, `${key}.txt`);
@@ -364,13 +404,13 @@ export async function buildMessages(prompt, images, curators = []) {
     let buffer;
     try {
       buffer = await getSurrogateImage(abs);
-    } catch {
+    } catch (err) {
+      if (/empty surrogate/i.test(String(err?.message || ""))) throw err;
       continue;
     }
+    const dataUrl = buildImageDataUrl({ buffer, file });
     used.push(file);
-    const base64 = buffer.toString("base64");
     const name = path.basename(file);
-    const ext = path.extname(file).slice(1) || "jpeg";
     const peopleRaw = await getPeople(name);
     const people = sanitizePeople(peopleRaw);
     const dropped = peopleRaw.filter((p) => isPlaceholder(p));
@@ -387,7 +427,7 @@ export async function buildMessages(prompt, images, curators = []) {
       {
         type: "image_url",
         image_url: {
-          url: `data:image/${ext};base64,${base64}`,
+          url: dataUrl,
           detail: "high",
         },
       }
@@ -419,13 +459,13 @@ export async function buildInput(prompt, images, curators = []) {
     let buffer;
     try {
       buffer = await getSurrogateImage(abs);
-    } catch {
+    } catch (err) {
+      if (/empty surrogate/i.test(String(err?.message || ""))) throw err;
       continue;
     }
+    const dataUrl = buildImageDataUrl({ buffer, file });
     used.push(file);
-    const base64 = buffer.toString("base64");
     const name = path.basename(file);
-    const ext = path.extname(file).slice(1) || "jpeg";
     const peopleRaw = await getPeople(name);
     const people = sanitizePeople(peopleRaw);
     const dropped = peopleRaw.filter((p) => isPlaceholder(p));
@@ -441,7 +481,7 @@ export async function buildInput(prompt, images, curators = []) {
       { type: "input_text", text: JSON.stringify(info) },
       {
         type: "input_image",
-        image_url: `data:image/${ext};base64,${base64}`,
+        image_url: dataUrl,
         detail: "high",
       }
     );
@@ -710,7 +750,7 @@ export async function chatCompletion({
       } else if (responseFormat !== null) {
         baseParams.response_format = responseFormat;
       }
-      const needsCompletionTokens = /^o\d/.test(model);
+      const needsCompletionTokens = /^o\d/.test(model) || /^gpt-5/i.test(model);
       if (needsCompletionTokens) {
         baseParams.max_completion_tokens = max_output_tokens;
       } else {

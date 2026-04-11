@@ -18,7 +18,22 @@ const OLLAMA_NUM_PREDICT = Number.parseInt(
   10
 ) || MAX_RESPONSE_TOKENS;
 
+const kPromise = Symbol('ollama-handle');
+
 export default class OllamaProvider {
+  name = 'ollama';
+  supportsAsync = false;
+
+  async submit(options = {}) {
+    const promise = this.chat(options);
+    return { provider: this.name, [kPromise]: promise };
+  }
+
+  async collect(handle) {
+    const raw = await handle[kPromise];
+    return { raw };
+  }
+
   async chat({
     prompt,
     images,

@@ -27,7 +27,8 @@ describe('OpenAIProvider', () => {
   it('generates schema when env is unset', async () => {
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat({ expectFieldNotesInstructions: true });
+    const handle = await provider.submit({ expectFieldNotesInstructions: true });
+    await provider.collect(handle);
     expect(callArgs.responseFormat.schema.properties).toHaveProperty(
       'field_notes_instructions'
     );
@@ -37,7 +38,8 @@ describe('OpenAIProvider', () => {
     process.env.PHOTO_SELECT_OPENAI_FORMAT = 'json_object';
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat();
+    const handle = await provider.submit();
+    await provider.collect(handle);
     expect(callArgs.responseFormat).toEqual({ type: 'json_object' });
   });
 
@@ -45,7 +47,8 @@ describe('OpenAIProvider', () => {
     process.env.PHOTO_SELECT_OPENAI_FORMAT = '';
     const OpenAIProvider = await loadProvider();
     const provider = new OpenAIProvider();
-    await provider.chat();
+    const handle = await provider.submit();
+    await provider.collect(handle);
     expect(callArgs.responseFormat).toBeUndefined();
   });
 });

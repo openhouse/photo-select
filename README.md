@@ -3,6 +3,13 @@
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
+You can run sessions in two “gears”:
+
+- **Realtime (`openai`)** – submit a request and stream the reply immediately.
+- **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
+  then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
+  Batch offers separate rate limits and lower per-token pricing than realtime calls.
+
 ---
 
 ## Requirements
@@ -51,7 +58,7 @@ Invoke the CLI from the project directory using `npx`:
 ```bash
 npx photo-select \
   [--dir /path/to/images] \
-  [--provider ollama] \
+  [--provider openai|openai-batch|ollama] \
   [--model qwen2.5vl:32b] \
   [--api-key sk-...] \
   [--context /path/to/context.txt]
@@ -64,14 +71,49 @@ You can also install globally with `npm install -g` to run `photo-select` anywhe
 ```bash
 # run from the project directory
 npx photo-select --provider openai --model gpt-4o [other flags]
+# enqueue a batch job for the current level
+npx photo-select --provider openai-batch --model gpt-5 [other flags]
 # or, if installed globally:
 photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
 
 Run `photo-select --help` to see all options.
 
+The OpenAI providers both generate multimodal, structured responses; the batch
+transport simply defers collection until the job completes. Use `photo-select
+batch watch` to poll for finished jobs and apply their minutes/decisions.
+
 The Ollama provider uses the official `ollama` JavaScript library. Images are
 sent by file path so no base64 encoding step is required.
+
+### Gears & durable state
+
+Each recursion level stores its provider “gear” in
+`<level>/.photo-select/gear.json`. Switch gears without restarting by running:
+
+```bash
+photo-select gear openai        # realtime
+photo-select gear openai-batch  # batch
+```
+
+In-flight sessions finish on the gear they started with. Batch mode writes
+JSONL inputs, tickets, and results to `<level>/.photo-select/` alongside the
+minutes/decisions files so you can pause, resume, or audit progress later.
+
+To check progress or apply finished jobs manually:
+
+```bash
+photo-select batch watch --dir /path/to/story   # poll & apply results
+photo-select batch ls                           # list known batch jobs
+photo-select batch cancel <batch_id>            # best-effort cancel
+photo-select probe --n 3                        # realtime, read-only tasting
+```
+
+Batch-specific environment variables mirror these flags:
+
+- `PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS` – override the polling cadence.
+- `PHOTO_SELECT_BATCH_MAX_IN_FLIGHT` – cap concurrent batch jobs per level.
+- `PHOTO_SELECT_BATCH_SQLITE=1` – ensure the per-level SQLite ledger is created.
 
 ### photo-select-here.sh
 
@@ -107,7 +149,7 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--provider` | `openai` | `openai` or `ollama` |
+| `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
 | `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
@@ -120,7 +162,13 @@ through to the script unchanged.
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
 | `--save-io` | `false` | Save prompts and responses for debugging |
-| `--workers` | *(unset)* | Max number of worker processes; each starts a new batch as soon as it finishes |
+| `--update [bool]` | `true` | Reuse archived files when unchanged; `false` forces re-clone |
+| `--force-rebuild` | `false` | Ignore the archive manifest and rebuild every file |
+| `--stage-concurrency` | *(unset)* | Override filesystem staging concurrency (`PHOTO_SELECT_STAGE_CONCURRENCY` / `PHOTO_SELECT_FS_CONCURRENCY`) |
+| `--workers` | *(unset)* | Max number of concurrent sessions. For batch, this caps in-flight jobs per level |
+| `--batch-check-interval` | `60s` | Poll cadence for `photo-select batch watch` |
+| `--batch-window` | `24h` | Completion window requested for batch jobs |
+| `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
 People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
@@ -143,6 +191,18 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=8192 \
 
 The value is passed directly to `--max-old-space-size`, so adjust it to match your
 available RAM.
+
+#### Resume semantics
+
+Interrupted runs resume quickly. Each `_level-*` archive keeps an append-only manifest
+(`.ps-manifest.jsonl` plus a snapshot `.manifest.json`), a staging log (`.staged.jsonl`),
+and a heartbeat file (`.run.json`). After all files finish cloning, a `.ok` sentinel is
+written. On restart, `photo-select` skips any level that already has `.ok`, and for
+other levels it skips individual files whose size/mtime match the manifest. Use
+`--update false` to disable this cache (re-cloning every file) or `--force-rebuild`
+to ignore existing manifests. Filesystem concurrency defaults to 12 (from
+`PHOTO_SELECT_FS_CONCURRENCY`); override it with `PHOTO_SELECT_STAGE_CONCURRENCY`
+or the `--stage-concurrency` flag when staging needs to be throttled.
 
 ### Concurrency: `--workers` (recommended)
 
@@ -274,7 +334,7 @@ on startup.
 
 ### People metadata (optional)
 
-Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run.
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip these lookups for a single job.
 
 Example:
 
@@ -287,9 +347,10 @@ PHOTO_FILTER_API_BASE=http://localhost:3000 \
 
 ## Supported OpenAI models
 
-The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
+The CLI calls the Chat Completions API and automatically switches to `/v1/responses` if a model only supports that endpoint. In batch mode, each session is serialized to a single JSONL line and submitted to the Batch API with the same structured-output schema. Any vision-capable chat model listed on OpenAI's [models](https://platform.openai.com/docs/models) page should work, including:
 
-* **GPT‑5 family** – `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, and `gpt-5-chat-latest`
+* **GPT‑5.1 / GPT‑5 family** – `gpt-5.1`, `gpt-5`, `gpt-5-mini`,
+  `gpt-5-nano`, `gpt-5.1-chat-latest`, and `gpt-5-chat-latest`
 * **GPT‑4.1 family** – `gpt-4.1`, `gpt-4.1-mini`, and `gpt-4.1-nano`
 * **GPT‑4o family** – `gpt-4o` (default), `gpt-4o-mini`, `gpt-4o-audio-preview`,
   `gpt-4o-mini-audio-preview`, `gpt-4o-realtime-preview`,
@@ -354,25 +415,26 @@ full 315‑photo set therefore uses about 2.5 million input tokens plus roughl
 
 Approximate price per run:
 
-| model                | input $/1M | output $/1M | est. cost on 315 photos |
-| -------------------- | ---------- | ----------- | ---------------------- |
-| `gpt-5`              | $1.25      | $10.00      | ~$5.62 |
-| `gpt-5-mini`         | $0.25      | $2.00       | ~$1.12 |
-| `gpt-5-nano`         | $0.05      | $0.40       | ~$0.23 |
-| `gpt-4.1`            | $2.00      | $8.00       | ~$7.00 |
-| `gpt-4.1-mini`       | $0.40      | $1.60       | ~$1.40 |
-| `gpt-4.1-nano`       | $0.10      | $0.40       | ~$0.35 |
-| `gpt-4o`             | $2.50      | $10.00      | ~$8.75 |
-| `gpt-4o-mini`        | $0.15      | $0.60       | ~$0.53 |
-| `o4-mini`            | $1.10      | $4.40       | ~$3.85 |
-| `o4-mini-deep-research` | $2.00   | $8.00       | ~$7.00 |
-| `o3`                 | $2.00      | $8.00       | ~$7.00 |
-| `o3-pro`             | $20.00     | $80.00      | ~$70.00 |
-| `o3-mini`            | $1.10      | $4.40       | ~$3.85 |
-| `o3-deep-research`   | $10.00     | $40.00      | ~$35.00 |
-| `o1`                 | $15.00     | $60.00      | ~$52.50 |
-| `o1-pro`             | $150.00    | $600.00     | ~$525.00 |
-| `o1-mini`            | $1.10      | $4.40       | ~$3.85 |
+| model                      | input $/1M | output $/1M | est. cost on 315 photos |
+| -------------------------- | ---------- | ----------- | ---------------------- |
+| `gpt-5.1`                  | $1.25      | $10.00      | ~$5.62 |
+| `gpt-5`                    | $1.25      | $10.00      | ~$5.62 |
+| `gpt-5-mini`               | $0.25      | $2.00       | ~$1.12 |
+| `gpt-5-nano`               | $0.05      | $0.40       | ~$0.23 |
+| `gpt-4.1`                  | $2.00      | $8.00       | ~$7.00 |
+| `gpt-4.1-mini`             | $0.40      | $1.60       | ~$1.40 |
+| `gpt-4.1-nano`             | $0.10      | $0.40       | ~$0.35 |
+| `gpt-4o`                   | $2.50      | $10.00      | ~$8.75 |
+| `gpt-4o-mini`              | $0.15      | $0.60       | ~$0.53 |
+| `o4-mini`                  | $1.10      | $4.40       | ~$3.85 |
+| `o4-mini-deep-research`    | $2.00      | $8.00       | ~$7.00 |
+| `o3`                       | $2.00      | $8.00       | ~$7.00 |
+| `o3-pro`                   | $20.00     | $80.00      | ~$70.00 |
+| `o3-mini`                  | $1.10      | $4.40       | ~$3.85 |
+| `o3-deep-research`         | $10.00     | $40.00      | ~$35.00 |
+| `o1`                       | $15.00     | $60.00      | ~$52.50 |
+| `o1-pro`                   | $150.00    | $600.00     | ~$525.00 |
+| `o1-mini`                  | $1.10      | $4.40       | ~$3.85 |
 
 These figures are approximate and based on current
 [OpenAI pricing](https://openai.com/pricing). Actual costs will vary with output

@@ -1,10 +1,10 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, copyFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
-import { delay } from "./config.js";
+import { ensureArchiveLevel } from "./archive/ensureArchiveLevel.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
 import { parseReply, getPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
@@ -183,6 +183,42 @@ function formatDuration(ms) {
   return `${s}s`;
 }
 
+async function dirExists(p) {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch (err) {
+    if (err?.code === "ENOENT") return false;
+    throw err;
+  }
+}
+
+/**
+ * Follow the _keep chain until we find a directory with unclassified images or
+ * run out of nested _keep folders.
+ *
+ * @param {string} startDir
+ * @returns {Promise<{dir: string, hops: number}>}
+ */
+export async function resolveResumeLevel(startDir) {
+  let current = startDir;
+  let hops = 0;
+
+  while (true) {
+    const imagesHere = await listImages(current);
+    if (imagesHere.length > 0) {
+      return { dir: current, hops };
+    }
+
+    const next = path.join(current, "_keep");
+    if (!(await dirExists(next))) {
+      return { dir: current, hops };
+    }
+
+    current = next;
+    hops += 1;
+  }
+}
+
 /**
  * Recursively triage images until the current directory is empty
  * or contains only _keep/_aside folders.
@@ -198,29 +234,59 @@ function formatDuration(ms) {
 * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
 * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
-export async function triageDirectory({
-  dir,
-  promptPath,
-  provider,
-  model,
-  recurse = true,
-  curators = [],
-  contextPath,
-  fieldNotes = false,
-  verbose = false,
-  saveIo = false,
-  workers = 1,
-  verbosity,
-  reasoningEffort,
-  depth = 0,
-  gitRoot,
-}) {
+export async function triageDirectory(options) {
+  let {
+    dir,
+    promptPath,
+    provider,
+    model,
+    recurse = true,
+    curators = [],
+    contextPath,
+    fieldNotes = false,
+    verbose = false,
+    saveIo = false,
+    workers = 1,
+    verbosity,
+    reasoningEffort,
+    depth = 0,
+    gitRoot,
+    update = true,
+    forceRebuild = false,
+    stageConcurrency,
+  } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
+
+  function isBillingLimitError(err) {
+    if (!err) return false;
+    const candidates = [
+      err?.message,
+      err?.error?.message,
+      err?.cause?.message,
+      err?.response?.data?.error?.message,
+      err?.response?.data?.message,
+      err?.response?.error?.message,
+      err?.response?.message,
+      err?.body?.error?.message,
+      err?.body?.message,
+    ]
+      .flat()
+      .filter(Boolean)
+      .map((msg) => String(msg));
+    return candidates.some((message) => /billing (hard )?limit/i.test(message));
+  }
+
+  function createBillingLimitError(err) {
+    const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
+    wrapped.code = "BILLING_LIMIT";
+    wrapped.cause = err;
+    return wrapped;
+  }
 
   let dynamicWorkers = workers;
   let consecutiveGatewayErrors = 0;
@@ -248,6 +314,28 @@ export async function triageDirectory({
   }
 
   if (!gitRoot) gitRoot = dir;
+
+  if (recurse) {
+    const { dir: workDir, hops } = await resolveResumeLevel(dir);
+    if (workDir !== dir) {
+      const relative = path.relative(dir, workDir) || ".";
+      const prettyRelative = relative === "." ? "." : relative.split(path.sep).join("/");
+      console.log(
+        `${indent}↘️  No unclassified images at this level; resuming in ${prettyRelative}`
+      );
+      return triageDirectory({
+        ...options,
+        dir: workDir,
+        depth: depth + hops,
+        provider,
+        gitRoot,
+        update,
+        forceRebuild,
+        stageConcurrency,
+      });
+    }
+  }
+
   if (fieldNotes && depth === 0) {
     await ensureGitRepo(gitRoot);
   }
@@ -256,6 +344,13 @@ export async function triageDirectory({
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const runSession = async (payload) => {
+    const handle = await provider.submit({
+      levelDir,
+      ...payload,
+    });
+    return provider.collect(handle);
+  };
   const initImages = await listImages(dir);
   const levelStart = Date.now();
   const totalImages = initImages.length;
@@ -265,46 +360,22 @@ export async function triageDirectory({
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
     await mkdir(path.join(levelDir, '_responses'), { recursive: true });
   }
-  const failedArchives = [];
-  const copyFileSafe = async (
-    src,
-    dest,
-    attempt = 0,
-    maxAttempts = 3
-  ) => {
-    try {
-      await copyFile(src, dest);
-    } catch (err) {
-      if (err?.code === "ECANCELED" && attempt < maxAttempts) {
-        const wait = (attempt + 1) * 1000;
-        console.warn(`${indent}⏳  Waiting for network file ${src} (${wait}ms)…`);
-        try {
-          await stat(src);
-        } catch {
-          // ignore
-        }
-        await delay(wait);
-        return copyFileSafe(src, dest, attempt + 1, maxAttempts);
-      }
-      throw err;
-    }
-  };
-  await Promise.all(
-    initImages.map(async (file) => {
-      const dest = path.join(levelDir, path.basename(file));
-      try {
-        await copyFileSafe(file, dest);
-      } catch (err) {
-        failedArchives.push(file);
-        console.warn(`${indent}⚠️  Failed to archive ${file}: ${err.message}`);
-      }
-    })
-  );
-  if (failedArchives.length) {
+  if (!update && depth === 0) {
+    console.warn("⚠️ archive update disabled — will re-clone all files");
+  }
+  const archiveResult = await ensureArchiveLevel({
+    levelDir,
+    files: initImages,
+    update,
+    forceRebuild,
+    stageConcurrency,
+    verbose,
+  });
+  if (archiveResult.failed?.length) {
     const listPath = path.join(levelDir, "failed-archives.txt");
-    await writeFile(listPath, failedArchives.join("\n"), "utf8");
+    await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
     console.warn(
-      `${indent}⚠️  ${failedArchives.length} file(s) failed to archive; see ${listPath}`
+      `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
     );
   }
 
@@ -342,13 +413,14 @@ export async function triageDirectory({
         const getBar = (idx) =>
           multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
         const log = (msg) => {
-          for (const line of String(msg).split(/\n/)) {
-            multibar.log(line + "\n");
-            if (process.env.NODE_ENV === "test") console.log(line);
-          }
+          const text = String(msg).endsWith("\n") ? String(msg) : `${String(msg)}\n`;
+          multibar.log(text);
+          if (process.env.NODE_ENV === "test") console.log(text.trimEnd());
         };
         let batchIdx = 0;
-        const nextBatch = () => (queue.length ? queue.splice(0, BATCH_SIZE) : null);
+        let abortProcessing = false;
+        const nextBatch = () =>
+          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
 
         async function workerFn() {
           while (true) {
@@ -384,12 +456,14 @@ export async function triageDirectory({
                   }
                 };
 
-                const photos = [];
-                for (const file of batch) {
-                  const name = path.basename(file);
-                  const people = sanitizePeople(await getPeople(name));
-                  photos.push({ file: name, people });
-                }
+                const names = batch.map((file) => path.basename(file));
+                const peopleLists = await Promise.all(
+                  names.map((name) => getPeople(name))
+                );
+                const photos = names.map((name, i) => ({
+                  file: name,
+                  people: sanitizePeople(peopleLists[i]),
+                }));
                 const { finalCurators, added } = finalizeCurators(curators, photos);
                 if (added.length) {
                   log(
@@ -406,7 +480,7 @@ export async function triageDirectory({
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
                 await saveText('prompt', attemptNum, first.prompt);
-                reply = await provider.chat({
+                const { raw: firstRaw } = await runSession({
                   prompt: first.prompt,
                   images: batch,
                   model,
@@ -420,6 +494,7 @@ export async function triageDirectory({
                   },
                   stream: true,
                 });
+                reply = firstRaw;
                 await saveText('response', attemptNum, reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
@@ -443,7 +518,7 @@ export async function triageDirectory({
                     ].join("\n");
                     attemptNum++;
                     await saveText('prompt', attemptNum, repair);
-                    reply = await provider.chat({
+                    const { raw: repairRaw } = await runSession({
                       prompt: repair,
                       images: batch,
                       model,
@@ -457,6 +532,7 @@ export async function triageDirectory({
                       },
                       stream: true,
                     });
+                    reply = repairRaw;
                     await saveText('response', attemptNum, reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
@@ -563,6 +639,12 @@ export async function triageDirectory({
                 bar.stop();
                 multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                if (isBillingLimitError(err) && !abortProcessing) {
+                  abortProcessing = true;
+                  queue.length = 0;
+                  log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
+                  throw createBillingLimitError(err);
+                }
               }
             });
           }
@@ -592,14 +674,24 @@ export async function triageDirectory({
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
     const asideDir = path.join(dir, "_aside");
-    let keepExists = false;
-    try {
-      keepExists = (await stat(keepDir)).isDirectory();
-    } catch {
-      // ignore
-    }
 
-    if (keepExists) {
+    const countImages = async (folder) => {
+      try {
+        return (await listImages(folder)).length;
+      } catch (err) {
+        if (err?.code === "ENOENT") return 0;
+        throw err;
+      }
+    };
+
+    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+      countImages(keepDir),
+      countImages(asideDir),
+      dirExists(path.join(keepDir, "_keep")),
+    ]);
+
+    const keepHasWork = keepCount > 0 || hasDeeperKeep;
+    if (keepHasWork) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -616,25 +708,13 @@ export async function triageDirectory({
         reasoningEffort,
         depth: depth + 1,
         gitRoot,
+        update,
+        forceRebuild,
+        stageConcurrency,
       });
-    } else {
-      let keepCount = 0;
-      let asideCount = 0;
-      try {
-        keepCount = (await listImages(keepDir)).length;
-      } catch {
-        // ignore
-      }
-      try {
-        asideCount = (await listImages(asideDir)).length;
-      } catch {
-        // ignore
-      }
-
-      if (keepCount || asideCount) {
-        const status = keepCount ? "kept" : "set aside";
-        console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
-      }
+    } else if (keepCount || asideCount) {
+      const status = keepCount ? "kept" : "set aside";
+      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
 }

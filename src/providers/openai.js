@@ -4,8 +4,22 @@ import { parseFormatEnv } from '../formatOverride.js';
 import path from 'node:path';
 
 const OPENAI_FORMAT_OVERRIDE = parseFormatEnv('PHOTO_SELECT_OPENAI_FORMAT');
+const kPromise = Symbol('openai-handle-promise');
 
 export default class OpenAIProvider {
+  name = 'openai';
+  supportsAsync = false;
+
+  async submit(options = {}) {
+    const promise = this.chat(options);
+    return { provider: this.name, [kPromise]: promise };
+  }
+
+  async collect(handle) {
+    const raw = await handle[kPromise];
+    return { raw };
+  }
+
   async chat({
     expectFieldNotesInstructions = false,
     expectFieldNotesMd = false,

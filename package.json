@@ -9,7 +9,8 @@
   "scripts": {
     "start": "photo-select",
     "test": "vitest run",
-    "undici:smoke": "node scripts/undici-smoke.mjs"
+    "undici:smoke": "node scripts/undici-smoke.mjs",
+    "debug:batch": "node scripts/debug-batch.mjs"
   },
   "engines": {
     "node": ">=20"
