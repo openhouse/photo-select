@@ -413,10 +413,9 @@ export async function triageDirectory(options) {
         const getBar = (idx) =>
           multibar.create(4, 0, { prefix: `Batch ${idx}`, stage: "queued" });
         const log = (msg) => {
-          for (const line of String(msg).split(/\n/)) {
-            multibar.log(line + "\n");
-            if (process.env.NODE_ENV === "test") console.log(line);
-          }
+          const text = String(msg).endsWith("\n") ? String(msg) : `${String(msg)}\n`;
+          multibar.log(text);
+          if (process.env.NODE_ENV === "test") console.log(text.trimEnd());
         };
         let batchIdx = 0;
         let abortProcessing = false;
