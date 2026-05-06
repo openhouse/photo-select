@@ -68,6 +68,7 @@ describe('OpenAIBatchProvider', () => {
   });
 
   afterEach(async () => {
+    delete process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES;
     await fs.rm(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
@@ -228,7 +229,8 @@ describe('OpenAIBatchProvider', () => {
     });
   });
 
-  it('rejects incomplete Responses envelopes without returning raw JSON text', async () => {
+  it('rejects incomplete Responses envelopes without returning raw JSON text when retries are disabled', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '0';
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -266,10 +268,85 @@ describe('OpenAIBatchProvider', () => {
     await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_NO_OUTPUT' });
   });
 
-  it('rejects invalid reasoning effort before submission', async () => {
+  it('accepts xhigh reasoning effort and rejects truly invalid effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
-    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).resolves.toMatchObject({ provider: 'openai-batch' });
+    client.files.create.mockClear();
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
     expect(client.files.create).not.toHaveBeenCalled();
+  });
+
+
+  it('writes dynamic output budget metadata and high-detail image estimates', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
+    const imagePath = path.join(tmpDir, 'budget.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({
+      levelDir: tmpDir,
+      prompt: 'x'.repeat(10000),
+      images: [imagePath],
+      model: 'gpt-5.4',
+      reasoningEffort: 'xhigh',
+      verbosity: 'high',
+      minutesMin: 52,
+      minutesMax: 77,
+      curators: Array.from({ length: 40 }, (_, i) => `Curator ${i}`),
+      baseCuratorCount: 30,
+      dynamicCuratorCount: 10,
+    });
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    const line = JSON.parse(await fs.readFile(path.join(inputsDir, files[0]), 'utf8'));
+    expect(line.body.max_output_tokens).toBeGreaterThanOrEqual(64000);
+    const ticket = JSON.parse(await fs.readFile(handle.ticketPath, 'utf8'));
+    expect(ticket.output_budget.max_output_tokens).toBe(line.body.max_output_tokens);
+    expect(ticket.output_budget.dynamic_curator_count).toBe(10);
+    expect(ticket.output_budget.estimated_input_tokens).toBeGreaterThan(0);
+  });
+
+  it('retries max_output_tokens incomplete Responses with a larger budget before succeeding', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '1';
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
+    client.batches.create
+      .mockResolvedValueOnce({ id: 'batch_first', status: 'validating' })
+      .mockResolvedValueOnce({ id: 'batch_retry', status: 'validating' });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt', images: [imagePath], model: 'gpt-5', reasoningEffort: 'xhigh' });
+    client.batches.retrieve.mockResolvedValue({ status: 'completed', output_file_id: 'out' });
+    const incomplete = {
+      object: 'response',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      usage: { output_tokens: 8192, output_tokens_details: { reasoning_tokens: 8192 } },
+    };
+    client.files.content
+      .mockResolvedValueOnce({
+        text: async () => JSON.stringify({ custom_id: handle.customId, response: { status_code: 200, body: incomplete } }) + '\n',
+      })
+      .mockImplementationOnce(async () => {
+        const retryCustomId = client.batches.create.mock.calls[1][0].metadata.custom_id;
+        return {
+          text: async () => JSON.stringify({
+            custom_id: retryCustomId,
+            response: {
+              status_code: 200,
+              body: {
+                object: 'response',
+                status: 'completed',
+                output: [{ type: 'message', content: [{ type: 'output_json', json: { minutes: [], decisions: [] } }] }],
+                usage: { input_tokens: 100, output_tokens: 200, output_tokens_details: { reasoning_tokens: 50 } },
+              },
+            },
+          }) + '\n',
+        };
+      });
+    const result = await provider.collect(handle);
+    expect(result.json).toEqual({ minutes: [], decisions: [] });
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
+    const firstMax = Number(client.batches.create.mock.calls[0][0].metadata.max_output_tokens);
+    const retryMax = Number(client.batches.create.mock.calls[1][0].metadata.max_output_tokens);
+    expect(retryMax).toBeGreaterThan(firstMax);
   });
 
 });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
 import { buildReplySchema } from '../replySchema.js';
-import { computeMaxOutputTokens } from '../tokenEstimate.js';
+import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens, outputBudgetMetadata } from '../tokenEstimate.js';
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
 
@@ -15,7 +15,7 @@ const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
-const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high']);
+const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
 const MAX_SAFE_ID_LENGTH = 200;
 
@@ -59,7 +59,7 @@ async function appendLedger(baseDir, entry) {
   await appendFile(file, line + '\n');
 }
 
-function computeCustomId({ levelDir, prompt, model, curators = [], used = [], minutesMin, minutesMax, reasoningEffort, verbosity }) {
+function computeCustomId({ levelDir, prompt, model, curators = [], used = [], minutesMin, minutesMax, reasoningEffort, verbosity, budgetAttempt = 1, maxOutputTokens = 0 }) {
   const hash = crypto.createHash('sha256');
   hash.update(levelKey(levelDir));
   hash.update(model || '');
@@ -67,6 +67,8 @@ function computeCustomId({ levelDir, prompt, model, curators = [], used = [], mi
   if (curators.length) hash.update(curators.join(','));
   if (reasoningEffort) hash.update(reasoningEffort);
   if (verbosity) hash.update(String(verbosity));
+  hash.update(String(budgetAttempt ?? 1));
+  hash.update(String(maxOutputTokens ?? 0));
   hash.update(String(minutesMin ?? ''));
   hash.update(String(minutesMax ?? ''));
   for (const file of used) {
@@ -239,6 +241,10 @@ export default class OpenAIBatchProvider {
       minutesMax = 12,
       reasoningEffort,
       verbosity = 'low',
+      budgetAttempt = 1,
+      previousIncomplete = null,
+      baseCuratorCount = curators.length,
+      dynamicCuratorCount = Math.max(0, curators.length - baseCuratorCount),
     } = options;
     if (!levelDir) throw new Error('levelDir is required for openai-batch provider');
     if (reasoningEffort && !ALLOWED_REASONING_EFFORT.has(reasoningEffort)) {
@@ -254,6 +260,9 @@ export default class OpenAIBatchProvider {
       minutesMax,
       reasoningEffort,
       verbosity,
+      budgetAttempt,
+      baseCuratorCount,
+      dynamicCuratorCount,
     });
     const customId = computeCustomId({
       levelDir,
@@ -265,6 +274,8 @@ export default class OpenAIBatchProvider {
       minutesMax,
       reasoningEffort,
       verbosity,
+      budgetAttempt,
+      maxOutputTokens: responsesRequest.budget?.maxOutputTokens || responsesRequest.body?.max_output_tokens,
     });
     const safe = safeId(customId);
 
@@ -312,6 +323,8 @@ export default class OpenAIBatchProvider {
             custom_id: customId,
             model,
             level: levelKey(levelDir),
+            budget_attempt: String(budgetAttempt),
+            max_output_tokens: String(responsesRequest.budget?.maxOutputTokens || responsesRequest.body?.max_output_tokens || ''),
           },
         });
         endpointUsed = endpoint;
@@ -346,6 +359,9 @@ export default class OpenAIBatchProvider {
       submitted_at: submittedAt,
       completion_window: this.completionWindow,
       used_images: responsesRequest.used.map((file) => path.basename(file)),
+      budgetAttempt,
+      previousIncomplete,
+      output_budget: responsesRequest.outputBudget,
     };
     await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
     await appendLedger(dirs.base, {
@@ -354,6 +370,8 @@ export default class OpenAIBatchProvider {
       batch_id: batch.id,
       endpoint: endpointUsed,
       status: batch.status,
+      budget_attempt: budgetAttempt,
+      output_budget: responsesRequest.outputBudget,
     });
 
     const statusPath = path.join(dirs.status, `${safe}.status.json`);
@@ -370,6 +388,9 @@ export default class OpenAIBatchProvider {
       safeId: safe,
       used: responsesRequest.used,
       endpoint: endpointUsed,
+      requestOptions: { levelDir, prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity, baseCuratorCount, dynamicCuratorCount },
+      budgetAttempt,
+      outputBudget: responsesRequest.outputBudget,
     };
   }
 
@@ -451,11 +472,23 @@ export default class OpenAIBatchProvider {
         const text = await streamToText(resp);
         const resultsPath = path.join(dirs.results, `${handle.batchId}.jsonl`);
         await writeFile(resultsPath, text, 'utf8');
-        const parsed = this.#parseOutput(text, handle.customId);
+        let parsed;
+        try {
+          parsed = this.#parseOutput(text, handle.customId);
+        } catch (err) {
+          await this.#recordTokenUsage(handle, err, { status: err.status || 'error', incompleteReason: err.reason });
+          if (this.#shouldRetryIncomplete(err, handle)) {
+            const retryHandle = await this.#resubmitForOutputBudget(handle, err);
+            return this.collect(retryHandle);
+          }
+          throw err;
+        }
+        await this.#recordTokenUsage(handle, { usage: parsed.usage }, { status: 'completed' });
         await this.#updateTicket(ticketPath, {
           status: 'completed',
           completed_at: new Date().toISOString(),
           output_file_id: job.output_file_id,
+          usage: parsed.usage,
         });
         return {
           raw: parsed.text,
@@ -497,7 +530,7 @@ export default class OpenAIBatchProvider {
     }
   }
 
-  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity }) {
+  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity, budgetAttempt = 1, baseCuratorCount = curators.length, dynamicCuratorCount = Math.max(0, curators.length - baseCuratorCount) }) {
     const { instructions, input, used } = await this.helpers.buildInput(
       prompt,
       images,
@@ -508,11 +541,38 @@ export default class OpenAIBatchProvider {
       minutesMax,
     });
     const effort = reasoningEffort && reasoningEffort !== 'auto' ? reasoningEffort : '';
-    const max_output_tokens = computeMaxOutputTokens({
-      decisionsCount: used.length,
-      minutesCount: minutesMax,
-      effort: effort || 'low',
+    const schemaJson = JSON.stringify(schema?.schema || schema || {}, null, 0);
+    const estimatedInputTokens = estimateInputTokens({
+      instructions,
+      schemaJson,
+      imageCount: used.length,
+      imageDetail: 'high',
+      extraText: '',
     });
+    const budget = computeOutputBudget({
+      model,
+      reasoningEffort: effort || 'low',
+      verbosity,
+      minutesMin,
+      minutesMax,
+      decisionsCount: used.length,
+      imageCount: used.length,
+      curatorCount: curators.length,
+      baseCuratorCount,
+      dynamicCuratorCount,
+      estimatedInputTokens,
+      promptChars: instructions.length,
+      schemaChars: schemaJson.length,
+      attempt: budgetAttempt,
+    });
+    const max_output_tokens = budget.maxOutputTokens;
+    const outputBudget = outputBudgetMetadata(budget);
+    if (process.env.PHOTO_SELECT_VERBOSE === '1') {
+      for (const warning of budget.warnings || []) console.warn(`⚠️ ${warning}`);
+      console.log(
+        `🧮 output_budget batch_attempt=${budgetAttempt} model=${model} effort=${effort || 'low'} input≈${estimatedInputTokens} minutes=${minutesMin}..${minutesMax} curators=${baseCuratorCount}+${dynamicCuratorCount} images=${used.length} max_output_tokens=${max_output_tokens}`
+      );
+    }
     const body = {
       model,
       instructions,
@@ -531,7 +591,7 @@ export default class OpenAIBatchProvider {
     if (effort) {
       body.reasoning = { effort };
     }
-    return { body, used };
+    return { body, used, budget, outputBudget };
   }
 
   async #buildChatCompletionsRequest({ prompt, images, curators, model, minutesMin, minutesMax, verbosity }, used) {
@@ -568,6 +628,74 @@ export default class OpenAIBatchProvider {
       body.metadata = { verbosity };
     }
     return { body, used };
+  }
+
+
+  #maxOutputRetries() {
+    const n = Number(process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES ?? 2);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
+  }
+
+  #shouldRetryIncomplete(err, handle) {
+    return err?.code === 'OPENAI_RESPONSE_INCOMPLETE' &&
+      err?.reason === 'max_output_tokens' &&
+      (handle?.budgetAttempt || 1) <= this.#maxOutputRetries();
+  }
+
+  async #resubmitForOutputBudget(handle, err) {
+    const nextAttempt = (handle.budgetAttempt || 1) + 1;
+    const previous = {
+      original_custom_id: handle.customId,
+      retry_attempt: nextAttempt,
+      previous_incomplete_reason: err?.reason,
+      previous_reasoning_tokens: err?.reasoning_tokens,
+      previous_output_tokens: err?.output_tokens,
+      previous_max_output_tokens: handle.outputBudget?.max_output_tokens || err?.max_output_tokens,
+    };
+    const dirs = await ensureDirs(handle.levelDir);
+    await appendLedger(dirs.base, {
+      custom_id: handle.customId,
+      event: 'retry_max_output_tokens',
+      batch_id: handle.batchId,
+      next_attempt: nextAttempt,
+      previous,
+    });
+    await this.#updateTicket(handle.ticketPath, {
+      status: 'retrying',
+      retry: previous,
+    });
+    return this.submit({
+      ...(handle.requestOptions || {}),
+      budgetAttempt: nextAttempt,
+      previousIncomplete: previous,
+    });
+  }
+
+  async #recordTokenUsage(handle, source = {}, { status, incompleteReason } = {}) {
+    const usage = source?.usage || source?.response?.usage || {};
+    const dirs = await ensureDirs(handle.levelDir);
+    const record = {
+      timestamp: new Date().toISOString(),
+      model: handle.model,
+      provider: this.name,
+      effort: handle.outputBudget?.effort,
+      verbosity: handle.outputBudget?.verbosity,
+      finalCuratorCount: handle.outputBudget?.curator_count,
+      imageCount: handle.outputBudget?.image_count,
+      minutesMin: handle.outputBudget?.minutes_min,
+      minutesMax: handle.outputBudget?.minutes_max,
+      estimatedInputTokens: handle.outputBudget?.estimated_input_tokens,
+      input_tokens: usage?.input_tokens,
+      output_tokens: usage?.output_tokens || source?.output_tokens,
+      reasoning_tokens: usage?.output_tokens_details?.reasoning_tokens || source?.reasoning_tokens,
+      max_output_tokens: handle.outputBudget?.max_output_tokens || source?.max_output_tokens,
+      status,
+      incomplete_reason: incompleteReason,
+      custom_id: handle.customId,
+      batch_id: handle.batchId,
+      budget_attempt: handle.budgetAttempt,
+    };
+    await appendFile(path.join(dirs.base, 'token-usage.ndjson'), JSON.stringify(record) + '\n');
   }
 
   async #updateTicket(ticketPath, updates) {

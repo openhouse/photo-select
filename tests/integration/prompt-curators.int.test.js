@@ -34,7 +34,7 @@ describe('finalizeCurators integration', () => {
       'Ellen Lev',
       'Beata (Kendell + Mandy cabin neighbor)',
     ]);
-    const header = prompt.split('\n').slice(0, 40).join('\n');
+    const header = prompt.split('\n').slice(0, 41).join('\n');
     expect(header).toMatchSnapshot();
   });
 
