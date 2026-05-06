@@ -11,6 +11,7 @@ import { delay } from "./config.js";
 import { scheduler } from "./scheduler.js";
 import {
   computeMaxOutputTokens,
+  computeOutputBudget,
   estimateInputTokens,
 } from "./tokenEstimate.js";
 import { enforceEffortGuard } from "./effortGuard.js";
@@ -526,7 +527,7 @@ export async function chatCompletion({
   aliasMap = {},
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
-  const allowedEffort = ["auto", "minimal", "low", "medium", "high"];
+  const allowedEffort = ["auto", "minimal", "low", "medium", "high", "xhigh"];
   if (!allowedVerbosity.includes(verbosity)) {
     throw new Error(`invalid verbosity: ${verbosity}`);
   }
@@ -609,13 +610,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        // ADAPTIVE max_output_tokens
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
-        // ESTIMATE input tokens
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -625,9 +619,34 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = computeOutputBudget({
+          model,
+          effort: effortForTokens,
+          verbosity,
+          estimatedInputTokens: estInputTokens,
+          minutesMin,
+          minutesMax,
+          decisionsCount: used.length,
+          imageCount: used.length,
+          curatorCount: finalCurators.length,
+          baseCuratorCount: curators.length,
+          dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+          promptChars: instructions.length,
+          schemaChars: schemaJson.length,
+          isRepair: minutesMax === 0,
+        });
+        let max_output_tokens = budget.maxOutputTokens;
+        if (budget.constrained) {
+          console.warn(`⚠️ ${budget.warnings[0]}`);
+        }
+        if (process.env.PHOTO_SELECT_VERBOSE === "1") {
+          console.log(
+            `🧮 output budget: model=${model} effort=${effortForTokens} images=${used.length} curators=${finalCurators.length} minutes=${minutesMin}-${minutesMax} est_input=${estInputTokens} max_output=${max_output_tokens} cap=${budget.cap} constrained=${budget.constrained}`,
+          );
+        }
         onProgress("request");
         const baseOpts = {
           model,
@@ -680,8 +699,8 @@ export async function chatCompletion({
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
           max_output_tokens = Math.min(
-            max_output_tokens + BUMP_TOKENS,
-            32000
+            Math.max(max_output_tokens + BUMP_TOKENS, Math.ceil(max_output_tokens * 1.5)),
+            Number(process.env.PHOTO_SELECT_MAX_OUTPUT_TOKENS_CAP || 128000)
           );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
@@ -729,17 +748,26 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
-      const max_output_tokens = computeMaxOutputTokens({
-        decisionsCount: used.length,
-        minutesCount: minutesMax,
-        effort: effortForTokens,
-      });
       const estInputTokens = estimateInputTokens({
         instructions: finalPrompt,
         schemaJson: "",
         imageCount: used.length,
-        imageDetail: "low",
+        imageDetail: "high",
         extraText: "",
+      });
+      const max_output_tokens = computeMaxOutputTokens({
+        model,
+        effort: effortForTokens,
+        verbosity,
+        estimatedInputTokens: estInputTokens,
+        minutesMin,
+        minutesMax,
+        decisionsCount: used.length,
+        imageCount: used.length,
+        curatorCount: finalCurators.length,
+        baseCuratorCount: curators.length,
+        dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+        promptChars: finalPrompt.length,
       });
       onProgress("request");
       const baseParams = {
@@ -827,11 +855,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -841,9 +864,29 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = computeOutputBudget({
+          model,
+          effort: effortForTokens,
+          verbosity,
+          estimatedInputTokens: estInputTokens,
+          minutesMin,
+          minutesMax,
+          decisionsCount: used.length,
+          imageCount: used.length,
+          curatorCount: finalCurators.length,
+          baseCuratorCount: curators.length,
+          dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+          promptChars: instructions.length,
+          schemaChars: schemaJson.length,
+          isRepair: minutesMax === 0,
+        });
+        let max_output_tokens = budget.maxOutputTokens;
+        if (budget.constrained) {
+          console.warn(`⚠️ ${budget.warnings[0]}`);
+        }
         onProgress("request");
         const baseOpts = {
           model,
@@ -896,8 +939,8 @@ export async function chatCompletion({
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
           max_output_tokens = Math.min(
-            max_output_tokens + BUMP_TOKENS,
-            32000
+            Math.max(max_output_tokens + BUMP_TOKENS, Math.ceil(max_output_tokens * 1.5)),
+            Number(process.env.PHOTO_SELECT_MAX_OUTPUT_TOKENS_CAP || 128000)
           );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });

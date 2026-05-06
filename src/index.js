@@ -65,7 +65,7 @@ program
   )
   .option(
     "--reasoning-effort <level>",
-    "Reasoning effort (minimal|low|medium|high|auto)",
+    "Reasoning effort (minimal|low|medium|high|xhigh|auto)",
     process.env.PHOTO_SELECT_REASONING_EFFORT
   )
   .option("--no-recurse", "Process a single directory only")

@@ -617,7 +617,7 @@ export async function triageDirectory(options) {
                       model,
                       curators: finalCurators,
                       verbosity: "low",
-                      reasoningEffort,
+                      reasoningEffort: "low",
                       minutesMin: 0,
                       minutesMax: 0,
                       onProgress: (stage) => {
