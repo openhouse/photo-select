@@ -173,7 +173,7 @@ describe("parseReply", () => {
     expect(aside).toContain(files[1]);
   });
 
-  it("deduplicates files listed in both groups", () => {
+  it("rejects files listed in both groups", () => {
     const reply = JSON.stringify({
       keep: [{ file: "DSCF1234.jpg" }],
       aside: [{ file: "DSCF1234.jpg" }],
@@ -181,9 +181,7 @@ describe("parseReply", () => {
       notes: [],
       minutes: [],
     });
-    const { keep, aside } = parseReply(reply, files);
-    expect(keep).toContain(files[0]);
-    expect(aside).not.toContain(files[0]);
+    expect(() => parseReply(reply, files)).toThrow(/Duplicate decision/);
   });
 
   it("parses minutes and nested decision", () => {
@@ -241,6 +239,27 @@ describe("parseReply", () => {
     expect(aside).toContain(files[1]);
     expect(notes.get(files[0])).toBe('crisp');
     expect(notes.get(files[1])).toBe('blur');
+  });
+
+
+
+  it('refuses raw OpenAI Responses provider envelopes', () => {
+    const envelope = JSON.stringify({
+      object: 'response',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      text: { format: { schema: { properties: { decisions: { items: { properties: { filename: { enum: ['DSCF1234.jpg'] }, decision: { enum: ['keep', 'aside'] } } } } } } } },
+      output: [{ type: 'reasoning', summary: [] }],
+      usage: { output_tokens: 8192 },
+    });
+    expect(() => parseReply(envelope, files)).toThrow(/provider envelope/);
+  });
+
+  it('does not classify a loose line containing multiple batch filenames', () => {
+    const reply = 'DSCF1234.jpg DSCF5678.jpg enum keep|aside If uncertain, choose aside';
+    const { keep, aside } = parseReply(reply, files);
+    expect(keep).toEqual([]);
+    expect(aside).toEqual([]);
   });
 
   it("writes failed replies to the debug directory", async () => {
@@ -554,6 +573,8 @@ describe("buildPhotoSelectSchema", () => {
     expect(item.properties.filename.enum).toEqual(["a.jpg", "b.jpg"]);
     expect(item.properties.decision.enum).toEqual(["keep", "aside"]);
     expect(item.required).toEqual(["filename", "decision", "reason"]);
+    expect(schema.schema.properties.decisions.minItems).toBe(2);
+    expect(schema.schema.properties.decisions.maxItems).toBe(2);
     expect(schema.schema.properties.minutes.items.properties.speaker.type).toBe("string");
   });
 

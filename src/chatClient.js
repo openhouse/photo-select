@@ -291,7 +291,8 @@ export function buildPhotoSelectSchema({ files = [], minutesMin = 3, minutesMax 
           type: 'array',
           description: 'Per-file decisions',
           items: decisionItem,
-          minItems: 0,
+          minItems: files.length > 0 ? files.length : 0,
+          ...(files.length > 0 ? { maxItems: files.length } : {}),
         },
       },
     },
@@ -952,6 +953,34 @@ export async function chatCompletion({
   }
 }
 
+
+function isProviderEnvelope(obj) {
+  return Boolean(
+    obj &&
+      typeof obj === 'object' &&
+      (obj.object === 'response' ||
+        (typeof obj.id === 'string' && obj.id.startsWith('resp_')) ||
+        Object.hasOwn(obj, 'status') ||
+        Object.hasOwn(obj, 'instructions') ||
+        Object.hasOwn(obj, 'incomplete_details') ||
+        Object.hasOwn(obj, 'usage') ||
+        Array.isArray(obj.output) ||
+        obj.text?.format?.schema)
+  );
+}
+
+function providerEnvelopeError() {
+  const err = new Error('Refusing to parse provider envelope as photo decisions');
+  err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
+  return err;
+}
+
+function unrecognizedReplyJsonError() {
+  const err = new Error('Parsed JSON is not a recognized photo-select reply');
+  err.code = 'INVALID_DECISIONS';
+  return err;
+}
+
 /**
  * Parse the LLM reply → { keep: [file], aside: [file] }
  *
@@ -986,6 +1015,18 @@ export function parseReply(text, allFiles, meta = {}) {
   const notes = new Map();
   const minutes = [];
   let unclassified = [];
+  const decisionCounts = new Map();
+
+  const noteDecision = (file) => {
+    const name = path.basename(file);
+    const count = (decisionCounts.get(name) || 0) + 1;
+    decisionCounts.set(name, count);
+    if (count > 1) {
+      const err = new Error(`Duplicate decision for ${name}`);
+      err.code = 'INVALID_DECISIONS';
+      throw err;
+    }
+  };
 
   let fieldNotesDiff;
   let fieldNotesMd;
@@ -993,9 +1034,80 @@ export function parseReply(text, allFiles, meta = {}) {
   let commitMessage;
 
   let parsed = false;
+  let parsedJson = false;
+
+  const addDecisionItem = (item) => {
+    if (!item || typeof item !== 'object') return;
+    const base = String(item.filename || item.file || '').trim();
+    if (!base) return;
+    const f = allFiles.find((p) => path.basename(p) === base) || lookup(base);
+    if (!f) {
+      const err = new Error(`Unknown decision filename: ${base}`);
+      err.code = 'INVALID_DECISIONS';
+      throw err;
+    }
+    const choice = String(item.decision || '').toLowerCase();
+    if (choice !== 'keep' && choice !== 'aside') {
+      const err = new Error(`Invalid decision for ${base}: ${choice}`);
+      err.code = 'INVALID_DECISIONS';
+      throw err;
+    }
+    noteDecision(f);
+    if (choice === 'keep') {
+      keep.add(f);
+    } else if (choice === 'aside') {
+      aside.add(f);
+    }
+    if (typeof item.reason === 'string' && item.reason.trim()) {
+      notes.set(f, item.reason.trim());
+    }
+  };
+
+  const captureMinutes = (obj) => {
+    if (Array.isArray(obj.minutes)) {
+      for (const m of obj.minutes) {
+        if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
+          minutes.push(m.speaker + ': ' + m.text);
+        }
+      }
+    }
+  };
+
+  const handleLegacyGroup = (decision, group, set) => {
+    const val = decision[group];
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        if (typeof item === 'string') {
+          const f = lookup(item);
+          if (f) {
+            noteDecision(f);
+            set.add(f);
+          }
+        } else if (item && typeof item === 'object') {
+          const f = lookup(item.file || item.filename);
+          if (f) {
+            noteDecision(f);
+            set.add(f);
+            if (item.reason) notes.set(f, String(item.reason));
+          }
+        }
+      }
+    } else if (val && typeof val === 'object') {
+      for (const [n, reason] of Object.entries(val)) {
+        const f = lookup(n);
+        if (f) {
+          noteDecision(f);
+          set.add(f);
+          if (reason) notes.set(f, String(reason));
+        }
+      }
+    }
+  };
 
   try {
     const obj = JSON.parse(body.trim());
+    parsedJson = true;
+    if (isProviderEnvelope(obj)) throw providerEnvelopeError();
     if (meta.expectFieldNotesDiff && typeof obj.field_notes_diff === "string") {
       fieldNotesDiff = obj.field_notes_diff;
     }
@@ -1012,32 +1124,31 @@ export function parseReply(text, allFiles, meta = {}) {
       commitMessage = obj.commit_message.trim();
     }
     if (obj && Array.isArray(obj.decisions)) {
-      for (const item of obj.decisions) {
-        if (!item || typeof item !== 'object') continue;
-        const base = String(item.filename || '').trim();
-        if (!base) continue;
-        const f = allFiles.find((p) => path.basename(p) === base);
-        if (!f) continue;
-        const choice = String(item.decision || '').toLowerCase();
-        if (choice === 'keep') {
-          keep.add(f);
-        } else if (choice === 'aside') {
-          aside.add(f);
-        }
-        if (typeof item.reason === 'string' && item.reason.trim()) {
-          notes.set(f, item.reason.trim());
-        }
-      }
-      if (Array.isArray(obj.minutes)) {
-        for (const m of obj.minutes) {
-          if (m && typeof m === 'object' && typeof m.speaker === 'string' && typeof m.text === 'string') {
-            minutes.push(m.speaker + ': ' + m.text);
+      for (const item of obj.decisions) addDecisionItem(item);
+      captureMinutes(obj);
+      parsed = true;
+    } else {
+      const decision = obj?.keep && obj?.aside ? obj : obj?.decision?.keep && obj?.decision?.aside ? obj.decision : null;
+      if (decision) {
+        captureMinutes(obj);
+        handleLegacyGroup(decision, 'keep', keep);
+        handleLegacyGroup(decision, 'aside', aside);
+        if (Array.isArray(decision.unclassified)) {
+          for (const n of decision.unclassified) {
+            const f = lookup(n);
+            if (f) unclassified.push(f);
           }
         }
+        parsed = true;
       }
+    }
+    if (!parsed && (meta.expectFieldNotesDiff || meta.expectFieldNotesMd || meta.expectFieldNotesInstructions)) {
       parsed = true;
     }
-  } catch {
+    if (!parsed) throw unrecognizedReplyJsonError();
+  } catch (err) {
+    if (err?.code) throw err;
+    if (parsedJson) throw unrecognizedReplyJsonError();
     // not JSON; fall through
   }
 
@@ -1046,141 +1157,78 @@ export function parseReply(text, allFiles, meta = {}) {
     if (block) {
       try {
         const obj = JSON.parse(block);
+        if (isProviderEnvelope(obj)) throw providerEnvelopeError();
         if (Array.isArray(obj.decisions)) {
-          for (const item of obj.decisions) {
-            if (!item || typeof item !== 'object') continue;
-            const base = String(item.filename || '').trim();
-            if (!base) continue;
-            const f = allFiles.find((p) => path.basename(p) === base);
-            if (!f) continue;
-            const choice = String(item.decision || '').toLowerCase();
-            if (choice === 'keep') keep.add(f);
-            if (choice === 'aside') aside.add(f);
-            if (typeof item.reason === 'string' && item.reason.trim()) {
-              notes.set(f, item.reason.trim());
-            }
-          }
+          for (const item of obj.decisions) addDecisionItem(item);
           parsed = true;
         }
-      } catch {
+      } catch (err) {
+        if (err?.code) throw err;
         /* fall through */
       }
     }
   }
 
-if (!parsed) {
-  try {
-    const obj = JSON.parse(body);
-    const extract = (node) => {
-      if (!node || typeof node !== 'object') return null;
-      if (Array.isArray(node.minutes))
-        minutes.push(...node.minutes.map((m) => m.speaker + ': ' + m.text));
-      if (node.keep && node.aside) return node;
-      if (node.decision && node.decision.keep && node.decision.aside)
-        return node.decision;
-      for (const val of Object.values(node)) {
-        const found = extract(val);
-        if (found) return found;
+  // Salvage structured lines like "KEEP file — reason"
+  if (!parsed) {
+    const salvage = [];
+    for (const line of String(body).split("\n")) {
+      const m = line.match(/^(?:\s*)\b(KEEP|ASIDE)\b\s+(\S+)\s+—\s+(.*)$/i);
+      if (m) {
+        salvage.push({
+          decision: m[1].toLowerCase(),
+          filename: m[2],
+          reason: m[3] || "",
+        });
       }
-      return null;
-    };
-    const decision = extract(obj);
-    if (decision) {
-      const handle = (group, set) => {
-        const val = decision[group];
-        if (Array.isArray(val)) {
-          for (const item of val) {
-            if (typeof item === 'string') {
-              const f = lookup(item);
-              if (f) set.add(f);
-            } else if (item && typeof item === 'object') {
-              const f = lookup(item.file);
-              if (f) {
-                set.add(f);
-                if (item.reason) notes.set(f, String(item.reason));
-              }
-            }
-          }
-        } else if (val && typeof val === 'object') {
-          for (const [n, reason] of Object.entries(val)) {
-            const f = lookup(n);
-            if (f) {
-              set.add(f);
-              if (reason) notes.set(f, String(reason));
-            }
-          }
-        }
-      };
-      handle('keep', keep);
-      handle('aside', aside);
-      if (Array.isArray(decision.unclassified)) {
-        for (const n of decision.unclassified) {
-          const f = lookup(n);
-          if (f) unclassified.push(f);
-        }
+    }
+    if (salvage.length) {
+      for (const { decision, filename, reason } of salvage) {
+        const f = lookup(filename);
+        if (!f) continue;
+        noteDecision(f);
+        (decision === "keep" ? keep : aside).add(f);
+        if (reason) notes.set(f, reason);
       }
       parsed = true;
     }
-  } catch {
-    // ignore JSON errors
   }
-}
 
-// Salvage structured lines like "KEEP file — reason"
-if (!parsed) {
-  const salvage = [];
-  for (const line of String(body).split("\n")) {
-    const m = line.match(/^(?:\s*)\b(KEEP|ASIDE)\b\s+(\S+)\s+—\s+(.*)$/i);
-    if (m) {
-      salvage.push({
-        decision: m[1].toLowerCase(),
-        filename: m[2],
-        reason: m[3] || "",
-      });
-    }
-  }
-  if (salvage.length) {
-    for (const { decision, filename, reason } of salvage) {
-      const f = lookup(filename);
-      if (!f) continue;
-      (decision === "keep" ? keep : aside).add(f);
-      if (reason) notes.set(f, reason);
-    }
-    parsed = true;
-  }
-}
-
-if (!parsed) {
+  if (!parsed) {
+    const forbidden = /\b(instructions|json_schema|text\.format|incomplete_details|object|response|enum|keep\|aside)\b|if uncertain, choose aside/i;
     const lines = body.split("\n");
     for (const raw of lines) {
       const line = raw.trim();
       const lower = line.toLowerCase();
       const tm = line.match(/^([^:]+):\s*(.+)$/);
       if (tm) minutes.push(`${tm[1].trim()}: ${tm[2].trim()}`);
+      if (forbidden.test(line)) continue;
+      const matching = [];
       for (const [name, f] of map) {
         let short = name;
         const idx = name.indexOf("dscf");
         if (idx !== -1) short = name.slice(idx);
-
-        if (lower.includes(name) || (short !== name && lower.includes(short))) {
-          let decision;
-          if (lower.includes("keep")) decision = "keep";
-          if (lower.includes("aside")) decision = "aside";
-          if (decision === "keep") keep.add(f);
-          if (decision === "aside") aside.add(f);
-
-          const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
-          if (m && m[1]) notes.set(f, m[1].trim());
-        }
+        if (lower.includes(name) || (short !== name && lower.includes(short))) matching.push([name, f, short]);
       }
+      if (matching.length !== 1) continue;
+      const [name, f, short] = matching[0];
+      const token = lower.includes(name) ? name : short;
+      const tokenIndex = lower.indexOf(token);
+      const near = lower.slice(Math.max(0, tokenIndex - 24), tokenIndex + token.length + 24);
+      let decision;
+      if (/\bkeep\b/.test(near)) decision = "keep";
+      if (/\baside\b|\bset aside\b/.test(near)) decision = "aside";
+      if (decision === "keep" || decision === "aside") noteDecision(f);
+      if (decision === "keep") keep.add(f);
+      if (decision === "aside") aside.add(f);
+
+      const m = line.match(/(?:keep|aside)[^a-z0-9]*[:\-–—]*\s*(.*)/i);
+      if (m && m[1]) notes.set(f, m[1].trim());
     }
   }
 
   // Leave any files unmentioned in the reply unmoved so they can be triaged
   // in a later batch. Only files explicitly marked keep or aside are returned.
-
-  // Prefer keeping when a file appears in both groups
-  for (const f of keep) aside.delete(f);
 
   const decided = new Set([...keep, ...aside]);
   if (!unclassified.length) {
