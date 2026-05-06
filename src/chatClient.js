@@ -10,6 +10,7 @@ import { finalizeCurators } from "./core/finalizeCurators.js";
 import { delay } from "./config.js";
 import { scheduler } from "./scheduler.js";
 import {
+  computeOutputBudget,
   computeMaxOutputTokens,
   estimateInputTokens,
 } from "./tokenEstimate.js";
@@ -313,7 +314,7 @@ function ensureJsonMention(text) {
 }
 
 const CACHE_DIR = path.resolve(".cache");
-const CACHE_KEY_PREFIX = "v5";
+const CACHE_KEY_PREFIX = "v6";
 
 function useColor() {
   return process.stdout.isTTY && process.env.NO_COLOR !== "1";
@@ -510,12 +511,19 @@ export async function buildInput(prompt, images, curators = []) {
  * Call OpenAI, returning raw text content.
  * Retries with exponential back‑off on 429/5xx.
  */
+function planOutputBudget({ model, effort, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions = "", schemaJson = "", isRepair = false, attempt = 1 }) {
+  const budget = computeOutputBudget({ model, effort, verbosity, estimatedInputTokens: estInputTokens, minutesMin, minutesMax, decisionsCount: used.length, imageCount: used.length, curatorCount: finalCurators.length, baseCuratorCount: curators.length, dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length), promptChars: instructions.length, schemaChars: schemaJson.length, isRepair, attempt });
+  for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
+  return budget;
+}
+
 export async function chatCompletion({
   prompt,
   images,
   model = "gpt-4o",
   verbosity = "low",
   reasoningEffort = "minimal",
+  isRepair = false,
   cache = true,
   curators = [],
   stream = false,
@@ -526,7 +534,7 @@ export async function chatCompletion({
   aliasMap = {},
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
-  const allowedEffort = ["auto", "minimal", "low", "medium", "high"];
+  const allowedEffort = ["auto", "minimal", "low", "medium", "high", "xhigh"];
   if (!allowedVerbosity.includes(verbosity)) {
     throw new Error(`invalid verbosity: ${verbosity}`);
   }
@@ -536,7 +544,8 @@ export async function chatCompletion({
   if (reasoningEffort !== "auto") {
     enforceEffortGuard(reasoningEffort);
   }
-  const effort = reasoningEffort === "auto" ? "" : reasoningEffort;
+  const requestedEffort = isRepair && reasoningEffort === "xhigh" ? "minimal" : reasoningEffort;
+  const effort = requestedEffort === "auto" ? "" : requestedEffort;
   const effortForTokens = effort || "low";
 
   const photos = [];
@@ -609,13 +618,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        // ADAPTIVE max_output_tokens
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
-        // ESTIMATE input tokens
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -625,9 +627,11 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = planOutputBudget({ model, effort: effortForTokens, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions, schemaJson, isRepair });
+        let max_output_tokens = budget.maxOutputTokens;
         onProgress("request");
         const baseOpts = {
           model,
@@ -679,9 +683,9 @@ export async function chatCompletion({
         let { text, hasMessage } = await extractTextWithLogging(rsp);
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
-          max_output_tokens = Math.min(
+          max_output_tokens = Math.max(
             max_output_tokens + BUMP_TOKENS,
-            32000
+            planOutputBudget({ model, effort: effortForTokens, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions, schemaJson, isRepair, attempt: 2 }).maxOutputTokens
           );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
@@ -729,18 +733,15 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
-      const max_output_tokens = computeMaxOutputTokens({
-        decisionsCount: used.length,
-        minutesCount: minutesMax,
-        effort: effortForTokens,
-      });
       const estInputTokens = estimateInputTokens({
         instructions: finalPrompt,
         schemaJson: "",
         imageCount: used.length,
-        imageDetail: "low",
+        imageDetail: "high",
         extraText: "",
       });
+      const budget = planOutputBudget({ model, effort: effortForTokens, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions: finalPrompt, isRepair });
+      const max_output_tokens = budget.maxOutputTokens;
       onProgress("request");
       const baseParams = {
         model,
@@ -827,11 +828,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -841,9 +837,11 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = planOutputBudget({ model, effort: effortForTokens, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions, schemaJson, isRepair });
+        let max_output_tokens = budget.maxOutputTokens;
         onProgress("request");
         const baseOpts = {
           model,
@@ -895,9 +893,9 @@ export async function chatCompletion({
         let { text, hasMessage } = await extractTextWithLogging(rsp);
         if (!hasMessage || !text.trim()) {
           console.warn("⚠️ Empty text; retrying with more tokens…");
-          max_output_tokens = Math.min(
+          max_output_tokens = Math.max(
             max_output_tokens + BUMP_TOKENS,
-            32000
+            planOutputBudget({ model, effort: effortForTokens, verbosity, estInputTokens, minutesMin, minutesMax, used, finalCurators, curators, instructions, schemaJson, isRepair, attempt: 2 }).maxOutputTokens
           );
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
