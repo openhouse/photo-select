@@ -98,6 +98,11 @@ describe('OpenAIBatchProvider', () => {
     const ticket = JSON.parse(await fs.readFile(ticketPath, 'utf8'));
     expect(ticket.batch_id).toBe('batch_123');
     expect(ticket.used_images).toEqual(['1.jpg']);
+    expect(ticket.output_budget.max_output_tokens).toBeGreaterThanOrEqual(8192);
+    expect(ticket.output_budget.estimated_input_tokens).toBeGreaterThan(0);
+    expect(ticket.output_budget.image_count).toBe(1);
+    const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
+    expect(ledger).toContain('output_budget');
   });
 
   it('limits safeId length for deeply nested level directories', async () => {
@@ -266,9 +271,37 @@ describe('OpenAIBatchProvider', () => {
     await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_NO_OUTPUT' });
   });
 
+  it('accepts xhigh reasoning effort and uses dynamic output budget', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({
+      levelDir: tmpDir,
+      prompt: 'p'.repeat(1000),
+      images: [imagePath],
+      model: 'gpt-5.4',
+      reasoningEffort: 'xhigh',
+      curators: Array.from({ length: 20 }, (_, i) => `Curator ${i}`),
+      baseCuratorCount: 10,
+      dynamicCuratorCount: 10,
+      minutesMax: 77,
+      verbosity: 'high',
+    });
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    const jsonl = await fs.readFile(path.join(inputsDir, files[0]), 'utf8');
+    const line = JSON.parse(jsonl.trim());
+    expect(line.body.reasoning.effort).toBe('xhigh');
+    expect(line.body.max_output_tokens).toBeGreaterThanOrEqual(64000);
+    expect(line.body.max_output_tokens).not.toBe(8192);
+    const ticket = JSON.parse(await fs.readFile(path.join(tmpDir, '.batch', 'tickets', `${handle.safeId}.ticket.json`), 'utf8'));
+    expect(ticket.output_budget.effort).toBe('xhigh');
+    expect(ticket.output_budget.dynamic_curator_count).toBe(10);
+  });
+
   it('rejects invalid reasoning effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
-    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
     expect(client.files.create).not.toHaveBeenCalled();
   });
 

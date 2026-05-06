@@ -462,20 +462,24 @@ describe("chatCompletion", () => {
     await fs.rm('.debug', { recursive: true, force: true });
   });
 
-  it("allows overriding verbosity and reasoning effort", async () => {
+  it("allows overriding verbosity and xhigh reasoning effort with dynamic budget", async () => {
     responsesSpy.mockClear();
     responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
     await chatCompletion({
       prompt: "p",
       images: [],
-      model: "gpt-5",
+      model: "gpt-5.4",
       cache: false,
       verbosity: "high",
-      reasoningEffort: "high",
+      reasoningEffort: "xhigh",
+      curators: ["Base A", "Base B"],
+      minutesMax: 77,
     });
     const args = responsesSpy.mock.calls[0][0];
     expect(args.text.verbosity).toBe("high");
-    expect(args.reasoning.effort).toBe("high");
+    expect(args.reasoning.effort).toBe("xhigh");
+    expect(args.max_output_tokens).toBeGreaterThanOrEqual(64000);
+    expect(args.max_output_tokens).not.toBe(8192);
   });
 
   it("omits reasoning when effort is auto", async () => {

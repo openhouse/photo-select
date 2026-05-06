@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
 import { buildReplySchema } from '../replySchema.js';
-import { computeMaxOutputTokens } from '../tokenEstimate.js';
+import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens } from '../tokenEstimate.js';
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
 
@@ -15,7 +15,7 @@ const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
-const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high']);
+const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
 const MAX_SAFE_ID_LENGTH = 200;
 
@@ -57,6 +57,43 @@ async function appendLedger(baseDir, entry) {
   const file = path.join(baseDir, 'jobs.ndjson');
   const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
   await appendFile(file, line + '\n');
+}
+
+function budgetArtifact(budget) {
+  if (!budget) return undefined;
+  return {
+    max_output_tokens: budget.maxOutputTokens,
+    estimated_input_tokens: budget.inputs.estimatedInputTokens,
+    visible: budget.visible,
+    effort_base: budget.effortBase,
+    reasoning_reserve: budget.reasoningReserve,
+    context_complexity_reserve: budget.contextComplexityReserve,
+    curator_reserve: budget.curatorReserve,
+    dynamic_curator_reserve: budget.dynamicCuratorReserve,
+    image_reserve: budget.imageReserve,
+    complexity_reserve: budget.complexityReserve,
+    margin: budget.margin,
+    computed: budget.computed,
+    recommended_before_clamp: budget.recommendedBeforeClamp,
+    hard_cap: budget.hardCap,
+    context_remaining: budget.contextRemaining,
+    min_useful: budget.minUseful,
+    constrained: budget.constrained,
+    warnings: budget.warnings,
+    model: budget.inputs.model,
+    effort: budget.inputs.effort,
+    verbosity: budget.inputs.verbosity,
+    minutes_min: budget.inputs.minutesMin,
+    minutes_max: budget.inputs.minutesMax,
+    decisions_count: budget.inputs.decisionsCount,
+    image_count: budget.inputs.imageCount,
+    curator_count: budget.inputs.curatorCount,
+    base_curator_count: budget.inputs.baseCuratorCount,
+    dynamic_curator_count: budget.inputs.dynamicCuratorCount,
+    prompt_chars: budget.inputs.promptChars,
+    schema_chars: budget.inputs.schemaChars,
+    limits: budget.limits,
+  };
 }
 
 function computeCustomId({ levelDir, prompt, model, curators = [], used = [], minutesMin, minutesMax, reasoningEffort, verbosity }) {
@@ -234,6 +271,8 @@ export default class OpenAIBatchProvider {
       prompt,
       images = [],
       curators = [],
+      baseCuratorCount = curators.length,
+      dynamicCuratorCount,
       model = 'gpt-5',
       minutesMin = 3,
       minutesMax = 12,
@@ -254,6 +293,8 @@ export default class OpenAIBatchProvider {
       minutesMax,
       reasoningEffort,
       verbosity,
+      baseCuratorCount,
+      dynamicCuratorCount,
     });
     const customId = computeCustomId({
       levelDir,
@@ -346,6 +387,7 @@ export default class OpenAIBatchProvider {
       submitted_at: submittedAt,
       completion_window: this.completionWindow,
       used_images: responsesRequest.used.map((file) => path.basename(file)),
+      output_budget: budgetArtifact(responsesRequest.budget),
     };
     await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
     await appendLedger(dirs.base, {
@@ -354,6 +396,7 @@ export default class OpenAIBatchProvider {
       batch_id: batch.id,
       endpoint: endpointUsed,
       status: batch.status,
+      output_budget: budgetArtifact(responsesRequest.budget),
     });
 
     const statusPath = path.join(dirs.status, `${safe}.status.json`);
@@ -497,7 +540,7 @@ export default class OpenAIBatchProvider {
     }
   }
 
-  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity }) {
+  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity, baseCuratorCount = curators.length, dynamicCuratorCount }) {
     const { instructions, input, used } = await this.helpers.buildInput(
       prompt,
       images,
@@ -508,11 +551,35 @@ export default class OpenAIBatchProvider {
       minutesMax,
     });
     const effort = reasoningEffort && reasoningEffort !== 'auto' ? reasoningEffort : '';
-    const max_output_tokens = computeMaxOutputTokens({
-      decisionsCount: used.length,
-      minutesCount: minutesMax,
-      effort: effort || 'low',
+    const schemaJson = JSON.stringify(schema?.schema || schema || {}, null, 0);
+    const estInputTokens = estimateInputTokens({
+      instructions,
+      schemaJson,
+      imageCount: used.length,
+      imageDetail: 'high',
+      extraText: '',
     });
+    const budget = computeOutputBudget({
+      model,
+      effort: effort || 'low',
+      estimatedInputTokens: estInputTokens,
+      minutesMin,
+      minutesMax,
+      decisionsCount: used.length,
+      imageCount: used.length,
+      curatorCount: curators.length,
+      baseCuratorCount,
+      dynamicCuratorCount: dynamicCuratorCount ?? Math.max(0, curators.length - baseCuratorCount),
+      promptChars: instructions.length,
+      schemaChars: schemaJson.length,
+      verbosity,
+    });
+    if (process.env.PHOTO_SELECT_VERBOSE === '1' || budget.warnings.length) {
+      console.log(
+        `🧮 output_budget batch model=${model} effort=${budget.inputs.effort} input≈${estInputTokens} minutes=${minutesMin}..${minutesMax} curators=${curators.length} base=${baseCuratorCount} dynamic=${budget.inputs.dynamicCuratorCount} images=${used.length} max_output_tokens=${budget.maxOutputTokens} hard_cap=${budget.hardCap}`
+      );
+      for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
+    }
     const body = {
       model,
       instructions,
@@ -526,12 +593,12 @@ export default class OpenAIBatchProvider {
           strict: true,
         },
       },
-      max_output_tokens,
+      max_output_tokens: budget.maxOutputTokens,
     };
     if (effort) {
       body.reasoning = { effort };
     }
-    return { body, used };
+    return { body, used, budget };
   }
 
   async #buildChatCompletionsRequest({ prompt, images, curators, model, minutesMin, minutesMax, verbosity }, used) {
@@ -546,9 +613,21 @@ export default class OpenAIBatchProvider {
       images: used.map((file) => path.basename(file)),
     });
     const max_completion_tokens = computeMaxOutputTokens({
+      model,
       decisionsCount: used.length,
       minutesCount: minutesMax,
       effort: 'low',
+      estimatedInputTokens: estimateInputTokens({
+        instructions: prompt,
+        schemaJson: JSON.stringify(schema || {}, null, 0),
+        imageCount: used.length,
+        imageDetail: 'high',
+      }),
+      curatorCount: curators.length,
+      imageCount: used.length,
+      promptChars: String(prompt || '').length,
+      schemaChars: JSON.stringify(schema || {}, null, 0).length,
+      verbosity,
     });
     const body = {
       model,

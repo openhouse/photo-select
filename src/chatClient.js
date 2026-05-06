@@ -11,6 +11,7 @@ import { delay } from "./config.js";
 import { scheduler } from "./scheduler.js";
 import {
   computeMaxOutputTokens,
+  computeOutputBudget,
   estimateInputTokens,
 } from "./tokenEstimate.js";
 import { enforceEffortGuard } from "./effortGuard.js";
@@ -526,7 +527,7 @@ export async function chatCompletion({
   aliasMap = {},
 }) {
   const allowedVerbosity = ["low", "medium", "high"];
-  const allowedEffort = ["auto", "minimal", "low", "medium", "high"];
+  const allowedEffort = ["auto", "minimal", "low", "medium", "high", "xhigh"];
   if (!allowedVerbosity.includes(verbosity)) {
     throw new Error(`invalid verbosity: ${verbosity}`);
   }
@@ -609,13 +610,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        // ADAPTIVE max_output_tokens
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
-        // ESTIMATE input tokens
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -625,9 +619,31 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = computeOutputBudget({
+          model,
+          effort: effortForTokens,
+          estimatedInputTokens: estInputTokens,
+          minutesMin,
+          minutesMax,
+          decisionsCount: used.length,
+          imageCount: used.length,
+          curatorCount: finalCurators.length,
+          baseCuratorCount: curators.length,
+          dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+          promptChars: instructions.length,
+          schemaChars: schemaJson.length,
+          verbosity,
+        });
+        let max_output_tokens = budget.maxOutputTokens;
+        if (process.env.PHOTO_SELECT_VERBOSE === "1" || budget.warnings.length) {
+          console.log(
+            `🧮 output_budget model=${model} effort=${effortForTokens} input≈${estInputTokens} minutes=${minutesMin}..${minutesMax} curators=${finalCurators.length} base=${curators.length} dynamic=${Math.max(0, finalCurators.length - curators.length)} images=${used.length} max_output_tokens=${budget.maxOutputTokens} hard_cap=${budget.hardCap}`
+          );
+          for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
+        }
         onProgress("request");
         const baseOpts = {
           model,
@@ -729,17 +745,25 @@ export async function chatCompletion({
         if (hit) return hit;
       }
 
-      const max_output_tokens = computeMaxOutputTokens({
-        decisionsCount: used.length,
-        minutesCount: minutesMax,
-        effort: effortForTokens,
-      });
       const estInputTokens = estimateInputTokens({
         instructions: finalPrompt,
         schemaJson: "",
         imageCount: used.length,
-        imageDetail: "low",
+        imageDetail: "high",
         extraText: "",
+      });
+      const max_output_tokens = computeMaxOutputTokens({
+        model,
+        decisionsCount: used.length,
+        minutesCount: minutesMax,
+        effort: effortForTokens,
+        estimatedInputTokens: estInputTokens,
+        curatorCount: finalCurators.length,
+        baseCuratorCount: curators.length,
+        dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+        imageCount: used.length,
+        promptChars: finalPrompt.length,
+        verbosity,
       });
       onProgress("request");
       const baseParams = {
@@ -827,11 +851,6 @@ export async function chatCompletion({
           minutesMin,
           minutesMax,
         });
-        const max_output_tokens = computeMaxOutputTokens({
-          decisionsCount: used.length,
-          minutesCount: minutesMax,
-          effort: effortForTokens,
-        });
         const schemaJson = JSON.stringify(
           schema?.schema || schema || {},
           null,
@@ -841,9 +860,31 @@ export async function chatCompletion({
           instructions,
           schemaJson,
           imageCount: used.length,
-          imageDetail: "low",
+          imageDetail: "high",
           extraText: "",
         });
+        const budget = computeOutputBudget({
+          model,
+          effort: effortForTokens,
+          estimatedInputTokens: estInputTokens,
+          minutesMin,
+          minutesMax,
+          decisionsCount: used.length,
+          imageCount: used.length,
+          curatorCount: finalCurators.length,
+          baseCuratorCount: curators.length,
+          dynamicCuratorCount: Math.max(0, finalCurators.length - curators.length),
+          promptChars: instructions.length,
+          schemaChars: schemaJson.length,
+          verbosity,
+        });
+        let max_output_tokens = budget.maxOutputTokens;
+        if (process.env.PHOTO_SELECT_VERBOSE === "1" || budget.warnings.length) {
+          console.log(
+            `🧮 output_budget model=${model} effort=${effortForTokens} input≈${estInputTokens} minutes=${minutesMin}..${minutesMax} curators=${finalCurators.length} base=${curators.length} dynamic=${Math.max(0, finalCurators.length - curators.length)} images=${used.length} max_output_tokens=${budget.maxOutputTokens} hard_cap=${budget.hardCap}`
+          );
+          for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
+        }
         onProgress("request");
         const baseOpts = {
           model,
