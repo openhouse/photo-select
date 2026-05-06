@@ -68,6 +68,7 @@ describe('OpenAIBatchProvider', () => {
   });
 
   afterEach(async () => {
+    delete process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES;
     await fs.rm(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
@@ -121,6 +122,7 @@ describe('OpenAIBatchProvider', () => {
   });
 
   it('collects completed batch results', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '0';
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -228,7 +230,8 @@ describe('OpenAIBatchProvider', () => {
     });
   });
 
-  it('rejects incomplete Responses envelopes without returning raw JSON text', async () => {
+  it('rejects incomplete Responses envelopes without returning raw JSON text when retries are disabled', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '0';
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -266,10 +269,60 @@ describe('OpenAIBatchProvider', () => {
     await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_NO_OUTPUT' });
   });
 
-  it('rejects invalid reasoning effort before submission', async () => {
+  it('accepts xhigh and rejects invalid reasoning effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
-    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
-    expect(client.files.create).not.toHaveBeenCalled();
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).resolves.toMatchObject({ provider: 'openai-batch' });
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
+  });
+
+
+  it('resubmits max_output_tokens incomplete responses with a larger budget before succeeding', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '1';
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    client.batches.create
+      .mockResolvedValueOnce({ id: 'batch_1', status: 'validating' })
+      .mockResolvedValueOnce({ id: 'batch_2', status: 'validating' });
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt', images: [imagePath], model: 'gpt-5', reasoningEffort: 'xhigh' });
+    client.batches.retrieve.mockResolvedValue({ status: 'completed', output_file_id: 'out' });
+    const incomplete = {
+      id: 'resp_bad',
+      object: 'response',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'reasoning', summary: [] }],
+      usage: { output_tokens: 8192, output_tokens_details: { reasoning_tokens: 8192 } },
+    };
+    let contentCalls = 0;
+    client.files.content.mockImplementation(async () => ({
+      text: async () => {
+        contentCalls += 1;
+        if (contentCalls === 1) {
+          return JSON.stringify({ custom_id: handle.customId, response: { status_code: 200, body: incomplete } }) + '\n';
+        }
+        const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+        const files = await fs.readdir(inputsDir);
+        const rows = await Promise.all(files.map(async (file) => JSON.parse((await fs.readFile(path.join(inputsDir, file), 'utf8')).trim())));
+        const retryRow = rows.find((row) => row.custom_id !== handle.customId);
+        return JSON.stringify({
+          custom_id: retryRow.custom_id,
+          response: {
+            status_code: 200,
+            body: { output_text: '{"decisions":[{"filename":"a.jpg","decision":"keep","reason":"ok"}]}' },
+            usage: { output_tokens: 1000, output_tokens_details: { reasoning_tokens: 100 } },
+          },
+        }) + '\n';
+      },
+    }));
+
+    const result = await provider.collect(handle);
+    expect(result.raw).toContain('decisions');
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    const budgets = await Promise.all(files.map(async (file) => JSON.parse((await fs.readFile(path.join(inputsDir, file), 'utf8')).trim()).body.max_output_tokens));
+    expect(Math.max(...budgets)).toBeGreaterThan(Math.min(...budgets));
   });
 
 });
