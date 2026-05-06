@@ -478,6 +478,22 @@ describe("chatCompletion", () => {
     expect(args.reasoning.effort).toBe("high");
   });
 
+  it("accepts xhigh reasoning effort and uses a larger Responses budget", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    await chatCompletion({
+      prompt: "p",
+      images: [],
+      model: "gpt-5",
+      cache: false,
+      verbosity: "high",
+      reasoningEffort: "xhigh",
+    });
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.reasoning.effort).toBe("xhigh");
+    expect(args.max_output_tokens).toBeGreaterThanOrEqual(64000);
+  });
+
   it("omits reasoning when effort is auto", async () => {
     responsesSpy.mockClear();
     responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
