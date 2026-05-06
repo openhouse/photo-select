@@ -71,6 +71,7 @@ describe('OpenAIBatchProvider', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
+    delete process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES;
   });
 
   it('writes JSONL input and ticket on submit', async () => {
@@ -228,7 +229,10 @@ describe('OpenAIBatchProvider', () => {
     });
   });
 
+
+
   it('rejects incomplete Responses envelopes without returning raw JSON text', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '0';
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -254,6 +258,56 @@ describe('OpenAIBatchProvider', () => {
     await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_INCOMPLETE' });
   });
 
+
+  it('retries max_output_tokens incomplete responses with a larger budget', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '1';
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
+    const imagePath = path.join(tmpDir, 'retry.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'p'.repeat(4000), images: [imagePath], model: 'gpt-5.4', curators: Array.from({ length: 20 }, (_, i) => `Curator ${i}`), minutesMin: 52, minutesMax: 77, reasoningEffort: 'xhigh', verbosity: 'high' });
+    const initialMax = handle.maxOutputTokens;
+    expect(initialMax).toBeGreaterThanOrEqual(64000);
+    expect(JSON.parse(await fs.readFile(handle.ticketPath, 'utf8')).output_budget.max_output_tokens).toBe(initialMax);
+    client.batches.create.mockResolvedValueOnce({ id: 'batch_retry', status: 'validating' });
+    client.batches.retrieve
+      .mockResolvedValueOnce({ status: 'completed', id: handle.batchId, output_file_id: 'out_bad' })
+      .mockResolvedValueOnce({ status: 'completed', id: 'batch_retry', output_file_id: 'out_good' });
+    client.files.content
+      .mockResolvedValueOnce({
+        text: async () => JSON.stringify({
+          custom_id: handle.customId,
+          response: { status_code: 200, body: {
+            id: 'resp_bad', object: 'response', status: 'incomplete',
+            incomplete_details: { reason: 'max_output_tokens' },
+            output: [{ type: 'reasoning', summary: [] }],
+            usage: { output_tokens: initialMax, output_tokens_details: { reasoning_tokens: initialMax } },
+          } },
+        }) + '\n',
+      })
+      .mockImplementationOnce(async () => {
+        const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+        const files = await fs.readdir(inputsDir);
+        const jsonl = await fs.readFile(path.join(inputsDir, files.at(-1)), 'utf8');
+        const retryLine = JSON.parse(jsonl.trim());
+        return {
+          text: async () => JSON.stringify({
+            custom_id: retryLine.custom_id,
+            response: { status_code: 200, body: {
+              object: 'response', status: 'completed',
+              output: [{ type: 'message', content: [{ type: 'output_json', json: { minutes: [], decisions: [] } }] }],
+            }, usage: { output_tokens: 1000 } },
+          }) + '\n',
+        };
+      });
+    const result = await provider.collect(handle);
+    expect(result.json).toEqual({ minutes: [], decisions: [] });
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const files = await fs.readdir(inputsDir);
+    const retryLine = JSON.parse(await fs.readFile(path.join(inputsDir, files.at(-1)), 'utf8'));
+    expect(retryLine.body.max_output_tokens).toBeGreaterThan(initialMax);
+  });
+
   it('rejects completed Responses envelopes with no assistant output', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
     const imagePath = path.join(tmpDir, 'a.jpg');
@@ -268,7 +322,7 @@ describe('OpenAIBatchProvider', () => {
 
   it('rejects invalid reasoning effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
-    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
     expect(client.files.create).not.toHaveBeenCalled();
   });
 

@@ -4,6 +4,7 @@ exports[`finalizeCurators integration > appends repeated names verbatim and orde
 "
 You are moderating a collaborative curatorial session among a real-world group making photo selection choices for an exhibition.
 
+
 Role play as Beata, Ellen Lev, Beata (Kendell + Mandy cabin neighbor):
  - Indicate who is speaking
  - Say what you think
@@ -39,6 +40,5 @@ Think step-by-step silently. Then output **exactly one JSON object** and nothing
 
 Constraints:
 - Produce between 5 and 8 diarized items in "minutes".
-- The **last** minutes item must be a forward-looking question.
-- In "decisions", include **every** filename from the list **exactly once**."
+- The **last** minutes item must be a forward-looking question."
 `;
