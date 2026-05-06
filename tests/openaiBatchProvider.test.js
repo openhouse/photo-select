@@ -227,4 +227,49 @@ describe('OpenAIBatchProvider', () => {
       json_schema: { name: 'photo_select_reply', schema: replySchema, strict: true },
     });
   });
+
+  it('rejects incomplete Responses envelopes without returning raw JSON text', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      pollIntervalMs: 0,
+      helpers,
+    });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt', images: [imagePath], model: 'gpt-5' });
+    client.batches.retrieve.mockResolvedValue({ status: 'completed', id: 'batch_123', output_file_id: 'out_1' });
+    const body = {
+      id: 'resp_bad',
+      object: 'response',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'reasoning', summary: [] }],
+      text: { format: { type: 'json_schema', schema: { properties: { decisions: { items: { properties: { filename: { enum: ['a.jpg', 'b.jpg'] }, decision: { enum: ['keep', 'aside'] } } } } } } } },
+      usage: { output_tokens: 8192, output_tokens_details: { reasoning_tokens: 8192 } },
+    };
+    client.files.content.mockResolvedValue({
+      text: async () => JSON.stringify({ custom_id: handle.customId, response: { status_code: 200, body } }) + '\n',
+    });
+    await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_INCOMPLETE' });
+  });
+
+  it('rejects completed Responses envelopes with no assistant output', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt', images: [imagePath], model: 'gpt-5' });
+    client.batches.retrieve.mockResolvedValue({ status: 'completed', id: 'batch_123', output_file_id: 'out_1' });
+    client.files.content.mockResolvedValue({
+      text: async () => JSON.stringify({ custom_id: handle.customId, response: { status_code: 200, body: { id: 'resp_empty', object: 'response', status: 'completed', output: [{ type: 'reasoning', summary: [] }] } } }) + '\n',
+    });
+    await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_NO_OUTPUT' });
+  });
+
+  it('rejects invalid reasoning effort before submission', async () => {
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
+    expect(client.files.create).not.toHaveBeenCalled();
+  });
+
 });

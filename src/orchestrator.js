@@ -51,6 +51,66 @@ function extractJsonBlock(body) {
   }
 }
 
+
+function looksLikeOpenAIResponseEnvelope(reply) {
+  try {
+    const obj = JSON.parse(String(reply));
+    return Boolean(
+      obj?.object === "response" ||
+        (typeof obj?.id === "string" && obj.id.startsWith("resp_")) ||
+        (typeof obj?.status === "string" && (obj?.output || obj?.usage || obj?.incomplete_details)) ||
+        obj?.text?.format?.schema
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function validateDecisionSet({ keep, aside, batch, requireComplete = false }) {
+  const expected = new Set(batch.map((f) => path.basename(f)));
+  const seen = new Map();
+
+  for (const file of [...keep, ...aside]) {
+    const name = path.basename(file);
+
+    if (!expected.has(name)) {
+      const err = new Error(`Invalid decision set: unknown file ${name}`);
+      err.code = "INVALID_DECISIONS";
+      throw err;
+    }
+
+    seen.set(name, (seen.get(name) || 0) + 1);
+  }
+
+  for (const [name, count] of seen.entries()) {
+    if (count !== 1) {
+      const err = new Error(`Invalid decision set: duplicate decision for ${name}`);
+      err.code = "INVALID_DECISIONS";
+      throw err;
+    }
+  }
+
+  if (requireComplete) {
+    for (const name of expected) {
+      if (!seen.has(name)) {
+        const err = new Error(`Invalid decision set: missing ${name}`);
+        err.code = "INVALID_DECISIONS";
+        throw err;
+      }
+    }
+
+    if (seen.size !== expected.size) {
+      const err = new Error(`Invalid decision set: expected ${expected.size}, got ${seen.size}`);
+      err.code = "INVALID_DECISIONS";
+      throw err;
+    }
+  }
+}
+
+function failureReason(err) {
+  const reason = err?.reason || err?.incomplete_details?.reason || err?.status || err?.message || "unknown";
+  return `${err?.code || "BATCH_FAILED"}:${reason}`;
+}
 function useColor() {
   return process.stdout.isTTY && process.env.NO_COLOR !== "1";
 }
@@ -121,6 +181,20 @@ function prettyLLMReply(raw, { maxMinutes = MAX_MINUTES } = {}) {
   return out.trimEnd();
 }
 
+
+async function readNeedsReviewNames(dir) {
+  try {
+    const raw = await readFile(path.join(dir, "NEEDS_REVIEW"), "utf8");
+    return new Set(
+      raw
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/)[0])
+        .filter(Boolean)
+    );
+  } catch {
+    return new Set();
+  }
+}
 async function ensureGitRepo(dir) {
   try {
     await stat(path.join(dir, ".git"));
@@ -388,7 +462,8 @@ export async function triageDirectory(options) {
   let completedBatches = 0;
 
   while (true) {
-    const images = await listImages(dir);
+    const needsReview = await readNeedsReviewNames(dir);
+    const images = (await listImages(dir)).filter((file) => !needsReview.has(path.basename(file)));
     if (images.length === 0) {
       console.log(`${indent}✅  Nothing to do in ${dir}`);
       break;
@@ -456,6 +531,19 @@ export async function triageDirectory(options) {
                   }
                 };
 
+                const markNeedsReview = async (reason) => {
+                  const marker = path.join(dir, "NEEDS_REVIEW");
+                  const lines = batch
+                    .map((f) => `${path.basename(f)}	${reason}`)
+                    .join("\n");
+                  try {
+                    const prev = await readFile(marker, "utf8").catch(() => "");
+                    await writeFile(marker, `${prev}${lines}\n`, "utf8");
+                  } catch {
+                    /* ignore */
+                  }
+                };
+
                 const names = batch.map((file) => path.basename(file));
                 const peopleLists = await Promise.all(
                   names.map((name) => getPeople(name))
@@ -480,7 +568,7 @@ export async function triageDirectory(options) {
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
                 await saveText('prompt', attemptNum, first.prompt);
-                const { raw: firstRaw } = await runSession({
+                const firstResult = await runSession({
                   prompt: first.prompt,
                   images: batch,
                   model,
@@ -494,8 +582,13 @@ export async function triageDirectory(options) {
                   },
                   stream: true,
                 });
-                reply = firstRaw;
+                reply = firstResult.raw;
                 await saveText('response', attemptNum, reply);
+                if (looksLikeOpenAIResponseEnvelope(reply)) {
+                  const err = new Error('Raw OpenAI response envelope is not a curatorial reply');
+                  err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
+                  throw err;
+                }
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
                   batch,
@@ -518,7 +611,7 @@ export async function triageDirectory(options) {
                     ].join("\n");
                     attemptNum++;
                     await saveText('prompt', attemptNum, repair);
-                    const { raw: repairRaw } = await runSession({
+                    const repairResult = await runSession({
                       prompt: repair,
                       images: batch,
                       model,
@@ -532,8 +625,13 @@ export async function triageDirectory(options) {
                       },
                       stream: true,
                     });
-                    reply = repairRaw;
+                    reply = repairResult.raw;
                     await saveText('response', attemptNum, reply);
+                    if (looksLikeOpenAIResponseEnvelope(reply)) {
+                      const err = new Error('Raw OpenAI response envelope is not a curatorial reply');
+                      err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
+                      throw err;
+                    }
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
                       batch,
@@ -546,15 +644,16 @@ export async function triageDirectory(options) {
                         `⚠️  No decisions after ${attempts} attempt(s); marking NEEDS_REVIEW and continuing.`
                       )
                     );
-                    const marker = path.join(dir, "NEEDS_REVIEW");
-                    const list = batch.map((f) => path.basename(f)).join("\n");
-                    try {
-                      const prev = await readFile(marker, "utf8").catch(() => "");
-                      await writeFile(marker, `${prev}${list}\n`, "utf8");
-                    } catch {}
+                    await markNeedsReview("NO_DECISIONS");
                     return;
                   }
                 }
+                validateDecisionSet({
+                  keep,
+                  aside,
+                  batch,
+                  requireComplete: Boolean(firstResult?.json),
+                });
                 const ms = Date.now() - batchStart;
                 bar.update(4, { stage: "done" });
                 bar.stop();
@@ -639,6 +738,29 @@ export async function triageDirectory(options) {
                 bar.stop();
                 multibar.remove(bar);
                 log(`${indent}⚠️  Batch ${idx} failed: ${err.message}`);
+                const safeFailureCodes = new Set([
+                  "OPENAI_RESPONSE_INCOMPLETE",
+                  "INCOMPLETE_RESPONSE",
+                  "OPENAI_RESPONSE_NO_OUTPUT",
+                  "NO_ASSISTANT_OUTPUT",
+                  "NO_EXTRACTABLE_ASSISTANT_OUTPUT",
+                  "PROVIDER_ENVELOPE_NOT_DECISIONS",
+                  "INVALID_DECISIONS",
+                  "EMPTY_PROVIDER_PAYLOAD",
+                ]);
+                if (safeFailureCodes.has(err?.code)) {
+                  const reason = failureReason(err);
+                  const marker = path.join(dir, "NEEDS_REVIEW");
+                  const lines = batch.map((f) => `${path.basename(f)}	${reason}`).join("\n");
+                  try {
+                    const prev = await readFile(marker, "utf8").catch(() => "");
+                    await writeFile(marker, `${prev}${lines}\n`, "utf8");
+                  } catch {
+                    /* ignore */
+                  }
+                  log(`${indent}⚠️  Files left unmoved and added to NEEDS_REVIEW (${reason}).`);
+                  return;
+                }
                 if (isBillingLimitError(err) && !abortProcessing) {
                   abortProcessing = true;
                   queue.length = 0;
@@ -658,7 +780,8 @@ export async function triageDirectory(options) {
       } finally {
         multibar.stop();
       }
-      const remaining = (await listImages(dir)).length;
+      const nextNeedsReview = await readNeedsReviewNames(dir);
+      const remaining = (await listImages(dir)).filter((file) => !nextNeedsReview.has(path.basename(file))).length;
       const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
       if (completedBatches) {
         const elapsedSec = (Date.now() - levelStart) / 1000;

@@ -15,6 +15,7 @@ const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
+const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high']);
 
 const MAX_SAFE_ID_LENGTH = 200;
 
@@ -75,16 +76,69 @@ function computeCustomId({ levelDir, prompt, model, curators = [], used = [], mi
   return `ps:${levelKey(levelDir)}|sha256:${digest}`;
 }
 
-function extractStructured(payload) {
-  if (!payload) return { text: '', json: null };
+export function isResponsesEnvelope(payload) {
+  return Boolean(
+    payload &&
+      typeof payload === 'object' &&
+      (payload.object === 'response' ||
+        (typeof payload.id === 'string' && payload.id.startsWith('resp_')) ||
+        Object.hasOwn(payload, 'status') ||
+        Object.hasOwn(payload, 'incomplete_details') ||
+        Object.hasOwn(payload, 'error') ||
+        payload.text?.format?.schema)
+  );
+}
+
+function enrichResponseError(err, payload, { customId } = {}) {
+  err.response_id = payload?.id;
+  err.model = payload?.model;
+  err.status = payload?.status;
+  err.incomplete_details = payload?.incomplete_details;
+  err.usage = payload?.usage;
+  err.output_tokens = payload?.usage?.output_tokens;
+  err.reasoning_tokens = payload?.usage?.output_tokens_details?.reasoning_tokens;
+  err.max_output_tokens = payload?.max_output_tokens;
+  err.custom_id = customId;
+  err.response = payload;
+  return err;
+}
+
+export function assertCompletedResponse(body, { customId } = {}) {
+  if (isResponsesEnvelope(body) && (body.status !== 'completed' || body.incomplete_details || body.error)) {
+    const reason = body.incomplete_details?.reason || body.error?.message || body.status || 'unknown';
+    const err = new Error(
+      `OpenAI response incomplete for ${customId || 'batch item'}: ${reason}`
+    );
+    err.code = 'OPENAI_RESPONSE_INCOMPLETE';
+    err.reason = reason;
+    throw enrichResponseError(err, body, { customId });
+  }
+}
+
+export function extractStructured(payload, options = {}) {
+  if (!payload) {
+    const err = new Error('Empty provider payload');
+    err.code = 'EMPTY_PROVIDER_PAYLOAD';
+    throw err;
+  }
   if (typeof payload === 'string') {
     try {
       const parsed = JSON.parse(payload);
-      return extractStructured(parsed);
-    } catch {
+      return extractStructured(parsed, options);
+    } catch (err) {
+      if (err?.code) throw err;
       return { text: payload, json: null };
     }
   }
+
+  if (isResponsesEnvelope(payload)) {
+    assertCompletedResponse(payload, options);
+  }
+
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return { text: payload.output_text, json: null };
+  }
+
   if (Array.isArray(payload.output)) {
     const message = payload.output.find((item) => item.type === 'message');
     if (message && Array.isArray(message.content)) {
@@ -92,22 +146,29 @@ function extractStructured(payload) {
       if (jsonPart?.json) {
         return { text: JSON.stringify(jsonPart.json), json: jsonPart.json };
       }
-      const textPart = message.content.find((c) => c.type === 'output_text' && c.text);
+      const textPart = message.content.find((c) => c.type === 'output_text' && c.text?.trim());
       if (textPart?.text) {
         return { text: textPart.text, json: null };
       }
     }
   }
-  if (payload.output_text) {
-    return { text: payload.output_text, json: null };
-  }
+
   if (payload.data?.length) {
     try {
       const nested = JSON.parse(payload.data[0]);
-      return extractStructured(nested);
-    } catch {}
+      return extractStructured(nested, options);
+    } catch (err) {
+      if (err?.code) throw err;
+    }
   }
-  return { text: JSON.stringify(payload), json: null };
+
+  const err = new Error(
+    isResponsesEnvelope(payload)
+      ? `Completed OpenAI response had no assistant output: ${payload.id || 'unknown response'}`
+      : 'Provider payload has no extractable assistant output'
+  );
+  err.code = isResponsesEnvelope(payload) ? 'OPENAI_RESPONSE_NO_OUTPUT' : 'NO_EXTRACTABLE_ASSISTANT_OUTPUT';
+  throw enrichResponseError(err, payload, options);
 }
 
 function inferMissingScope(err) {
@@ -180,6 +241,9 @@ export default class OpenAIBatchProvider {
       verbosity = 'low',
     } = options;
     if (!levelDir) throw new Error('levelDir is required for openai-batch provider');
+    if (reasoningEffort && !ALLOWED_REASONING_EFFORT.has(reasoningEffort)) {
+      throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
+    }
     const dirs = await ensureDirs(levelDir);
     const responsesRequest = await this.#buildResponsesRequest({
       prompt,
@@ -534,12 +598,14 @@ export default class OpenAIBatchProvider {
       if (obj.custom_id !== customId) continue;
       if (obj.error) {
         const err = new Error(obj.error?.message || 'Batch item error');
+        err.code = 'BATCH_ITEM_ERROR';
         err.cause = obj.error;
+        err.custom_id = customId;
         throw err;
       }
       const response = obj.response || {};
       const body = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-      const { text, json } = extractStructured(body);
+      const { text, json } = extractStructured(body, { customId });
       return { text, json, usage: response.usage || body?.usage };
     }
     throw new Error(`No output found for custom_id ${customId}`);
