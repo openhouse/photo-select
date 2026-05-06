@@ -71,6 +71,8 @@ describe('OpenAIBatchProvider', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
     delete process.env.OPENAI_API_KEY;
+    delete process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES;
+    delete process.env.PHOTO_SELECT_MAX_OUTPUT_TOKENS_CAP;
   });
 
   it('writes JSONL input and ticket on submit', async () => {
@@ -121,20 +123,10 @@ describe('OpenAIBatchProvider', () => {
   });
 
   it('collects completed batch results', async () => {
-    const provider = new OpenAIBatchProvider({
-      client,
-      enableFallback: false,
-      pollIntervalMs: 0,
-      helpers,
-    });
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
     const imagePath = path.join(tmpDir, '1.jpg');
     await fs.writeFile(imagePath, 'data');
-    const handle = await provider.submit({
-      levelDir: tmpDir,
-      prompt: 'prompt',
-      images: [imagePath],
-      model: 'gpt-5',
-    });
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt', images: [imagePath], model: 'gpt-5' });
     client.batches.retrieve
       .mockResolvedValueOnce({ status: 'in_progress', id: 'batch_123' })
       .mockResolvedValueOnce({
@@ -228,7 +220,8 @@ describe('OpenAIBatchProvider', () => {
     });
   });
 
-  it('rejects incomplete Responses envelopes without returning raw JSON text', async () => {
+  it('rejects incomplete Responses envelopes without returning raw JSON text after retry exhaustion', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '0';
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -266,9 +259,53 @@ describe('OpenAIBatchProvider', () => {
     await expect(provider.collect(handle)).rejects.toMatchObject({ code: 'OPENAI_RESPONSE_NO_OUTPUT' });
   });
 
+  it('retries max_output_tokens incomplete responses with a larger budget', async () => {
+    process.env.PHOTO_SELECT_MAX_OUTPUT_RETRIES = '1';
+    process.env.PHOTO_SELECT_MAX_OUTPUT_TOKENS_CAP = '128000';
+    client.batches.create
+      .mockResolvedValueOnce({ id: 'batch_1', status: 'validating' })
+      .mockResolvedValueOnce({ id: 'batch_2', status: 'validating' });
+    const provider = new OpenAIBatchProvider({ client, enableFallback: false, pollIntervalMs: 0, helpers });
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const handle = await provider.submit({ levelDir: tmpDir, prompt: 'prompt'.repeat(1000), images: [imagePath], model: 'gpt-5.4', reasoningEffort: 'xhigh', minutesMax: 77, curators: Array.from({ length: 25 }, (_, i) => `C${i}`) });
+    expect(handle.outputBudget.effort).toBe('xhigh');
+    expect(client.batches.create.mock.calls[0][0].metadata.max_output_tokens).toBe(String(handle.maxOutputTokens));
+    client.batches.retrieve.mockImplementation(async (batchId) => ({ status: 'completed', id: batchId, output_file_id: batchId === 'batch_1' ? 'out_bad' : 'out_good' }));
+    client.files.content.mockImplementation(async (fileId) => {
+      if (fileId === 'out_bad') {
+        const body = {
+          id: 'resp_bad',
+          object: 'response',
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          usage: { output_tokens: 8192, output_tokens_details: { reasoning_tokens: 8192 } },
+          output: [{ type: 'reasoning', summary: [] }],
+        };
+        return { text: async () => JSON.stringify({ custom_id: handle.customId, response: { status_code: 200, body } }) + '\n' };
+      }
+      const retryCustomId = client.batches.create.mock.calls[1][0].metadata.custom_id;
+      const body = {
+        id: 'resp_good',
+        object: 'response',
+        status: 'completed',
+        output: [{ type: 'message', content: [{ type: 'output_json', json: { minutes: [], decisions: [] } }] }],
+        usage: { input_tokens: 100, output_tokens: 50, output_tokens_details: { reasoning_tokens: 10 } },
+      };
+      return { text: async () => JSON.stringify({ custom_id: retryCustomId, response: { status_code: 200, body } }) + '\n' };
+    });
+
+    const result = await provider.collect(handle);
+    expect(result.json).toEqual({ minutes: [], decisions: [] });
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
+    const firstMax = Number(client.batches.create.mock.calls[0][0].metadata.max_output_tokens);
+    const secondMax = Number(client.batches.create.mock.calls[1][0].metadata.max_output_tokens);
+    expect(secondMax).toBeGreaterThan(firstMax);
+  });
+
   it('rejects invalid reasoning effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
-    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'xhigh' })).rejects.toThrow(/reasoningEffort/);
+    await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
     expect(client.files.create).not.toHaveBeenCalled();
   });
 
