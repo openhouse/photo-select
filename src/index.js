@@ -70,6 +70,11 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option(
+    "--retry-needs-review",
+    "Re-include files listed in NEEDS_REVIEW for an explicit retry",
+    parseEnvFlag(process.env.PHOTO_SELECT_RETRY_NEEDS_REVIEW, false)
+  )
+  .option(
     "-P, --parallel <n>",
     "Number of concurrent API calls (deprecated; use --workers)",
     (v) => Math.max(1, parseInt(v, 10))
@@ -131,6 +136,7 @@ let {
   ollamaBaseUrl,
   concurrency: concurrencyFlag,
   disablePhotoFilter,
+  retryNeedsReview,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -256,6 +262,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       workers,
       verbosity,
       reasoningEffort: finalReasoningEffort,
+      retryNeedsReview,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

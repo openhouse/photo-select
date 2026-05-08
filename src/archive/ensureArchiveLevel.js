@@ -46,26 +46,15 @@ export async function ensureArchiveLevel({
 
   const manifest = new Manifest(levelDir);
   const tracker = new StageTracker(levelDir);
-  const sentinelExists = update && !forceRebuild ? await tracker.hasOk() : false;
-  if (sentinelExists) {
-    if (verbose) {
-      console.log(
-        `${path.basename(levelDir)} resume: cloned=${tracker.counters.cloned} copied=${tracker.counters.copied} skipped=${tracker.counters.skipped} failed=${tracker.counters.failed} remaining=0`
-      );
-    }
-    return {
-      created: 0,
-      refreshed: 0,
-      skipped: files.length,
-      errors: 0,
-    };
-  }
 
   if (forceRebuild) {
     await tracker.reset();
     manifest.clear();
     await manifest.removeFiles();
   } else {
+    // Even when .ok exists, load the append-only tracker/manifest before
+    // deciding what to skip.  A level archive can be complete for the files
+    // seen in an earlier pass while still needing to accept late arrivals.
     await manifest.load();
     await tracker.load();
   }

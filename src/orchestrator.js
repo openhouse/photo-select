@@ -195,6 +195,142 @@ async function readNeedsReviewNames(dir) {
     return new Set();
   }
 }
+
+async function writeNeedsReviewEntries(dir, entries) {
+  const marker = path.join(dir, "NEEDS_REVIEW");
+  const existing = new Map();
+  try {
+    const raw = await readFile(marker, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [name, ...rest] = trimmed.split(/\s+/);
+      existing.set(name, rest.join(" "));
+    }
+  } catch {
+    /* no marker yet */
+  }
+  for (const { name, reason } of entries) {
+    existing.set(name, reason || "NEEDS_REVIEW");
+  }
+  const lines = [...existing.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, reason]) => `${name}	${reason}`);
+  await writeFile(marker, lines.length ? `${lines.join("\n")}\n` : "", "utf8");
+}
+
+async function clearNeedsReviewEntries(dir, files) {
+  if (!files.length) return;
+  const marker = path.join(dir, "NEEDS_REVIEW");
+  const clear = new Set(files.map((file) => path.basename(file)));
+  let raw;
+  try {
+    raw = await readFile(marker, "utf8");
+  } catch {
+    return;
+  }
+  const kept = raw
+    .split(/\r?\n/)
+    .filter((line) => {
+      const name = line.trim().split(/\s+/)[0];
+      return name && !clear.has(name);
+    });
+  await writeFile(marker, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
+}
+
+export async function listLevelState(dir, { retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false) } = {}) {
+  const allImages = await listImages(dir);
+  const needsReviewNames = await readNeedsReviewNames(dir);
+  const eligibleImages = [];
+  const needsReviewImages = [];
+
+  for (const file of allImages) {
+    if (needsReviewNames.has(path.basename(file))) {
+      needsReviewImages.push(file);
+      if (retryNeedsReview) eligibleImages.push(file);
+    } else {
+      eligibleImages.push(file);
+    }
+  }
+
+  return {
+    allImages,
+    eligibleImages,
+    needsReviewImages,
+    ignoredImagesOrFiles: [],
+    needsReviewNames,
+  };
+}
+
+export async function findShallowestLevelWithEligibleImages(rootDir, options = {}) {
+  const allowDescendWithNeedsReview = options.allowDescendWithNeedsReview ?? envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false);
+  let current = rootDir;
+  let depth = 0;
+
+  while (await dirExists(current)) {
+    const state = await listLevelState(current, options);
+    const level = depth + 1;
+    if (state.eligibleImages.length > 0) {
+      console.log(`${"  ".repeat(depth)}📊  level ${level}: ${state.eligibleImages.length} eligible image(s), ${state.needsReviewImages.length} NEEDS_REVIEW held`);
+      return { dir: current, depth, level, state };
+    }
+    if (state.needsReviewImages.length > 0) {
+      console.warn(`${"  ".repeat(depth)}⚠️  level ${level}: 0 eligible image(s), ${state.needsReviewImages.length} held for NEEDS_REVIEW in ${current}`);
+      if (!allowDescendWithNeedsReview) {
+        return { dir: current, depth, level, state, blocked: true, blockedCount: state.needsReviewImages.length };
+      }
+      console.log(`${"  ".repeat(depth)}↘️  no eligible work at level ${level}; checking _keep`);
+    }
+    const next = path.join(current, "_keep");
+    if (!(await dirExists(next))) return null;
+    current = next;
+    depth += 1;
+  }
+  return null;
+}
+
+export async function triageTree(options) {
+  const rootDir = options.dir;
+  let lastDepth = 0;
+
+  while (true) {
+    const work = await findShallowestLevelWithEligibleImages(rootDir, options);
+    if (!work) {
+      console.log("✅  No pending image files found in cascade.");
+      break;
+    }
+    if (work.blocked) {
+      console.warn(`⚠️  Cascade blocked at ${work.dir}: ${work.blockedCount} file(s) need review. Not descending.`);
+      break;
+    }
+    console.log(`${"  ".repeat(work.depth)}🧭  scheduler selected: level=${work.level} source=${work.dir} eligible=${work.state.eligibleImages.length}`);
+    if (work.depth < lastDepth) {
+      console.log(`${"  ".repeat(work.depth)}↩️  returning to shallower level before continuing deeper`);
+    }
+    const result = await triageDirectory({
+      ...options,
+      dir: work.dir,
+      depth: work.depth,
+      recurse: false,
+      _cascadeLevel: true,
+      gitRoot: options.gitRoot || rootDir,
+    });
+    if (result?.blocked) {
+      console.warn(`⚠️  Cascade blocked at ${work.dir}: ${result.blockedCount} file(s) need review. Not descending.`);
+      break;
+    }
+    const postState = await listLevelState(work.dir, options);
+    console.log(`${"  ".repeat(work.depth)}🔎  level drain check: level=${work.level} source=${work.dir} eligible=${postState.eligibleImages.length}`);
+    if (postState.eligibleImages.length > 0) {
+      console.log(`${"  ".repeat(work.depth)}🔁  level still has eligible files; repeating level=${work.level}`);
+    } else {
+      console.log(`${"  ".repeat(work.depth)}✅  level drained; checking shallowest source again`);
+    }
+    lastDepth = work.depth;
+    console.log("🔁  Re-scanning cascade from base before descending further…");
+  }
+}
+
 async function ensureGitRepo(dir) {
   try {
     await stat(path.join(dir, ".git"));
@@ -328,10 +464,21 @@ export async function triageDirectory(options) {
     update = true,
     forceRebuild = false,
     stageConcurrency,
+    retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false),
+    allowDescendWithNeedsReview = envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false),
+    _cascadeLevel = false,
   } = options;
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
+  }
+  if (recurse && depth === 0 && !_cascadeLevel) {
+    return triageTree({
+      ...options,
+      provider,
+      retryNeedsReview,
+      allowDescendWithNeedsReview,
+    });
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
@@ -425,10 +572,7 @@ export async function triageDirectory(options) {
     });
     return provider.collect(handle);
   };
-  const initImages = await listImages(dir);
   const levelStart = Date.now();
-  const totalImages = initImages.length;
-  const totalBatches = Math.ceil(totalImages / BATCH_SIZE);
   await mkdir(levelDir, { recursive: true });
   if (saveIo) {
     await mkdir(path.join(levelDir, '_prompts'), { recursive: true });
@@ -436,21 +580,6 @@ export async function triageDirectory(options) {
   }
   if (!update && depth === 0) {
     console.warn("⚠️ archive update disabled — will re-clone all files");
-  }
-  const archiveResult = await ensureArchiveLevel({
-    levelDir,
-    files: initImages,
-    update,
-    forceRebuild,
-    stageConcurrency,
-    verbose,
-  });
-  if (archiveResult.failed?.length) {
-    const listPath = path.join(levelDir, "failed-archives.txt");
-    await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
-    console.warn(
-      `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
-    );
   }
 
   if (fieldNotes) {
@@ -460,13 +589,37 @@ export async function triageDirectory(options) {
   }
 
   let completedBatches = 0;
+  const retrySuppressedNames = new Set();
 
   while (true) {
-    const needsReview = await readNeedsReviewNames(dir);
-    const images = (await listImages(dir)).filter((file) => !needsReview.has(path.basename(file)));
+    const state = await listLevelState(dir, { retryNeedsReview });
+    const images = state.eligibleImages.filter(
+      (file) => !retrySuppressedNames.has(path.basename(file))
+    );
+    console.log(`${indent}📊  level ${depth + 1}: ${state.allImages.length} source image(s): ${images.length} eligible, ${state.needsReviewImages.length} NEEDS_REVIEW`);
     if (images.length === 0) {
-      console.log(`${indent}✅  Nothing to do in ${dir}`);
+      if (state.needsReviewImages.length > 0) {
+        console.warn(`${indent}⚠️  Level blocked: ${dir} has ${state.needsReviewImages.length} image file(s) needing review. Not descending.`);
+        return { blocked: true, blockedCount: state.needsReviewImages.length };
+      }
+      console.log(`${indent}✅  Level settled: ${dir} has 0 active image files.`);
       break;
+    }
+
+    const archiveResult = await ensureArchiveLevel({
+      levelDir,
+      files: images,
+      update,
+      forceRebuild,
+      stageConcurrency,
+      verbose,
+    });
+    if (archiveResult.failed?.length) {
+      const listPath = path.join(levelDir, "failed-archives.txt");
+      await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
+      console.warn(
+        `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
+      );
     }
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
@@ -532,13 +685,12 @@ export async function triageDirectory(options) {
                 };
 
                 const markNeedsReview = async (reason) => {
-                  const marker = path.join(dir, "NEEDS_REVIEW");
-                  const lines = batch
-                    .map((f) => `${path.basename(f)}	${reason}`)
-                    .join("\n");
                   try {
-                    const prev = await readFile(marker, "utf8").catch(() => "");
-                    await writeFile(marker, `${prev}${lines}\n`, "utf8");
+                    await writeNeedsReviewEntries(
+                      dir,
+                      batch.map((f) => ({ name: path.basename(f), reason }))
+                    );
+                    for (const file of batch) retrySuppressedNames.add(path.basename(file));
                   } catch {
                     /* ignore */
                   }
@@ -719,6 +871,7 @@ export async function triageDirectory(options) {
                   moveFiles(keep, keepDir, notes),
                   moveFiles(aside, asideDir, notes),
                 ]);
+                await clearNeedsReviewEntries(dir, [...keep, ...aside]);
                   if (unclassified.length && keep.length + aside.length > 0) {
                     queue.push(...unclassified);
                   }
@@ -729,9 +882,10 @@ export async function triageDirectory(options) {
                 if (keep.length + aside.length > 0) {
                   completedBatches++;
                   const elapsedSec = (Date.now() - levelStart) / 1000;
-                  const remaining = totalBatches - completedBatches;
+                  const remainingNow = (await listLevelState(dir, { retryNeedsReview })).eligibleImages.length;
+                  const remainingBatchesNow = Math.ceil(remainingNow / BATCH_SIZE);
                   const tps = completedBatches / elapsedSec;
-                  const etaSec = tps > 0 ? Math.ceil(remaining / tps) : Infinity;
+                  const etaSec = tps > 0 ? Math.ceil(remainingBatchesNow / tps) : Infinity;
                   log(
                     `${indent}⏳  ETA to finish level: ${formatDuration(etaSec * 1000)}`
                   );
@@ -754,11 +908,12 @@ export async function triageDirectory(options) {
                 ]);
                 if (safeFailureCodes.has(err?.code)) {
                   const reason = failureReason(err);
-                  const marker = path.join(dir, "NEEDS_REVIEW");
-                  const lines = batch.map((f) => `${path.basename(f)}	${reason}`).join("\n");
                   try {
-                    const prev = await readFile(marker, "utf8").catch(() => "");
-                    await writeFile(marker, `${prev}${lines}\n`, "utf8");
+                    await writeNeedsReviewEntries(
+                      dir,
+                      batch.map((f) => ({ name: path.basename(f), reason }))
+                    );
+                    for (const file of batch) retrySuppressedNames.add(path.basename(file));
                   } catch {
                     /* ignore */
                   }
@@ -784,9 +939,13 @@ export async function triageDirectory(options) {
       } finally {
         multibar.stop();
       }
-      const nextNeedsReview = await readNeedsReviewNames(dir);
-      const remaining = (await listImages(dir)).filter((file) => !nextNeedsReview.has(path.basename(file))).length;
+      const nextState = await listLevelState(dir, { retryNeedsReview });
+      const remaining = nextState.eligibleImages.filter(
+        (file) => !retrySuppressedNames.has(path.basename(file))
+      ).length;
       const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+      console.log(`${indent}🔎  level drain check: level=${depth + 1} source=${dir} eligible=${remaining}`);
+      if (remaining > 0) console.log(`${indent}🔁  level still has eligible files; repeating level=${depth + 1}`);
       if (completedBatches) {
         const elapsedSec = (Date.now() - levelStart) / 1000;
         const tps = completedBatches / elapsedSec;
@@ -844,4 +1003,5 @@ export async function triageDirectory(options) {
       console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
+  return { blocked: false, blockedCount: 0 };
 }

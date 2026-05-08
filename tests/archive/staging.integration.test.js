@@ -67,4 +67,30 @@ describe("ensureArchiveLevel integration", () => {
     );
     expect(runData.cloned).toBeGreaterThanOrEqual(files.length);
   });
+
+  it("appends late files after .ok exists", async () => {
+    const first = await ensureArchiveLevel({
+      levelDir,
+      files,
+      update: true,
+      verbose: false,
+    });
+    expect(first.created).toBe(files.length);
+    await expect(fs.stat(path.join(levelDir, ".ok"))).resolves.toBeTruthy();
+
+    const late = path.join(tmpDir, "new.jpg");
+    await fs.writeFile(late, "new");
+    const second = await ensureArchiveLevel({
+      levelDir,
+      files: [late],
+      update: true,
+      verbose: false,
+    });
+
+    expect(second.created).toBe(1);
+    await expect(fs.stat(path.join(levelDir, "new.jpg"))).resolves.toBeTruthy();
+    const stagedLog = await fs.readFile(path.join(levelDir, ".staged.jsonl"), "utf8");
+    expect(stagedLog).toContain("new.jpg");
+  });
+
 });

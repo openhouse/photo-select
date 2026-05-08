@@ -318,3 +318,128 @@ describe("triageDirectory", () => {
   });
 
 });
+
+describe("cascade scheduler invariants", () => {
+  it("processes the shallowest eligible level before nested _keep work", async () => {
+    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+    const seen = [];
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((f) => path.basename(f)).sort();
+      seen.push(names);
+      if (names.includes("1.jpg")) {
+        return JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] });
+      }
+      return JSON.stringify({ keep: [], aside: ["deep.jpg"] });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
+    expect(seen[1]).toEqual(["deep.jpg"]);
+  });
+
+  it("returns to base for late-arriving files after a deeper level settles", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    const keepDir = path.join(tmpDir, "_keep");
+    await fs.mkdir(keepDir, { recursive: true });
+    await fs.writeFile(path.join(keepDir, "deep.jpg"), "deep");
+    const seen = [];
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((f) => path.basename(f)).sort();
+      seen.push(names);
+      if (names.includes("deep.jpg")) {
+        await fs.writeFile(path.join(tmpDir, "late.jpg"), "late");
+        return JSON.stringify({ keep: [], aside: ["deep.jpg"] });
+      }
+      return JSON.stringify({ keep: [], aside: ["late.jpg"] });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(seen).toEqual([["deep.jpg"], ["late.jpg"]]);
+    await expect(fs.stat(path.join(tmpDir, "_aside", "late.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("does not descend while current-level residue remains eligible", async () => {
+    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+    const seen = [];
+    chatCompletion
+      .mockImplementationOnce(async ({ images }) => {
+        seen.push(images.map((f) => path.basename(f)).sort());
+        return JSON.stringify({ keep: [], aside: ["1.jpg"] });
+      })
+      .mockImplementationOnce(async ({ images }) => {
+        seen.push(images.map((f) => path.basename(f)).sort());
+        return JSON.stringify({ keep: [], aside: ["2.jpg"] });
+      })
+      .mockImplementationOnce(async ({ images }) => {
+        seen.push(images.map((f) => path.basename(f)).sort());
+        return JSON.stringify({ keep: [], aside: ["deep.jpg"] });
+      })
+      .mockImplementation(async ({ images }) => {
+        seen.push(images.map((f) => path.basename(f)).sort());
+        return JSON.stringify({ keep: [], aside: images.map((f) => path.basename(f)) });
+      });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
+    expect(seen[1]).toEqual(["2.jpg"]);
+    expect(seen[2]).toEqual(["deep.jpg"]);
+  });
+
+  it("reports NEEDS_REVIEW images and blocks descent by default", async () => {
+    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+    await fs.writeFile(path.join(tmpDir, "NEEDS_REVIEW"), "1.jpg\tfailed\n2.jpg\tfailed\n");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+    expect(warnSpy.mock.calls.some(([msg]) => msg.includes("Cascade blocked"))).toBe(true);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "deep.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("retry-needs-review re-includes held files and clears successful markers", async () => {
+    await fs.writeFile(path.join(tmpDir, "NEEDS_REVIEW"), "1.jpg\tfailed\n2.jpg\tfailed\n");
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      retryNeedsReview: true,
+    });
+
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
+    expect(marker.trim()).toBe("");
+  });
+});
