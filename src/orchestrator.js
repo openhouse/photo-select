@@ -722,6 +722,7 @@ export async function triageDirectory(options) {
                 await saveText('prompt', attemptNum, first.prompt);
                 const firstResult = await runSession({
                   prompt: first.prompt,
+                  promptCachePrefix: first.promptCachePrefix,
                   images: batch,
                   model,
                   curators: finalCurators,

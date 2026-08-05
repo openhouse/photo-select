@@ -299,6 +299,47 @@ describe('OpenAIBatchProvider', () => {
     expect(ticket.output_budget.dynamic_curator_count).toBe(10);
   });
 
+  it('serializes an explicit stable-prefix cache plan for GPT-5.6', async () => {
+    const stablePrefix = 'Stable curatorial context. '.repeat(300);
+    const dynamicSuffix = 'Review only a.jpg.';
+    const imagePath = path.join(tmpDir, 'a.jpg');
+    await fs.writeFile(imagePath, 'data');
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+    });
+
+    await provider.submit({
+      levelDir: tmpDir,
+      prompt: stablePrefix + dynamicSuffix,
+      promptCachePrefix: stablePrefix,
+      images: [imagePath],
+      model: 'gpt-5.6-terra',
+      reasoningEffort: 'xhigh',
+    });
+
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const [inputFile] = await fs.readdir(inputsDir);
+    const line = JSON.parse(
+      await fs.readFile(path.join(inputsDir, inputFile), 'utf8')
+    );
+    expect(line.body.instructions).toBeUndefined();
+    expect(line.body.prompt_cache_options).toEqual({
+      mode: 'explicit',
+      ttl: '30m',
+    });
+    expect(line.body.prompt_cache_key).toMatch(
+      /^photo-select:v1:[a-f0-9]{32}$/
+    );
+    expect(
+      line.body.input[0].content.map((part) => part.text).join('')
+    ).toBe(stablePrefix + dynamicSuffix);
+    expect(
+      line.body.input[0].content[0].prompt_cache_breakpoint
+    ).toEqual({ mode: 'explicit' });
+  });
+
   it('rejects invalid reasoning effort before submission', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
     await expect(provider.submit({ levelDir: tmpDir, prompt: 'prompt', reasoningEffort: 'extreme' })).rejects.toThrow(/reasoningEffort/);
