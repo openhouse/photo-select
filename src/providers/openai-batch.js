@@ -9,10 +9,13 @@ import { buildReplySchema } from '../replySchema.js';
 import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens } from '../tokenEstimate.js';
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
-import { buildCacheableResponsesPrompt } from '../core/promptCaching.js';
+import {
+  buildCacheableResponsesPrompt,
+  promptCacheReadyFromUsage,
+} from '../core/promptCaching.js';
 import {
   OPENAI_BATCH_MAX_REQUESTS,
-  partitionBatchItems,
+  planCacheSeededBatches,
 } from '../core/batchAggregation.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
@@ -410,6 +413,9 @@ export default class OpenAIBatchProvider {
       const partitionable = items.map((item) => ({
         ...item,
         id: item.customId,
+        promptCacheKey: item.responsesRequest.body.prompt_cache_options?.mode === 'explicit'
+          ? item.responsesRequest.body.prompt_cache_key
+          : undefined,
         jsonl: JSON.stringify({
           custom_id: item.customId,
           method: 'POST',
@@ -417,13 +423,26 @@ export default class OpenAIBatchProvider {
           body: item.responsesRequest.body,
         }) + '\n',
       }));
-      const partitions = partitionBatchItems(partitionable, {
+      const plan = planCacheSeededBatches(partitionable, {
         maxRequests: this.maxBatchRequests,
         maxBytes: this.maxBatchInputBytes,
       });
       const handles = [];
-      for (const partition of partitions) {
-        handles.push(...await this.#submitPreparedGroup(partition));
+      for (const [index, partition] of plan.batches.entries()) {
+        const submitted = await this.#submitPreparedGroup(partition);
+        if (plan.seeded && index === 0) {
+          const completedResult = await this.collect(submitted[0]);
+          if (!promptCacheReadyFromUsage(completedResult.usage)) {
+            const err = new Error(
+              'OpenAI completed the prompt-cache seed without reporting a cache read or write'
+            );
+            err.code = 'PROMPT_CACHE_SEED_NOT_READY';
+            err.usage = completedResult.usage;
+            throw err;
+          }
+          submitted[0].completedResult = completedResult;
+        }
+        handles.push(...submitted);
       }
       items.forEach((item, index) => item.resolve(handles[index]));
     } catch (err) {
@@ -556,6 +575,7 @@ export default class OpenAIBatchProvider {
   }
 
   async collect(handle) {
+    if (handle.completedResult) return handle.completedResult;
     let lastStatus = null;
     const dirs = await ensureDirs(handle.levelDir);
     const ticketPath = path.join(dirs.tickets, `${handle.safeId}.ticket.json`);

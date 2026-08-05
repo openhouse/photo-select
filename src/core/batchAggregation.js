@@ -36,3 +36,22 @@ export function partitionBatchItems(
   if (current.length > 0) partitions.push(current);
   return partitions;
 }
+
+export function planCacheSeededBatches(items, options = {}) {
+  const unseeded = partitionBatchItems(items, options);
+  if (items.length < 2) return { seeded: false, batches: unseeded };
+
+  const promptCacheKey = items[0].promptCacheKey;
+  if (
+    !promptCacheKey ||
+    items.some((item) => item.promptCacheKey !== promptCacheKey)
+  ) {
+    return { seeded: false, batches: unseeded };
+  }
+
+  const [seed, ...readers] = items;
+  return {
+    seeded: true,
+    batches: [[seed], ...partitionBatchItems(readers, options)],
+  };
+}
