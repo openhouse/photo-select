@@ -21,6 +21,68 @@ const createClient = () => {
   return { files, batches };
 };
 
+async function installCacheBatchMock(client, usages) {
+  const events = [];
+  const customIdsByFile = new Map();
+  const customIdsByBatch = new Map();
+  let fileSequence = 0;
+  let batchSequence = 0;
+
+  client.files.create.mockImplementation(async ({ file }) => {
+    const fileId = `file_${++fileSequence}`;
+    const rows = (await fs.readFile(file.path, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    customIdsByFile.set(fileId, rows.map((row) => row.custom_id));
+    return { id: fileId };
+  });
+  client.batches.create.mockImplementation(async ({ input_file_id, metadata }) => {
+    const batchId = `batch_${++batchSequence}`;
+    customIdsByBatch.set(batchId, customIdsByFile.get(input_file_id));
+    events.push(`create:${metadata.request_count}`);
+    return { id: batchId, status: 'validating' };
+  });
+  client.batches.retrieve.mockImplementation(async (batchId) => {
+    events.push(`retrieve:${batchId}`);
+    return {
+      id: batchId,
+      status: 'completed',
+      output_file_id: `out_${batchId}`,
+    };
+  });
+  client.files.content.mockImplementation(async (outputFileId) => {
+    const batchId = outputFileId.slice('out_'.length);
+    const usage = usages[Number(batchId.slice('batch_'.length)) - 1];
+    events.push(`content:${batchId}`);
+    return {
+      text: async () => customIdsByBatch.get(batchId).map((customId) =>
+        JSON.stringify({
+          custom_id: customId,
+          response: {
+            status_code: 200,
+            body: {
+              id: `resp_${customId}`,
+              object: 'response',
+              status: 'completed',
+              usage,
+              output: [{
+                type: 'message',
+                content: [{
+                  type: 'output_json',
+                  json: { minutes: [], decisions: [] },
+                }],
+              }],
+            },
+          },
+        })
+      ).join('\n') + '\n',
+    };
+  });
+
+  return { events };
+}
+
 describe('OpenAIBatchProvider', () => {
   let tmpDir;
   let client;
@@ -154,58 +216,19 @@ describe('OpenAIBatchProvider', () => {
     );
   });
 
-  it('completes one cold-cache seed before submitting compatible readers', async () => {
-    const events = [];
-    let fileSequence = 0;
-    let batchSequence = 0;
-    let seedCustomId;
-    client.files.create.mockImplementation(async () => ({
-      id: `file_${++fileSequence}`,
-    }));
-    client.batches.create.mockImplementation(async ({ metadata }) => {
-      const requestCount = Number(metadata.request_count);
-      events.push(`create:${requestCount}`);
-      if (requestCount === 1) seedCustomId = metadata.custom_id;
-      return { id: `batch_${++batchSequence}`, status: 'validating' };
-    });
-    client.batches.retrieve.mockImplementation(async (batchId) => {
-      events.push(`retrieve:${batchId}`);
-      return {
-        id: batchId,
-        status: 'completed',
-        output_file_id: `out_${batchId}`,
-      };
-    });
-    client.files.content.mockImplementation(async (outputFileId) => {
-      events.push(`content:${outputFileId}`);
-      return {
-        text: async () => JSON.stringify({
-          custom_id: seedCustomId,
-          response: {
-            status_code: 200,
-            body: {
-              id: 'resp_seed',
-              object: 'response',
-              status: 'completed',
-              usage: {
-                input_tokens: 7000,
-                input_tokens_details: {
-                  cached_tokens: 0,
-                  cache_write_tokens: 6000,
-                },
-              },
-              output: [{
-                type: 'message',
-                content: [{
-                  type: 'output_json',
-                  json: { minutes: [], decisions: [] },
-                }],
-              }],
-            },
-          },
-        }) + '\n',
-      };
-    });
+  it('requires a cache-hit probe before submitting compatible readers', async () => {
+    const seedWrite = {
+      input_tokens: 7000,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+    };
+    const cacheHit = {
+      input_tokens: 7000,
+      input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
+    };
+    const { events } = await installCacheBatchMock(
+      client,
+      [seedWrite, cacheHit, cacheHit]
+    );
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -215,7 +238,7 @@ describe('OpenAIBatchProvider', () => {
     });
     const stablePrefix = 'Large stable context. '.repeat(300);
 
-    const handles = await Promise.all(['a', 'b', 'c'].map((name) =>
+    const handles = await Promise.all(['a', 'b', 'c', 'd'].map((name) =>
       provider.submit({
         levelDir: tmpDir,
         prompt: `${stablePrefix}Review ${name}.jpg.`,
@@ -226,12 +249,15 @@ describe('OpenAIBatchProvider', () => {
 
     expect(client.batches.create.mock.calls.map(
       ([request]) => Number(request.metadata.request_count)
-    )).toEqual([1, 2]);
-    expect(events.indexOf('content:out_batch_1')).toBeLessThan(
+    )).toEqual([1, 1, 2]);
+    expect(events.indexOf('content:batch_1')).toBeLessThan(
+      events.indexOf('create:1', 1)
+    );
+    expect(events.indexOf('content:batch_2')).toBeLessThan(
       events.indexOf('create:2')
     );
     expect(new Set(handles.map((handle) => handle.batchId))).toEqual(
-      new Set(['batch_1', 'batch_2'])
+      new Set(['batch_1', 'batch_2', 'batch_3'])
     );
     const inputsDir = path.join(tmpDir, '.batch', 'inputs');
     const rowCounts = await Promise.all((await fs.readdir(inputsDir)).map(
@@ -240,53 +266,21 @@ describe('OpenAIBatchProvider', () => {
         .split('\n')
         .length
     ));
-    expect(rowCounts.sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(rowCounts.sort((a, b) => a - b)).toEqual([1, 1, 2]);
 
-    const seedResult = await provider.collect(handles[0]);
-    expect(seedResult.json).toEqual({ minutes: [], decisions: [] });
-    expect(client.batches.retrieve).toHaveBeenCalledTimes(1);
+    const results = await Promise.all(handles.map((handle) => provider.collect(handle)));
+    expect(results.map((result) => result.json)).toEqual(
+      Array(4).fill({ minutes: [], decisions: [] })
+    );
+    expect(client.batches.retrieve).toHaveBeenCalledTimes(4);
   });
 
-  it('does not release readers when the seed reports no cache read or write', async () => {
-    let batchSequence = 0;
-    let seedCustomId;
-    client.files.create.mockImplementation(async () => ({ id: 'file_seed' }));
-    client.batches.create.mockImplementation(async ({ metadata }) => {
-      if (metadata.request_count === '1') seedCustomId = metadata.custom_id;
-      return { id: `batch_${++batchSequence}`, status: 'validating' };
-    });
-    client.batches.retrieve.mockImplementation(async (batchId) => ({
-      id: batchId,
-      status: 'completed',
-      output_file_id: `out_${batchId}`,
-    }));
-    client.files.content.mockImplementation(async () => ({
-      text: async () => JSON.stringify({
-        custom_id: seedCustomId,
-        response: {
-          status_code: 200,
-          body: {
-            id: 'resp_without_cache',
-            object: 'response',
-            status: 'completed',
-            usage: {
-              input_tokens: 7000,
-              input_tokens_details: {
-                cached_tokens: 0,
-                cache_write_tokens: 0,
-              },
-            },
-            output: [{
-              type: 'message',
-              content: [{
-                type: 'output_json',
-                json: { minutes: [], decisions: [] },
-              }],
-            }],
-          },
-        },
-      }) + '\n',
-    }));
+  it('stops fanout when the probe writes instead of hitting the cache', async () => {
+    const cacheWrite = {
+      input_tokens: 7000,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+    };
+    await installCacheBatchMock(client, [cacheWrite, cacheWrite]);
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -296,7 +290,7 @@ describe('OpenAIBatchProvider', () => {
     });
     const stablePrefix = 'Large stable context. '.repeat(300);
 
-    const results = await Promise.allSettled(['a', 'b'].map((name) =>
+    const results = await Promise.allSettled(['a', 'b', 'c', 'd'].map((name) =>
       provider.submit({
         levelDir: tmpDir,
         prompt: `${stablePrefix}Review ${name}.jpg.`,
@@ -308,8 +302,16 @@ describe('OpenAIBatchProvider', () => {
     expect(results.map((result) => result.status)).toEqual([
       'rejected',
       'rejected',
+      'rejected',
+      'rejected',
     ]);
-    expect(client.batches.create).toHaveBeenCalledTimes(1);
+    expect(results.map((result) => result.reason?.code)).toEqual([
+      'PROMPT_CACHE_PROBE_MISS',
+      'PROMPT_CACHE_PROBE_MISS',
+      'PROMPT_CACHE_PROBE_MISS',
+      'PROMPT_CACHE_PROBE_MISS',
+    ]);
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces worker submissions before staggered request preparation can split the Batch', async () => {

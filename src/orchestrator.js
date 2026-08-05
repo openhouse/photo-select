@@ -529,6 +529,10 @@ export async function triageDirectory(options) {
     return wrapped;
   }
 
+  function isPromptCacheSafetyError(err) {
+    return err?.code === "PROMPT_CACHE_PROBE_MISS";
+  }
+
   let dynamicWorkers = workers;
   let consecutiveGatewayErrors = 0;
   function isGatewayError(e) {
@@ -949,6 +953,15 @@ export async function triageDirectory(options) {
                   }
                   log(`${indent}⚠️  Files left unmoved and added to NEEDS_REVIEW (${reason}).`);
                   return;
+                }
+                if (isPromptCacheSafetyError(err)) {
+                  const alreadyAborting = abortProcessing;
+                  abortProcessing = true;
+                  queue.length = 0;
+                  if (!alreadyAborting) {
+                    log(`${indent}🛑  Prompt-cache probe missed; stopping remaining batches to prevent uncached fanout.`);
+                  }
+                  throw err;
                 }
                 if (isBillingLimitError(err) && !abortProcessing) {
                   abortProcessing = true;

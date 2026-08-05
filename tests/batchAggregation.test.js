@@ -18,11 +18,12 @@ describe('partitionBatchItems', () => {
     ).toEqual([['a', 'b'], ['c']]);
   });
 
-  it('places one compatible cache seed before partitioned readers', () => {
+  it('places a compatible cache seed and probe before partitioned readers', () => {
     const items = [
       { id: 'a', jsonl: 'aaaa\n', promptCacheKey: 'shared' },
       { id: 'b', jsonl: 'bbbb\n', promptCacheKey: 'shared' },
       { id: 'c', jsonl: 'cccc\n', promptCacheKey: 'shared' },
+      { id: 'd', jsonl: 'dddd\n', promptCacheKey: 'shared' },
     ];
 
     const plan = planCacheSeededBatches(items, {
@@ -33,7 +34,7 @@ describe('partitionBatchItems', () => {
     expect(plan.seeded).toBe(true);
     expect(
       plan.batches.map((partition) => partition.map((item) => item.id))
-    ).toEqual([['a'], ['b', 'c']]);
+    ).toEqual([['a'], ['b'], ['c', 'd']]);
   });
 
   it('does not seed a cohort containing different cache keys', () => {
