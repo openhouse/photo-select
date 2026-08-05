@@ -10,6 +10,7 @@
     "start": "photo-select",
     "test": "vitest run",
     "evals:prompt-cache": "node scripts/eval-prompt-cache.mjs",
+    "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js",
     "undici:smoke": "node scripts/undici-smoke.mjs",
     "debug:batch": "node scripts/debug-batch.mjs"
   },
