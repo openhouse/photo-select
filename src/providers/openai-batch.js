@@ -9,9 +9,19 @@ import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens } from
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
 import { buildCacheableResponsesPrompt } from '../core/promptCaching.js';
+import {
+  OPENAI_BATCH_MAX_REQUESTS,
+  partitionBatchItems,
+} from '../core/batchAggregation.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
+const DEFAULT_AGGREGATION_MS = Number(
+  process.env.PHOTO_SELECT_BATCH_AGGREGATION_MS || 1000
+);
+const DEFAULT_MAX_BATCH_BYTES = Number(
+  process.env.PHOTO_SELECT_BATCH_MAX_INPUT_BYTES || 190 * 1024 * 1024
+);
 const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
 
@@ -250,13 +260,20 @@ export default class OpenAIBatchProvider {
     client,
     pollIntervalMs = DEFAULT_POLL_MS,
     completionWindow = DEFAULT_COMPLETION_WINDOW,
+    aggregationWindowMs = DEFAULT_AGGREGATION_MS,
+    maxBatchInputBytes = DEFAULT_MAX_BATCH_BYTES,
+    maxBatchRequests = OPENAI_BATCH_MAX_REQUESTS,
     enableFallback = true,
     helpers = {},
   } = {}) {
     this.client = client || new OpenAI();
     this.pollIntervalMs = pollIntervalMs;
     this.completionWindow = completionWindow;
+    this.aggregationWindowMs = Math.max(0, Number(aggregationWindowMs) || 0);
+    this.maxBatchInputBytes = Math.max(1, Number(maxBatchInputBytes) || 1);
+    this.maxBatchRequests = Math.max(1, Number(maxBatchRequests) || 1);
     this.enableFallback = enableFallback;
+    this.pendingSubmissionGroups = new Map();
     this.helpers = {
       buildInput,
       buildMessages,
@@ -312,37 +329,115 @@ export default class OpenAIBatchProvider {
     });
     const safe = safeId(customId);
 
-    const attempts = [
-      { endpoint: DEFAULT_ENDPOINT, request: responsesRequest },
-    ];
-    if (this.enableFallback) {
-      attempts.push({ endpoint: FALLBACK_ENDPOINT, request: null });
+    return this.#enqueueSubmission({
+      dirs,
+      customId,
+      safe,
+      levelDir,
+      prompt,
+      images,
+      curators,
+      model,
+      minutesMin,
+      minutesMax,
+      verbosity,
+      responsesRequest,
+    });
+  }
+
+  #enqueueSubmission(item) {
+    const groupKey = JSON.stringify([
+      path.resolve(item.levelDir),
+      item.model,
+      this.completionWindow,
+    ]);
+    let group = this.pendingSubmissionGroups.get(groupKey);
+    if (!group) {
+      group = { items: [], timer: null };
+      this.pendingSubmissionGroups.set(groupKey, group);
     }
 
+    return new Promise((resolve, reject) => {
+      group.items.push({ ...item, resolve, reject });
+      if (!group.timer) {
+        group.timer = setTimeout(() => {
+          void this.#flushSubmissionGroup(groupKey);
+        }, this.aggregationWindowMs);
+      }
+    });
+  }
+
+  async #flushSubmissionGroup(groupKey) {
+    const group = this.pendingSubmissionGroups.get(groupKey);
+    if (!group) return;
+    this.pendingSubmissionGroups.delete(groupKey);
+    try {
+      const prepared = group.items.map((item) => ({
+        ...item,
+        id: item.customId,
+        jsonl: JSON.stringify({
+          custom_id: item.customId,
+          method: 'POST',
+          url: DEFAULT_ENDPOINT,
+          body: item.responsesRequest.body,
+        }) + '\n',
+      }));
+      const partitions = partitionBatchItems(prepared, {
+        maxRequests: this.maxBatchRequests,
+        maxBytes: this.maxBatchInputBytes,
+      });
+      const handles = [];
+      for (const partition of partitions) {
+        handles.push(...await this.#submitPreparedGroup(partition));
+      }
+      group.items.forEach((item, index) => item.resolve(handles[index]));
+    } catch (err) {
+      group.items.forEach((item) => item.reject(err));
+    }
+  }
+
+  async #submitPreparedGroup(items) {
+    const first = items[0];
+    const groupDigest = crypto
+      .createHash('sha256')
+      .update(items.map((item) => item.customId).join('\0'))
+      .digest('hex')
+      .slice(0, 24);
+    const jsonlPath = path.join(
+      first.dirs.inputs,
+      items.length === 1 ? `${first.safe}.jsonl` : `batch-${groupDigest}.jsonl`
+    );
+    const endpoints = this.enableFallback
+      ? [DEFAULT_ENDPOINT, FALLBACK_ENDPOINT]
+      : [DEFAULT_ENDPOINT];
     let batch;
-    let lastErr;
     let inputFile;
     let endpointUsed = DEFAULT_ENDPOINT;
-    for (const attempt of attempts) {
-      const endpoint = attempt.endpoint;
-      const request = attempt.request ||
-        (await this.#buildChatCompletionsRequest({
-          prompt,
-          images,
-          curators,
-          model,
-          minutesMin,
-          minutesMax,
-          verbosity,
-        }, responsesRequest.used));
-      const jsonlLine = {
-        custom_id: customId,
-        method: 'POST',
-        url: endpoint,
-        body: request.body,
-      };
-      const jsonlPath = path.join(dirs.inputs, `${safe}.jsonl`);
-      await writeFile(jsonlPath, JSON.stringify(jsonlLine) + '\n', 'utf8');
+    let lastErr;
+
+    for (const endpoint of endpoints) {
+      const requests = endpoint === DEFAULT_ENDPOINT
+        ? items.map((item) => item.responsesRequest)
+        : await Promise.all(
+          items.map((item) => this.#buildChatCompletionsRequest({
+            prompt: item.prompt,
+            images: item.images,
+            curators: item.curators,
+            model: item.model,
+            minutesMin: item.minutesMin,
+            minutesMax: item.minutesMax,
+            verbosity: item.verbosity,
+          }, item.responsesRequest.used))
+        );
+      const jsonl = items
+        .map((item, index) => JSON.stringify({
+          custom_id: item.customId,
+          method: 'POST',
+          url: endpoint,
+          body: requests[index].body,
+        }))
+        .join('\n') + '\n';
+      await writeFile(jsonlPath, jsonl, 'utf8');
       try {
         inputFile = await this.client.files.create({
           file: createReadStream(jsonlPath),
@@ -353,70 +448,76 @@ export default class OpenAIBatchProvider {
           endpoint,
           completion_window: this.completionWindow,
           metadata: {
-            custom_id: customId,
-            model,
-            level: levelKey(levelDir),
+            custom_id: items.length === 1
+              ? first.customId
+              : `ps-group:${groupDigest}`,
+            request_count: String(items.length),
+            model: first.model,
+            level: levelKey(first.levelDir),
           },
         });
         endpointUsed = endpoint;
         break;
       } catch (err) {
         lastErr = err;
-        await appendLedger(dirs.base, {
-          custom_id: customId,
+        await Promise.all(items.map((item) => appendLedger(item.dirs.base, {
+          custom_id: item.customId,
           event: 'submit_error',
           endpoint,
           message: err?.message,
-        });
-        if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) {
-          throw err;
-        }
+        })));
+        if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) throw err;
       }
     }
 
-    if (!batch) {
-      throw lastErr || new Error('Failed to create batch job');
-    }
+    if (!batch) throw lastErr || new Error('Failed to create batch job');
 
-    const ticketPath = path.join(dirs.tickets, `${safe}.ticket.json`);
     const submittedAt = new Date().toISOString();
-    const ticket = {
-      custom_id: customId,
-      batch_id: batch.id,
-      model,
-      endpoint: endpointUsed,
-      status: batch.status,
-      input_file_id: inputFile.id,
-      submitted_at: submittedAt,
-      completion_window: this.completionWindow,
-      used_images: responsesRequest.used.map((file) => path.basename(file)),
-      output_budget: budgetArtifact(responsesRequest.budget),
-    };
-    await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
-    await appendLedger(dirs.base, {
-      custom_id: customId,
-      event: 'submitted',
-      batch_id: batch.id,
-      endpoint: endpointUsed,
-      status: batch.status,
-      output_budget: budgetArtifact(responsesRequest.budget),
-    });
+    return Promise.all(items.map(async (item) => {
+      const ticketPath = path.join(
+        item.dirs.tickets,
+        `${item.safe}.ticket.json`
+      );
+      const statusPath = path.join(
+        item.dirs.status,
+        `${item.safe}.status.json`
+      );
+      const ticket = {
+        custom_id: item.customId,
+        batch_id: batch.id,
+        model: item.model,
+        endpoint: endpointUsed,
+        status: batch.status,
+        input_file_id: inputFile.id,
+        submitted_at: submittedAt,
+        completion_window: this.completionWindow,
+        used_images: item.responsesRequest.used.map((file) => path.basename(file)),
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      };
+      await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
+      await appendLedger(item.dirs.base, {
+        custom_id: item.customId,
+        event: 'submitted',
+        batch_id: batch.id,
+        endpoint: endpointUsed,
+        status: batch.status,
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      });
+      await writeFile(statusPath, JSON.stringify(batch, null, 2));
 
-    const statusPath = path.join(dirs.status, `${safe}.status.json`);
-    await writeFile(statusPath, JSON.stringify(batch, null, 2));
-
-    return {
-      provider: this.name,
-      customId,
-      batchId: batch.id,
-      levelDir,
-      model,
-      ticketPath,
-      statusPath,
-      safeId: safe,
-      used: responsesRequest.used,
-      endpoint: endpointUsed,
-    };
+      return {
+        provider: this.name,
+        customId: item.customId,
+        batchId: batch.id,
+        levelDir: item.levelDir,
+        model: item.model,
+        ticketPath,
+        statusPath,
+        safeId: item.safe,
+        used: item.responsesRequest.used,
+        endpoint: endpointUsed,
+      };
+    }));
   }
 
   async collect(handle) {

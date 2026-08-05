@@ -105,6 +105,89 @@ describe('OpenAIBatchProvider', () => {
     expect(ledger).toContain('output_budget');
   });
 
+  it('coalesces compatible concurrent submissions into one multi-line Batch job', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 25,
+    });
+    const firstImage = path.join(tmpDir, '1.jpg');
+    const secondImage = path.join(tmpDir, '2.jpg');
+    await Promise.all([
+      fs.writeFile(firstImage, 'first'),
+      fs.writeFile(secondImage, 'second'),
+    ]);
+
+    const handles = await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview 1.jpg',
+        images: [firstImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview 2.jpg',
+        images: [secondImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    expect(client.files.create).toHaveBeenCalledTimes(1);
+    expect(client.batches.create).toHaveBeenCalledTimes(1);
+    expect(new Set(handles.map((handle) => handle.customId)).size).toBe(2);
+    expect(new Set(handles.map((handle) => handle.batchId))).toEqual(
+      new Set(['batch_123'])
+    );
+
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(lines).toHaveLength(2);
+    expect(new Set(lines.map((line) => line.custom_id))).toEqual(
+      new Set(handles.map((handle) => handle.customId))
+    );
+  });
+
+  it('splits an aggregate before the configured Batch request limit', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 25,
+      maxBatchRequests: 1,
+    });
+    const firstImage = path.join(tmpDir, '1.jpg');
+    const secondImage = path.join(tmpDir, '2.jpg');
+    await Promise.all([
+      fs.writeFile(firstImage, 'first'),
+      fs.writeFile(secondImage, 'second'),
+    ]);
+
+    await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'review 1.jpg',
+        images: [firstImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'review 2.jpg',
+        images: [secondImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    expect(client.files.create).toHaveBeenCalledTimes(2);
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
+  });
+
   it('limits safeId length for deeply nested level directories', async () => {
     const provider = new OpenAIBatchProvider({ client, enableFallback: false, helpers });
     let longDir = tmpDir;
