@@ -44,8 +44,6 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const helpers = {
   async buildInput(prompt) {
-    const index = Number(prompt.match(/Synthetic request (\d+)/)?.[1] || 1);
-    await wait((index - 1) * staggerMs);
     return {
       instructions: prompt,
       input: [{
@@ -121,14 +119,19 @@ try {
   const handles = await Promise.all(Array.from({ length: count }, (_, i) =>
     provider.submit({
       levelDir: tempDir,
-      prompt: `${prefix} Synthetic request ${i + 1}.`,
-      promptCachePrefix: prefix,
-      images: [],
       model,
-      reasoningEffort: 'low',
-      verbosity: 'low',
-      minutesMin: 0,
-      minutesMax: 0,
+      prepare: async () => {
+        await wait(i * staggerMs);
+        return {
+          prompt: `${prefix} Synthetic request ${i + 1}.`,
+          promptCachePrefix: prefix,
+          images: [],
+          reasoningEffort: 'low',
+          verbosity: 'low',
+          minutesMin: 0,
+          minutesMax: 0,
+        };
+      },
     })
   ));
 
@@ -180,7 +183,7 @@ try {
     totals.cached_tokens > totals.cache_write_tokens;
   const passed = topologyPassed && cachePassed;
   console.log(JSON.stringify({
-    eval: 'provider_staggered_grouped_batch_explicit_prompt_cache',
+    eval: 'provider_deferred_preparation_grouped_batch_explicit_prompt_cache',
     model,
     request_count: count,
     aggregation_ms: aggregationMs,

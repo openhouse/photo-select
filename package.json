@@ -10,7 +10,7 @@
     "start": "photo-select",
     "test": "vitest run",
     "evals:prompt-cache": "node scripts/eval-prompt-cache.mjs",
-    "evals:batch-aggregation": "vitest run tests/batchAggregation.test.js tests/openaiBatchProvider.test.js",
+    "evals:batch-aggregation": "vitest run tests/batchAggregation.test.js tests/openaiBatchProvider.test.js tests/orchestratorBatchAggregation.test.js",
     "evals:batch-prompt-cache": "node scripts/eval-batch-prompt-cache.mjs",
     "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js",
     "undici:smoke": "node scripts/undici-smoke.mjs",
