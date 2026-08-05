@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 dotenv.config(process.env.PHOTO_SELECT_ENV_FILE
   ? { path: process.env.PHOTO_SELECT_ENV_FILE }
@@ -23,14 +24,6 @@ const targetPrefixChars = Math.max(
   4096,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_PREFIX_CHARS || 444_466)
 );
-const pollMs = Math.max(
-  1000,
-  Number(process.env.PHOTO_SELECT_CACHE_EVAL_POLL_MS || 5000)
-);
-const timeoutMs = Math.max(
-  60_000,
-  Number(process.env.PHOTO_SELECT_CACHE_EVAL_TIMEOUT_MS || 30 * 60_000)
-);
 const aggregationMs = Math.max(
   1,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_AGGREGATION_MS || 50)
@@ -39,7 +32,7 @@ const staggerMs = Math.max(
   aggregationMs + 1,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_STAGGER_MS || 150)
 );
-let prefix = `Photo-select Batch cache evaluation pt4, run ${Date.now()}. `;
+let prefix = `Photo-select Flex provider cache evaluation pt5, run ${Date.now()}. `;
 for (let i = 0; prefix.length < targetPrefixChars; i++) {
   prefix += `Synthetic context line ${String(i).padStart(6, '0')}: ` +
     'amber bridge cedar delta ember field granite harbor iris juniper.\n';
@@ -55,34 +48,58 @@ const helpers = {
         role: 'user',
         content: [{
           type: 'input_text',
-          text: 'Return a JSON object whose ok property is the string OK.',
+          text: 'Return JSON with empty minutes and decisions arrays.',
         }],
       }],
       used: [],
     };
   },
-  schemaForBatch() {
+  schemaForBatch(_used, _curators, { minutesMin = 0, minutesMax = 0 } = {}) {
     return {
-      name: 'PhotoSelectCacheEvalV2',
+      name: 'PhotoSelectCacheEvalV3',
       schema: {
         type: 'object',
-        properties: { ok: { type: 'string', enum: ['OK'] } },
-        required: ['ok'],
+        properties: {
+          minutes: {
+            type: 'array',
+            minItems: minutesMin,
+            maxItems: minutesMax,
+            items: { type: 'string' },
+          },
+          decisions: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 1,
+            items: {
+              type: 'object',
+              properties: {
+                filename: {
+                  type: 'string',
+                  enum: [`synthetic-${minutesMin}.jpg`],
+                },
+                decision: { type: 'string', enum: ['keep', 'aside'] },
+                reason: { type: 'string' },
+              },
+              required: ['filename', 'decision', 'reason'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['minutes', 'decisions'],
         additionalProperties: false,
       },
     };
   },
 };
 
-function usageFromRow(row) {
-  const responseBody = typeof row.response?.body === 'string'
-    ? JSON.parse(row.response.body)
-    : row.response?.body;
-  const usage = row.response?.usage || responseBody?.usage || {};
+function usageSummary(handle, ticket, result) {
+  const usage = result?.usage || {};
   const details = usage.input_tokens_details || {};
   return {
-    custom_id: row.custom_id,
-    status_code: row.response?.status_code,
+    custom_id: handle.customId,
+    response_id: handle.batchId,
+    cache_role: ticket.cache_role,
+    service_tier: ticket.service_tier,
     input_tokens: usage.input_tokens || 0,
     cached_tokens: details.cached_tokens || 0,
     cache_write_tokens: details.cache_write_tokens || 0,
@@ -90,34 +107,15 @@ function usageFromRow(row) {
   };
 }
 
-async function settleBatch(client, batchId) {
-  const deadline = Date.now() + timeoutMs;
-  let batch = await client.batches.retrieve(batchId);
-  while (!['completed', 'failed', 'expired', 'canceled'].includes(batch.status)) {
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${batch.id}`);
-    await wait(pollMs);
-    batch = await client.batches.retrieve(batch.id);
-  }
-  if (batch.status !== 'completed' || !batch.output_file_id) {
-    throw new Error(`Batch ${batch.id} ended with status ${batch.status}`);
-  }
-  const text = await (await client.files.content(batch.output_file_id)).text();
-  return {
-    batch,
-    usages: text.split(/\r?\n/).filter(Boolean).map((line) =>
-      usageFromRow(JSON.parse(line))
-    ),
-  };
-}
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  timeout: 15 * 60_000,
+});
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'photo-select-cache-eval-'));
-const remoteFileIds = new Set();
 try {
   const provider = new OpenAIBatchProvider({
     client,
     enableFallback: false,
-    pollIntervalMs: pollMs,
     aggregationWindowMs: aggregationMs,
     helpers,
   });
@@ -133,8 +131,8 @@ try {
           images: [],
           reasoningEffort: 'low',
           verbosity: 'low',
-          minutesMin: 0,
-          minutesMax: 0,
+          minutesMin: i + 1,
+          minutesMax: i + 2,
         };
       },
     })
@@ -149,25 +147,23 @@ try {
       message: result.reason?.message,
       usage: result.reason?.usage,
     }));
-
+  const results = await Promise.all(handles.map((handle) =>
+    provider.collect(handle)
+  ));
+  const tickets = await Promise.all(handles.map((handle) =>
+    readFile(handle.ticketPath, 'utf8').then(JSON.parse)
+  ));
+  const usages = handles.map((handle, index) =>
+    usageSummary(handle, tickets[index], results[index])
+  );
   const inputDir = path.join(tempDir, '.batch', 'inputs');
   const inputFiles = await readdir(inputDir);
-  const inputRowCounts = await Promise.all(inputFiles.map(async (file) =>
+  const inputRows = (await Promise.all(inputFiles.map(async (file) =>
     (await readFile(path.join(inputDir, file), 'utf8'))
       .split(/\r?\n/)
       .filter(Boolean)
-      .length
-  ));
-  const batchIds = [...new Set(handles.map((handle) => handle.batchId))];
-  const settled = await Promise.all(batchIds.map((batchId) =>
-    settleBatch(client, batchId)
-  ));
-  for (const { batch } of settled) {
-    if (batch.input_file_id) remoteFileIds.add(batch.input_file_id);
-    if (batch.output_file_id) remoteFileIds.add(batch.output_file_id);
-    if (batch.error_file_id) remoteFileIds.add(batch.error_file_id);
-  }
-  const usages = settled.flatMap((entry) => entry.usages);
+      .map(JSON.parse)
+  ))).flat();
   const totals = usages.reduce((sum, usage) => {
     for (const key of [
       'input_tokens',
@@ -188,38 +184,42 @@ try {
     cache_hit_requests: 0,
     cache_write_requests: 0,
   });
-  const expectedRowCounts = [1, 1, count - 2].sort((a, b) => a - b);
+  const seedUsage = usages.find((usage) => usage.cache_role === 'seed');
+  const probeUsage = usages.find((usage) => usage.cache_role === 'probe');
+  const readerUsages = usages.filter((usage) => usage.cache_role === 'reader');
+  const schemaHashes = inputRows.map((row) => crypto
+    .createHash('sha256')
+    .update(JSON.stringify(row.body?.text?.format?.schema))
+    .digest('hex'));
   const topologyPassed = submissionErrors.length === 0 &&
-    inputFiles.length === 3 &&
-    inputRowCounts.length === 3 &&
-    inputRowCounts.slice().sort((a, b) => a - b).every(
-      (rows, index) => rows === expectedRowCounts[index]
-    ) &&
-    batchIds.length === 3;
-  const seedUsage = settled[0]?.usages[0];
-  const probeUsage = settled[1]?.usages[0];
-  const readerUsages = settled.slice(2).flatMap((entry) => entry.usages);
-  const cachePassed = submissionErrors.length === 0 &&
-    usages.length === count &&
-    usages.every((usage) => usage.status_code === 200) &&
-    seedUsage?.cache_write_tokens > 0 &&
+    handles.length === count &&
+    new Set(handles.map((handle) => handle.batchId)).size === count &&
+    inputFiles.length === count &&
+    inputRows.length === count &&
+    inputRows.every((row) => row.body?.service_tier === 'flex') &&
+    new Set(schemaHashes).size === 1 &&
+    tickets.every((ticket) => ticket.service_tier === 'flex') &&
+    tickets.filter((ticket) => ticket.cache_role === 'seed').length === 1 &&
+    tickets.filter((ticket) => ticket.cache_role === 'probe').length === 1 &&
+    readerUsages.length === count - 2;
+  const cachePassed = seedUsage?.cache_write_tokens > 0 &&
     probeUsage?.cached_tokens > 0 &&
-    readerUsages.length === count - 2 &&
+    probeUsage?.cache_write_tokens === 0 &&
     readerUsages.every((usage) => usage.cached_tokens > 0) &&
     totals.cache_write_requests === 1 &&
     totals.cache_hit_requests === count - 1 &&
     totals.cached_tokens > totals.cache_write_tokens;
   const passed = topologyPassed && cachePassed;
   console.log(JSON.stringify({
-    eval: 'provider_seed_probe_barrier_explicit_prompt_cache_pt4',
+    eval: 'provider_flex_seed_probe_barrier_explicit_prompt_cache_pt5',
     model,
     request_count: count,
     stable_prefix_chars: prefix.length,
     aggregation_ms: aggregationMs,
     preparation_stagger_ms: staggerMs,
-    batch_count: batchIds.length,
+    response_count: handles.length,
     input_file_count: inputFiles.length,
-    input_row_counts: inputRowCounts,
+    stable_schema_hashes: [...new Set(schemaHashes)],
     topology_passed: topologyPassed,
     cache_passed: cachePassed,
     passed,
@@ -230,19 +230,5 @@ try {
   }, null, 2));
   if (!passed) process.exitCode = 1;
 } finally {
-  try {
-    const ticketDir = path.join(tempDir, '.batch', 'tickets');
-    for (const file of await readdir(ticketDir)) {
-      const ticket = JSON.parse(await readFile(path.join(ticketDir, file), 'utf8'));
-      for (const id of [ticket.input_file_id, ticket.output_file_id, ticket.error_file_id]) {
-        if (id) remoteFileIds.add(id);
-      }
-    }
-  } catch {
-    // Submission may fail before ticket creation.
-  }
-  await Promise.all([...remoteFileIds].map((id) =>
-    client.files.del(id).catch(() => undefined)
-  ));
   await rm(tempDir, { recursive: true, force: true });
 }

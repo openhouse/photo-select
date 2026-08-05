@@ -12,6 +12,7 @@ import { debugBatch } from '../../scripts/debug-batch.mjs';
 import {
   buildCacheableResponsesPrompt,
   promptCacheHitFromUsage,
+  stabilizeResponseSchemaForPromptCache,
 } from '../core/promptCaching.js';
 import {
   OPENAI_BATCH_MAX_REQUESTS,
@@ -28,6 +29,8 @@ const DEFAULT_MAX_BATCH_BYTES = Number(
 );
 const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
+const FLEX_SERVICE_TIER = 'flex';
+const FLEX_TIMEOUT_MS = Number(process.env.PHOTO_SELECT_FLEX_TIMEOUT_MS || 15 * 60 * 1000);
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
 const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high', 'xhigh']);
@@ -436,11 +439,8 @@ export default class OpenAIBatchProvider {
         return;
       }
 
-      const seedHandles = await this.#submitPreparedGroup(plan.batches[0]);
-      seedHandles[0].completedResult = await this.collect(seedHandles[0]);
-
-      const probeHandles = await this.#submitPreparedGroup(plan.batches[1]);
-      probeHandles[0].completedResult = await this.collect(probeHandles[0]);
+      const seedHandles = await this.#submitPreparedFlexGroup(plan.batches[0], 'seed');
+      const probeHandles = await this.#submitPreparedFlexGroup(plan.batches[1], 'probe');
       if (!promptCacheHitFromUsage(probeHandles[0].completedResult.usage)) {
         const err = new Error(
           'OpenAI prompt-cache probe completed without reporting cached tokens; reader fanout was stopped'
@@ -450,13 +450,21 @@ export default class OpenAIBatchProvider {
         throw err;
       }
 
-      const readerGroups = [];
-      for (const partition of plan.batches.slice(2)) {
-        readerGroups.push(await this.#submitPreparedGroup(partition));
+      const readerGroups = await Promise.all(
+        plan.batches.slice(2).map((partition) =>
+          this.#submitPreparedFlexGroup(partition, 'reader')
+        )
+      );
+      const missedReader = readerGroups.flat().find((handle) =>
+        !promptCacheHitFromUsage(handle.completedResult?.usage));
+      if (missedReader) {
+        const err = new Error(
+          'OpenAI Flex reader completed without reporting cached tokens; the cache cohort was stopped'
+        );
+        err.code = 'PROMPT_CACHE_READER_MISS';
+        err.usage = missedReader.completedResult?.usage;
+        throw err;
       }
-      await Promise.all(readerGroups.map(async (groupHandles) => {
-        groupHandles[0].completedResult = await this.collect(groupHandles[0]);
-      }));
 
       const handles = [
         ...seedHandles,
@@ -467,6 +475,87 @@ export default class OpenAIBatchProvider {
     } catch (err) {
       items.forEach((item) => item.reject(err));
     }
+  }
+
+  async #submitPreparedFlexGroup(items, cacheRole) {
+    return Promise.all(items.map(async (item) => {
+      const requestBody = {
+        ...item.responsesRequest.body,
+        service_tier: FLEX_SERVICE_TIER,
+      };
+      const jsonlPath = path.join(item.dirs.inputs, `${item.safe}.jsonl`);
+      await writeFile(jsonlPath, JSON.stringify({
+        custom_id: item.customId,
+        method: 'POST',
+        url: DEFAULT_ENDPOINT,
+        body: requestBody,
+      }) + '\n', 'utf8');
+
+      const submittedAt = new Date().toISOString();
+      const response = await this.client.responses.create(requestBody, {
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        timeout: FLEX_TIMEOUT_MS,
+      });
+      const parsed = extractStructured(response, { customId: item.customId });
+      const completedAt = new Date().toISOString();
+      const ticketPath = path.join(item.dirs.tickets, `${item.safe}.ticket.json`);
+      const statusPath = path.join(item.dirs.status, `${item.safe}.status.json`);
+      const resultPath = path.join(item.dirs.results, `${response.id}.jsonl`);
+      const ticket = {
+        custom_id: item.customId,
+        batch_id: response.id,
+        model: item.model,
+        endpoint: DEFAULT_ENDPOINT,
+        service_tier: FLEX_SERVICE_TIER,
+        cache_role: cacheRole,
+        status: response.status,
+        submitted_at: submittedAt,
+        completed_at: completedAt,
+        used_images: item.responsesRequest.used.map((file) => path.basename(file)),
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      };
+      await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
+      await writeFile(statusPath, JSON.stringify({
+        id: response.id,
+        status: response.status,
+        service_tier: response.service_tier || FLEX_SERVICE_TIER,
+        usage: response.usage,
+      }, null, 2));
+      await writeFile(resultPath, JSON.stringify({
+        custom_id: item.customId,
+        response: { status_code: 200, body: response },
+      }) + '\n', 'utf8');
+      await appendLedger(item.dirs.base, {
+        custom_id: item.customId,
+        event: 'completed',
+        batch_id: response.id,
+        endpoint: DEFAULT_ENDPOINT,
+        service_tier: FLEX_SERVICE_TIER,
+        cache_role: cacheRole,
+        status: response.status,
+        usage: response.usage,
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      });
+
+      return {
+        provider: this.name,
+        customId: item.customId,
+        batchId: response.id,
+        levelDir: item.levelDir,
+        model: item.model,
+        ticketPath,
+        statusPath,
+        safeId: item.safe,
+        used: item.responsesRequest.used,
+        endpoint: DEFAULT_ENDPOINT,
+        serviceTier: FLEX_SERVICE_TIER,
+        completedResult: {
+          raw: parsed.text,
+          json: parsed.json,
+          usage: response.usage,
+        },
+      };
+    }));
   }
 
   async #submitPreparedGroup(items) {
@@ -764,6 +853,9 @@ export default class OpenAIBatchProvider {
       input,
       promptCachePrefix,
     });
+    const responseSchema = promptFields.prompt_cache_options?.mode === 'explicit'
+      ? stabilizeResponseSchemaForPromptCache(schema.schema)
+      : schema.schema;
     const body = {
       model,
       ...promptFields,
@@ -772,7 +864,7 @@ export default class OpenAIBatchProvider {
         format: {
           type: 'json_schema',
           name: schema.name,
-          schema: schema.schema,
+          schema: responseSchema,
           strict: true,
         },
       },

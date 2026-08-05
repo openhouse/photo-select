@@ -1,11 +1,28 @@
 import crypto from 'node:crypto';
 
-const CACHE_KEY_VERSION = 'v1';
+const CACHE_KEY_VERSION = 'v2';
 const MIN_CACHE_PREFIX_CHARS = 4096;
 
 export function promptCacheHitFromUsage(usage = {}) {
   const details = usage.input_tokens_details || {};
   return Number(details.cached_tokens || 0) > 0;
+}
+
+// The API renders Structured Output schemas before messages. Stabilize only
+// request-specific constraints; the prompt and validator still enforce them.
+export function stabilizeResponseSchemaForPromptCache(schema) {
+  const stable = structuredClone(schema);
+  const minutes = stable?.properties?.minutes;
+  if (minutes && typeof minutes === 'object') {
+    delete minutes.minItems; delete minutes.maxItems;
+  }
+  const decisions = stable?.properties?.decisions;
+  if (decisions && typeof decisions === 'object') {
+    delete decisions.minItems; delete decisions.maxItems;
+    const filename = decisions.items?.properties?.filename;
+    if (filename && typeof filename === 'object') delete filename.enum;
+  }
+  return stable;
 }
 
 function isGpt56OrLater(model = '') {

@@ -18,8 +18,31 @@ const createClient = () => {
     retrieve: vi.fn(),
     cancel: vi.fn(async () => ({})),
   };
-  return { files, batches };
+  const responses = {
+    create: vi.fn(),
+  };
+  return { files, batches, responses };
 };
+
+function installCacheResponsesMock(client, usages) {
+  client.responses.create.mockImplementation(async (body) => {
+    const index = client.responses.create.mock.calls.length - 1;
+    return {
+      id: `resp_${index + 1}`,
+      object: 'response',
+      status: 'completed',
+      service_tier: body.service_tier,
+      usage: usages[index],
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_json',
+          json: { minutes: [], decisions: [] },
+        }],
+      }],
+    };
+  });
+}
 
 async function installCacheBatchMock(client, usages) {
   const events = [];
@@ -216,7 +239,7 @@ describe('OpenAIBatchProvider', () => {
     );
   });
 
-  it('requires a cache-hit probe before submitting compatible readers', async () => {
+  it('runs a cache-compatible cohort through a sequential Flex seed and probe before readers', async () => {
     const seedWrite = {
       input_tokens: 7000,
       input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
@@ -225,10 +248,25 @@ describe('OpenAIBatchProvider', () => {
       input_tokens: 7000,
       input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
     };
-    const { events } = await installCacheBatchMock(
-      client,
-      [seedWrite, cacheHit, cacheHit]
-    );
+    installCacheResponsesMock(client, [seedWrite, cacheHit, cacheHit, cacheHit]);
+    helpers.schemaForBatch = vi.fn((_used, _curators, minutes) => ({
+      name: 'PhotoSelectPanelV1',
+      schema: {
+        properties: {
+          minutes: {
+            minItems: minutes.minutesMin,
+            maxItems: minutes.minutesMax,
+          },
+          decisions: {
+            items: {
+              properties: {
+                filename: { enum: [`batch-${minutes.minutesMin}.jpg`] },
+              },
+            },
+          },
+        },
+      },
+    }));
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
@@ -238,55 +276,61 @@ describe('OpenAIBatchProvider', () => {
     });
     const stablePrefix = 'Large stable context. '.repeat(300);
 
-    const handles = await Promise.all(['a', 'b', 'c', 'd'].map((name) =>
+    const handles = await Promise.all(['a', 'b', 'c', 'd'].map((name, index) =>
       provider.submit({
         levelDir: tmpDir,
         prompt: `${stablePrefix}Review ${name}.jpg.`,
         promptCachePrefix: stablePrefix,
         model: 'gpt-5.6-terra',
+        minutesMin: index + 1,
+        minutesMax: index + 2,
       })
     ));
 
-    expect(client.batches.create.mock.calls.map(
-      ([request]) => Number(request.metadata.request_count)
-    )).toEqual([1, 1, 2]);
-    expect(events.indexOf('content:batch_1')).toBeLessThan(
-      events.indexOf('create:1', 1)
-    );
-    expect(events.indexOf('content:batch_2')).toBeLessThan(
-      events.indexOf('create:2')
-    );
+    expect(client.files.create).not.toHaveBeenCalled();
+    expect(client.batches.create).not.toHaveBeenCalled();
+    expect(client.responses.create).toHaveBeenCalledTimes(4);
+    expect(client.responses.create.mock.calls.map(([body]) => body.service_tier))
+      .toEqual(['flex', 'flex', 'flex', 'flex']);
+    expect(client.responses.create.mock.calls.map(([body]) => body.prompt_cache_key))
+      .toEqual(Array(4).fill(client.responses.create.mock.calls[0][0].prompt_cache_key));
+    expect(new Set(client.responses.create.mock.calls.map(([body]) =>
+      JSON.stringify(body.text.format.schema)
+    )).size).toBe(1);
     expect(new Set(handles.map((handle) => handle.batchId))).toEqual(
-      new Set(['batch_1', 'batch_2', 'batch_3'])
+      new Set(['resp_1', 'resp_2', 'resp_3', 'resp_4'])
     );
-    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
-    const rowCounts = await Promise.all((await fs.readdir(inputsDir)).map(
-      async (file) => (await fs.readFile(path.join(inputsDir, file), 'utf8'))
-        .trim()
-        .split('\n')
-        .length
-    ));
-    expect(rowCounts.sort((a, b) => a - b)).toEqual([1, 1, 2]);
 
     const results = await Promise.all(handles.map((handle) => provider.collect(handle)));
     expect(results.map((result) => result.json)).toEqual(
       Array(4).fill({ minutes: [], decisions: [] })
     );
-    expect(client.batches.retrieve).toHaveBeenCalledTimes(4);
+    expect(client.batches.retrieve).not.toHaveBeenCalled();
+    const tickets = await Promise.all(handles.map(async (handle) =>
+      JSON.parse(await fs.readFile(handle.ticketPath, 'utf8'))
+    ));
+    expect(tickets.map((ticket) => ticket.service_tier))
+      .toEqual(['flex', 'flex', 'flex', 'flex']);
+    expect(tickets.map((ticket) => ticket.cache_role))
+      .toEqual(['seed', 'probe', 'reader', 'reader']);
   });
 
-  it('stops fanout when the probe writes instead of hitting the cache', async () => {
-    const cacheWrite = {
+  it.each([
+    ['probe write', [0, 0], 2, 'PROMPT_CACHE_PROBE_MISS'],
+    ['reader miss', [0, 6000, 6000, 0], 4, 'PROMPT_CACHE_READER_MISS'],
+  ])('fails the entire cache cohort on a %s', async (_case, cached, calls, code) => {
+    installCacheResponsesMock(client, cached.map((cachedTokens) => ({
       input_tokens: 7000,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
-    };
-    await installCacheBatchMock(client, [cacheWrite, cacheWrite]);
+      input_tokens_details: {
+        cached_tokens: cachedTokens,
+        cache_write_tokens: cachedTokens ? 0 : 6000,
+      },
+    })));
     const provider = new OpenAIBatchProvider({
       client,
       enableFallback: false,
       helpers,
       aggregationWindowMs: 10,
-      pollIntervalMs: 0,
     });
     const stablePrefix = 'Large stable context. '.repeat(300);
 
@@ -299,19 +343,14 @@ describe('OpenAIBatchProvider', () => {
       })
     ));
 
-    expect(results.map((result) => result.status)).toEqual([
-      'rejected',
-      'rejected',
-      'rejected',
-      'rejected',
-    ]);
-    expect(results.map((result) => result.reason?.code)).toEqual([
-      'PROMPT_CACHE_PROBE_MISS',
-      'PROMPT_CACHE_PROBE_MISS',
-      'PROMPT_CACHE_PROBE_MISS',
-      'PROMPT_CACHE_PROBE_MISS',
-    ]);
-    expect(client.batches.create).toHaveBeenCalledTimes(2);
+    expect(results.map((result) => result.status)).toEqual(
+      Array(4).fill('rejected')
+    );
+    expect(results.map((result) => result.reason?.code)).toEqual(
+      Array(4).fill(code)
+    );
+    expect(client.responses.create).toHaveBeenCalledTimes(calls);
+    expect(client.batches.create).not.toHaveBeenCalled();
   });
 
   it('coalesces worker submissions before staggered request preparation can split the Batch', async () => {
@@ -659,7 +698,7 @@ describe('OpenAIBatchProvider', () => {
       ttl: '30m',
     });
     expect(line.body.prompt_cache_key).toMatch(
-      /^photo-select:v1:[a-f0-9]{32}$/
+      /^photo-select:v2:[a-f0-9]{32}$/
     );
     expect(
       line.body.input[0].content.map((part) => part.text).join('')

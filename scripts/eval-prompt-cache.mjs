@@ -16,13 +16,16 @@ if (!apiKey) {
 }
 
 const model = process.env.PHOTO_SELECT_CACHE_EVAL_MODEL || 'gpt-5.6-terra';
-const stablePrefix = [
-  'Photo-select explicit prompt-cache evaluation, version 1. ',
-  'This synthetic context contains no image or archive data. ',
-  'Preserve it exactly as the stable developer prefix. ',
-]
-  .join('')
-  .repeat(200);
+const targetPrefixChars = Math.max(
+  4096,
+  Number(process.env.PHOTO_SELECT_CACHE_EVAL_PREFIX_CHARS || 444_466)
+);
+let stablePrefix = `Photo-select Flex cache evaluation pt5, run ${Date.now()}. `;
+for (let i = 0; stablePrefix.length < targetPrefixChars; i++) {
+  stablePrefix += `Synthetic context line ${String(i).padStart(6, '0')}: ` +
+    'amber bridge cedar delta ember field granite harbor iris juniper.\n';
+}
+stablePrefix = stablePrefix.slice(0, targetPrefixChars);
 
 function request(dynamicSuffix) {
   const promptFields = buildCacheableResponsesPrompt({
@@ -39,9 +42,10 @@ function request(dynamicSuffix) {
   return {
     model,
     ...promptFields,
-    reasoning: { effort: 'xhigh' },
+    service_tier: 'flex',
+    reasoning: { effort: 'low' },
     text: { verbosity: 'low' },
-    max_output_tokens: 32,
+    max_output_tokens: 64,
     store: false,
   };
 }
@@ -57,7 +61,7 @@ function usageSummary(response) {
   };
 }
 
-const client = new OpenAI({ apiKey });
+const client = new OpenAI({ apiKey, timeout: 15 * 60_000 });
 const first = usageSummary(
   await client.responses.create(request(' First evaluation request.'))
 );
@@ -65,14 +69,16 @@ const second = usageSummary(
   await client.responses.create(request(' Second evaluation request.'))
 );
 const passed =
+  first.cache_write_tokens > 0 &&
   second.cached_tokens > 0 &&
   second.cache_write_tokens === 0;
 
 console.log(
   JSON.stringify(
     {
-      eval: 'explicit_prompt_cache_read_after_write',
+      eval: 'production_sized_flex_prompt_cache_read_after_write_pt5',
       model,
+      stable_prefix_chars: stablePrefix.length,
       passed,
       first,
       second,
