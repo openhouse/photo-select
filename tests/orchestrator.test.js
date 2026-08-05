@@ -235,21 +235,25 @@ describe("triageDirectory", () => {
     expect(respTxt).toContain("1.jpg");
   });
 
-  it("includes additional curators from tags in saved prompt", async () => {
+  it("keeps repeated-person curators dynamic beyond the cache prefix", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
     );
     getPeople
       .mockResolvedValueOnce(["Alice", "Bob"])
       .mockResolvedValueOnce(["Alice"]);
-    await fs.writeFile(promptFile, "Curators: {{curators}}");
+    const context = "Stable exhibition brief. ".repeat(300);
+    const contextPath = path.join(tmpDir, "brief.md");
+    await fs.writeFile(contextPath, context);
+    await fs.writeFile(promptFile, "{{context}}\nCurators: {{curators}}");
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
-      model: "test-model",
+      model: "gpt-5.6-terra",
       recurse: false,
       saveIo: true,
       curators: ["Bob"],
+      contextPath,
     });
     const levelDir = path.join(tmpDir, "_level-001");
     const prompts = await fs.readdir(path.join(levelDir, "_prompts"));
@@ -258,10 +262,14 @@ describe("triageDirectory", () => {
       "utf8"
     );
     expect(promptTxt).toContain("Curators: Bob, Alice");
-    expect(chatCompletion.mock.calls[0][0].curators).toEqual([
-      "Bob",
-      "Alice",
-    ]);
+    const request = chatCompletion.mock.calls[0][0];
+    expect(request.curators).toEqual(["Bob", "Alice"]);
+    expect(request.prompt.startsWith(request.promptCachePrefix)).toBe(true);
+    expect(request.promptCachePrefix).toContain(context);
+    expect(request.promptCachePrefix).not.toContain("Alice");
+    expect(request.prompt.slice(request.promptCachePrefix.length)).toContain(
+      "Curators: Bob, Alice"
+    );
   });
 
   it('repairs zero-decision batch', async () => {

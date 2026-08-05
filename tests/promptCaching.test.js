@@ -38,16 +38,18 @@ describe('buildCacheableResponsesPrompt', () => {
     expect(request.prompt_cache_key).toMatch(/^photo-select:v1:[a-f0-9]{32}$/);
   });
 
-  it('reuses a key across changing suffixes and changes it with the stable prefix', () => {
+  it('reuses only the stable key while retaining batch-specific curators', () => {
+    const aliceBatch = 'Role play as Bob, Alice. Review a.jpg.';
+    const carolBatch = 'Role play as Bob, Carol. Review b.jpg.';
     const first = buildCacheableResponsesPrompt({
       model: 'gpt-5.6-terra',
-      instructions: `${stable}Review a.jpg.`,
+      instructions: stable + aliceBatch,
       input,
       promptCachePrefix: stable,
     });
     const second = buildCacheableResponsesPrompt({
       model: 'gpt-5.6-terra',
-      instructions: `${stable}Review b.jpg.`,
+      instructions: stable + carolBatch,
       input,
       promptCachePrefix: stable,
     });
@@ -60,6 +62,14 @@ describe('buildCacheableResponsesPrompt', () => {
 
     expect(first.prompt_cache_key).toBe(second.prompt_cache_key);
     expect(first.prompt_cache_key).not.toBe(changed.prompt_cache_key);
+    expect(first.input[0].content[1].text).toBe(aliceBatch);
+    expect(second.input[0].content[1].text).toBe(carolBatch);
+    expect(first.input[0].content.map((part) => part.text).join('')).toBe(
+      stable + aliceBatch
+    );
+    expect(second.input[0].content.map((part) => part.text).join('')).toBe(
+      stable + carolBatch
+    );
   });
 
   it('preserves the legacy request shape for earlier models', () => {
