@@ -429,6 +429,39 @@ describe("triageDirectory", () => {
     await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
   });
 
+  it("stops processing when a prompt-cache probe misses", async () => {
+    let calls = 0;
+    const provider = {
+      submit: vi.fn(async () => {
+        calls++;
+        if (calls === 1) {
+          const err = new Error("Prompt-cache probe did not report cached tokens");
+          err.code = "PROMPT_CACHE_PROBE_MISS";
+          throw err;
+        }
+        throw new Error("Billing hard limit has been reached");
+      }),
+      collect: vi.fn(),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "test-model",
+          recurse: false,
+          provider,
+        })
+      ).rejects.toMatchObject({ code: "PROMPT_CACHE_PROBE_MISS" });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+  });
+
 });
 
 describe("cascade scheduler invariants", () => {

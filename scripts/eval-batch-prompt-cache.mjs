@@ -16,12 +16,12 @@ const { default: OpenAIBatchProvider } = await import(
 
 const model = process.env.PHOTO_SELECT_CACHE_EVAL_MODEL || 'gpt-5.6-terra';
 const count = Math.min(15, Math.max(
-  2,
+  3,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_REQUESTS || 4)
 ));
-const prefixRepetitions = Math.max(
-  300,
-  Number(process.env.PHOTO_SELECT_CACHE_EVAL_PREFIX_REPETITIONS || 2700)
+const targetPrefixChars = Math.max(
+  4096,
+  Number(process.env.PHOTO_SELECT_CACHE_EVAL_PREFIX_CHARS || 444_466)
 );
 const pollMs = Math.max(
   1000,
@@ -39,11 +39,12 @@ const staggerMs = Math.max(
   aggregationMs + 1,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_STAGGER_MS || 150)
 );
-const prefix = (
-  'Photo-select provider Batch prompt-cache evaluation, version 3. ' +
-  'This synthetic context contains no image or archive data. ' +
-  'Preserve it exactly as the stable developer prefix. '
-).repeat(prefixRepetitions) + ` Run ${Date.now()}.`;
+let prefix = `Photo-select Batch cache evaluation pt4, run ${Date.now()}. `;
+for (let i = 0; prefix.length < targetPrefixChars; i++) {
+  prefix += `Synthetic context line ${String(i).padStart(6, '0')}: ` +
+    'amber bridge cedar delta ember field granite harbor iris juniper.\n';
+}
+prefix = prefix.slice(0, targetPrefixChars);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const helpers = {
@@ -120,7 +121,7 @@ try {
     aggregationWindowMs: aggregationMs,
     helpers,
   });
-  const handles = await Promise.all(Array.from({ length: count }, (_, i) =>
+  const submissions = await Promise.allSettled(Array.from({ length: count }, (_, i) =>
     provider.submit({
       levelDir: tempDir,
       model,
@@ -138,6 +139,16 @@ try {
       },
     })
   ));
+  const handles = submissions
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value);
+  const submissionErrors = submissions
+    .filter((result) => result.status === 'rejected')
+    .map((result) => ({
+      code: result.reason?.code,
+      message: result.reason?.message,
+      usage: result.reason?.usage,
+    }));
 
   const inputDir = path.join(tempDir, '.batch', 'inputs');
   const inputFiles = await readdir(inputDir);
@@ -177,21 +188,30 @@ try {
     cache_hit_requests: 0,
     cache_write_requests: 0,
   });
-  const expectedRowCounts = [1, count - 1].sort((a, b) => a - b);
-  const topologyPassed = inputFiles.length === 2 &&
-    inputRowCounts.length === 2 &&
+  const expectedRowCounts = [1, 1, count - 2].sort((a, b) => a - b);
+  const topologyPassed = submissionErrors.length === 0 &&
+    inputFiles.length === 3 &&
+    inputRowCounts.length === 3 &&
     inputRowCounts.slice().sort((a, b) => a - b).every(
       (rows, index) => rows === expectedRowCounts[index]
     ) &&
-    batchIds.length === 2;
-  const cachePassed = usages.length === count &&
+    batchIds.length === 3;
+  const seedUsage = settled[0]?.usages[0];
+  const probeUsage = settled[1]?.usages[0];
+  const readerUsages = settled.slice(2).flatMap((entry) => entry.usages);
+  const cachePassed = submissionErrors.length === 0 &&
+    usages.length === count &&
     usages.every((usage) => usage.status_code === 200) &&
+    seedUsage?.cache_write_tokens > 0 &&
+    probeUsage?.cached_tokens > 0 &&
+    readerUsages.length === count - 2 &&
+    readerUsages.every((usage) => usage.cached_tokens > 0) &&
     totals.cache_write_requests === 1 &&
     totals.cache_hit_requests === count - 1 &&
     totals.cached_tokens > totals.cache_write_tokens;
   const passed = topologyPassed && cachePassed;
   console.log(JSON.stringify({
-    eval: 'provider_seeded_deferred_preparation_explicit_prompt_cache',
+    eval: 'provider_seed_probe_barrier_explicit_prompt_cache_pt4',
     model,
     request_count: count,
     stable_prefix_chars: prefix.length,
@@ -205,10 +225,22 @@ try {
     passed,
     totals,
     cache_hit_rate: totals.cache_hit_requests / count,
+    submission_errors: submissionErrors,
     usages,
   }, null, 2));
   if (!passed) process.exitCode = 1;
 } finally {
+  try {
+    const ticketDir = path.join(tempDir, '.batch', 'tickets');
+    for (const file of await readdir(ticketDir)) {
+      const ticket = JSON.parse(await readFile(path.join(ticketDir, file), 'utf8'));
+      for (const id of [ticket.input_file_id, ticket.output_file_id, ticket.error_file_id]) {
+        if (id) remoteFileIds.add(id);
+      }
+    }
+  } catch {
+    // Submission may fail before ticket creation.
+  }
   await Promise.all([...remoteFileIds].map((id) =>
     client.files.del(id).catch(() => undefined)
   ));

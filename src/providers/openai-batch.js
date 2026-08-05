@@ -11,7 +11,7 @@ import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
 import {
   buildCacheableResponsesPrompt,
-  promptCacheReadyFromUsage,
+  promptCacheHitFromUsage,
 } from '../core/promptCaching.js';
 import {
   OPENAI_BATCH_MAX_REQUESTS,
@@ -427,23 +427,42 @@ export default class OpenAIBatchProvider {
         maxRequests: this.maxBatchRequests,
         maxBytes: this.maxBatchInputBytes,
       });
-      const handles = [];
-      for (const [index, partition] of plan.batches.entries()) {
-        const submitted = await this.#submitPreparedGroup(partition);
-        if (plan.seeded && index === 0) {
-          const completedResult = await this.collect(submitted[0]);
-          if (!promptCacheReadyFromUsage(completedResult.usage)) {
-            const err = new Error(
-              'OpenAI completed the prompt-cache seed without reporting a cache read or write'
-            );
-            err.code = 'PROMPT_CACHE_SEED_NOT_READY';
-            err.usage = completedResult.usage;
-            throw err;
-          }
-          submitted[0].completedResult = completedResult;
+      if (!plan.seeded) {
+        const handles = [];
+        for (const partition of plan.batches) {
+          handles.push(...await this.#submitPreparedGroup(partition));
         }
-        handles.push(...submitted);
+        items.forEach((item, index) => item.resolve(handles[index]));
+        return;
       }
+
+      const seedHandles = await this.#submitPreparedGroup(plan.batches[0]);
+      seedHandles[0].completedResult = await this.collect(seedHandles[0]);
+
+      const probeHandles = await this.#submitPreparedGroup(plan.batches[1]);
+      probeHandles[0].completedResult = await this.collect(probeHandles[0]);
+      if (!promptCacheHitFromUsage(probeHandles[0].completedResult.usage)) {
+        const err = new Error(
+          'OpenAI prompt-cache probe completed without reporting cached tokens; reader fanout was stopped'
+        );
+        err.code = 'PROMPT_CACHE_PROBE_MISS';
+        err.usage = probeHandles[0].completedResult.usage;
+        throw err;
+      }
+
+      const readerGroups = [];
+      for (const partition of plan.batches.slice(2)) {
+        readerGroups.push(await this.#submitPreparedGroup(partition));
+      }
+      await Promise.all(readerGroups.map(async (groupHandles) => {
+        groupHandles[0].completedResult = await this.collect(groupHandles[0]);
+      }));
+
+      const handles = [
+        ...seedHandles,
+        ...probeHandles,
+        ...readerGroups.flat(),
+      ];
       items.forEach((item, index) => item.resolve(handles[index]));
     } catch (err) {
       items.forEach((item) => item.reject(err));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCacheableResponsesPrompt,
-  promptCacheReadyFromUsage,
+  promptCacheHitFromUsage,
 } from '../src/core/promptCaching.js';
 
 const stable = 'Stable curatorial context. '.repeat(300);
@@ -13,17 +13,17 @@ const input = [
 ];
 
 describe('buildCacheableResponsesPrompt', () => {
-  it('requires a reported cache read or write before releasing readers', () => {
-    expect(promptCacheReadyFromUsage({
+  it('requires a reported cache read before releasing readers', () => {
+    expect(promptCacheHitFromUsage({
       input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
-    })).toBe(true);
-    expect(promptCacheReadyFromUsage({
+    })).toBe(false);
+    expect(promptCacheHitFromUsage({
       input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
     })).toBe(true);
-    expect(promptCacheReadyFromUsage({
+    expect(promptCacheHitFromUsage({
       input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
     })).toBe(false);
-    expect(promptCacheReadyFromUsage()).toBe(false);
+    expect(promptCacheHitFromUsage()).toBe(false);
   });
 
   it('marks the stable GPT-5.6 prefix without changing prompt text or user input', () => {
