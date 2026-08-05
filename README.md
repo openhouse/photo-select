@@ -204,6 +204,10 @@ to ignore existing manifests. Filesystem concurrency defaults to 12 (from
 `PHOTO_SELECT_FS_CONCURRENCY`); override it with `PHOTO_SELECT_STAGE_CONCURRENCY`
 or the `--stage-concurrency` flag when staging needs to be throttled.
 
+Recursive runs settle every photo in the current level before deciding what happens
+next. If the completed level is unanimous—every photo is in `_keep`, or every photo
+is in `_aside`—the run stops. A mixed level descends into `_keep` and continues.
+
 ### Concurrency: `--workers` (recommended)
 
 Use `--workers N` to process batches concurrently. The old `--parallel` flag is deprecated and is automatically mapped to `--workers`. A deprecation warning is printed if you use it.

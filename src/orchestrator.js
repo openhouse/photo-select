@@ -12,6 +12,7 @@ import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 import { sanitizePeople } from "./lib/people.js";
 import { finalizeCurators } from "./core/finalizeCurators.js";
+import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
 
 const exec = promisify(execFile);
 
@@ -281,6 +282,18 @@ export async function findShallowestLevelWithEligibleImages(rootDir, options = {
       }
       console.log(`${"  ".repeat(depth)}↘️  no eligible work at level ${level}; checking _keep`);
     }
+    const [hasKeep, hasAside] = await Promise.all([
+      dirExists(path.join(current, "_keep")),
+      dirExists(path.join(current, "_aside")),
+    ]);
+    const outcome = evaluateLevelOutcome({
+      complete: state.needsReviewImages.length === 0,
+      hasKeep,
+      hasAside,
+    });
+    if (outcome.shouldStop) {
+      return { dir: current, depth, level, state, stopped: true, outcome };
+    }
     const next = path.join(current, "_keep");
     if (!(await dirExists(next))) return null;
     current = next;
@@ -297,6 +310,13 @@ export async function triageTree(options) {
     const work = await findShallowestLevelWithEligibleImages(rootDir, options);
     if (!work) {
       console.log("✅  No pending image files found in cascade.");
+      break;
+    }
+    if (work.stopped) {
+      const bucket = work.outcome.state === "unanimous_keep" ? "kept" : "set aside";
+      console.log(
+        `${"  ".repeat(work.depth)}🎯  All images ${bucket} at completed level ${work.level}; stopping recursion.`
+      );
       break;
     }
     if (work.blocked) {
@@ -957,7 +977,7 @@ export async function triageDirectory(options) {
       }
 }
 
-  // Step 5 – recurse into keepDir if both keep and aside exist
+  // Step 5 – recurse into keepDir only after a mixed completed level
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
     const asideDir = path.join(dir, "_aside");
@@ -971,14 +991,23 @@ export async function triageDirectory(options) {
       }
     };
 
-    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+    const [keepCount, hasDeeperKeep, hasKeep, hasAside] = await Promise.all([
       countImages(keepDir),
-      countImages(asideDir),
       dirExists(path.join(keepDir, "_keep")),
+      dirExists(keepDir),
+      dirExists(asideDir),
     ]);
 
+    const outcome = evaluateLevelOutcome({
+      complete: true,
+      hasKeep,
+      hasAside,
+    });
     const keepHasWork = keepCount > 0 || hasDeeperKeep;
-    if (keepHasWork) {
+    if (outcome.shouldStop) {
+      const bucket = outcome.state === "unanimous_keep" ? "kept" : "set aside";
+      console.log(`${indent}🎯  All images ${bucket} at this level; stopping recursion.`);
+    } else if (outcome.state === "mixed" && keepHasWork) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -999,9 +1028,6 @@ export async function triageDirectory(options) {
         forceRebuild,
         stageConcurrency,
       });
-    } else if (keepCount || asideCount) {
-      const status = keepCount ? "kept" : "set aside";
-      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
   return { blocked: false, blockedCount: 0 };

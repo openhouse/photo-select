@@ -34,7 +34,12 @@ describe('finalizeCurators integration', () => {
       'Ellen Lev',
       'Beata (Kendell + Mandy cabin neighbor)',
     ]);
-    const header = prompt.split('\n').slice(0, 40).join('\n');
+    const lines = prompt.split('\n');
+    const finalConstraint = lines.findIndex((line) =>
+      line.includes('include **every** filename from the list **exactly once**')
+    );
+    expect(finalConstraint).toBeGreaterThan(-1);
+    const header = lines.slice(0, finalConstraint + 1).join('\n');
     expect(header).toMatchSnapshot();
   });
 
@@ -53,4 +58,3 @@ describe('finalizeCurators integration', () => {
     expect(names).toEqual(['Curator A']);
   });
 });
-

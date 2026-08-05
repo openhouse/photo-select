@@ -71,32 +71,136 @@ describe("triageDirectory", () => {
     await expect(fs.stat(level2)).resolves.toBeTruthy();
   });
 
-  it("recurses even when all images kept", async () => {
-    chatCompletion
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
-      );
+  it("stops when all images at the completed level are kept", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+    );
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
       model: "test-model",
       recurse: true,
     });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
-    await expect(fs.stat(aside2)).resolves.toBeTruthy();
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_keep", "2.jpg"))).resolves.toBeTruthy();
   });
 
-  it("resumes into deepest _keep when parent has no images", async () => {
+  it("stops when all images at the completed level are set aside", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "_aside", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("evaluates unanimity after the entire level, not after each batch", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    chatCompletion.mockImplementation(async ({ images }) =>
+      JSON.stringify({
+        keep: images.map((file) => path.basename(file)),
+        aside: [],
+      })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      workers: 2,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    expect(await fs.readdir(path.join(tmpDir, "_keep"))).toHaveLength(11);
+  });
+
+  it("recurses when separately unanimous batches make a mixed level", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    let rootBatch = 0;
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file));
+      if (images[0].startsWith(tmpDir + path.sep) && rootBatch++ === 0) {
+        return JSON.stringify({ keep: names, aside: [] });
+      }
+      return JSON.stringify({ keep: [], aside: names });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      workers: 1,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "_aside"))
+    ).resolves.toBeTruthy();
+  });
+
+  it("does not restart a previously completed unanimous-keep level", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    await fs.mkdir(path.join(tmpDir, "_keep"));
+    await fs.writeFile(path.join(tmpDir, "_keep", "1.jpg"), "a");
+    await fs.writeFile(path.join(tmpDir, "_keep", "2.jpg"), "b");
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a previously completed unanimous-aside level", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    await fs.mkdir(path.join(tmpDir, "_aside"));
+    await fs.writeFile(path.join(tmpDir, "_aside", "1.jpg"), "a");
+    await fs.writeFile(path.join(tmpDir, "_aside", "2.jpg"), "b");
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("resumes into deepest _keep across completed mixed parent levels", async () => {
     await fs.rm(path.join(tmpDir, "1.jpg"));
     await fs.rm(path.join(tmpDir, "2.jpg"));
     const deep = path.join(tmpDir, "_keep", "_keep");
     await fs.mkdir(deep, { recursive: true });
     await fs.writeFile(path.join(deep, "1.jpg"), "a");
     await fs.writeFile(path.join(deep, "2.jpg"), "b");
+    await fs.mkdir(path.join(tmpDir, "_aside"));
+    await fs.writeFile(path.join(tmpDir, "_aside", "root-aside.jpg"), "aside");
+    await fs.mkdir(path.join(tmpDir, "_keep", "_aside"));
+    await fs.writeFile(
+      path.join(tmpDir, "_keep", "_aside", "middle-aside.jpg"),
+      "aside"
+    );
 
     chatCompletion
       .mockResolvedValueOnce(
@@ -328,9 +432,7 @@ describe("triageDirectory", () => {
 });
 
 describe("cascade scheduler invariants", () => {
-  it("processes the shallowest eligible level before nested _keep work", async () => {
-    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+  it("does not descend after unanimous aside", async () => {
     const seen = [];
     chatCompletion.mockImplementation(async ({ images }) => {
       const names = images.map((f) => path.basename(f)).sort();
@@ -349,7 +451,7 @@ describe("cascade scheduler invariants", () => {
     });
 
     expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
-    expect(seen[1]).toEqual(["deep.jpg"]);
+    expect(seen).toEqual([["1.jpg", "2.jpg"]]);
   });
 
   it("returns to base for late-arriving files after a deeper level settles", async () => {
@@ -358,6 +460,9 @@ describe("cascade scheduler invariants", () => {
     const keepDir = path.join(tmpDir, "_keep");
     await fs.mkdir(keepDir, { recursive: true });
     await fs.writeFile(path.join(keepDir, "deep.jpg"), "deep");
+    const asideDir = path.join(tmpDir, "_aside");
+    await fs.mkdir(asideDir, { recursive: true });
+    await fs.writeFile(path.join(asideDir, "earlier.jpg"), "aside");
     const seen = [];
     chatCompletion.mockImplementation(async ({ images }) => {
       const names = images.map((f) => path.basename(f)).sort();
@@ -380,9 +485,7 @@ describe("cascade scheduler invariants", () => {
     await expect(fs.stat(path.join(tmpDir, "_aside", "late.jpg"))).resolves.toBeTruthy();
   });
 
-  it("does not descend while current-level residue remains eligible", async () => {
-    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+  it("settles current-level residue before applying the unanimous stop", async () => {
     const seen = [];
     chatCompletion
       .mockImplementationOnce(async ({ images }) => {
@@ -392,10 +495,6 @@ describe("cascade scheduler invariants", () => {
       .mockImplementationOnce(async ({ images }) => {
         seen.push(images.map((f) => path.basename(f)).sort());
         return JSON.stringify({ keep: [], aside: ["2.jpg"] });
-      })
-      .mockImplementationOnce(async ({ images }) => {
-        seen.push(images.map((f) => path.basename(f)).sort());
-        return JSON.stringify({ keep: [], aside: ["deep.jpg"] });
       })
       .mockImplementation(async ({ images }) => {
         seen.push(images.map((f) => path.basename(f)).sort());
@@ -411,7 +510,7 @@ describe("cascade scheduler invariants", () => {
 
     expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
     expect(seen[1]).toEqual(["2.jpg"]);
-    expect(seen[2]).toEqual(["deep.jpg"]);
+    expect(seen).toHaveLength(2);
   });
 
   it("reports NEEDS_REVIEW images and blocks descent by default", async () => {
