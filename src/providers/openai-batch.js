@@ -302,46 +302,50 @@ export default class OpenAIBatchProvider {
     if (reasoningEffort && !ALLOWED_REASONING_EFFORT.has(reasoningEffort)) {
       throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
     }
-    const dirs = await ensureDirs(levelDir);
-    const responsesRequest = await this.#buildResponsesRequest({
-      prompt,
-      promptCachePrefix,
-      images,
-      curators,
-      model,
-      minutesMin,
-      minutesMax,
-      reasoningEffort,
-      verbosity,
-      baseCuratorCount,
-      dynamicCuratorCount,
-    });
-    const customId = computeCustomId({
-      levelDir,
-      prompt,
-      model,
-      curators,
-      used: responsesRequest.used,
-      minutesMin,
-      minutesMax,
-      reasoningEffort,
-      verbosity,
-    });
-    const safe = safeId(customId);
-
     return this.#enqueueSubmission({
-      dirs,
-      customId,
-      safe,
       levelDir,
-      prompt,
-      images,
-      curators,
       model,
-      minutesMin,
-      minutesMax,
-      verbosity,
-      responsesRequest,
+      prepare: async () => {
+        const dirs = await ensureDirs(levelDir);
+        const responsesRequest = await this.#buildResponsesRequest({
+          prompt,
+          promptCachePrefix,
+          images,
+          curators,
+          model,
+          minutesMin,
+          minutesMax,
+          reasoningEffort,
+          verbosity,
+          baseCuratorCount,
+          dynamicCuratorCount,
+        });
+        const customId = computeCustomId({
+          levelDir,
+          prompt,
+          model,
+          curators,
+          used: responsesRequest.used,
+          minutesMin,
+          minutesMax,
+          reasoningEffort,
+          verbosity,
+        });
+        return {
+          dirs,
+          customId,
+          safe: safeId(customId),
+          levelDir,
+          prompt,
+          images,
+          curators,
+          model,
+          minutesMin,
+          minutesMax,
+          verbosity,
+          responsesRequest,
+        };
+      },
     });
   }
 
@@ -371,8 +375,22 @@ export default class OpenAIBatchProvider {
     const group = this.pendingSubmissionGroups.get(groupKey);
     if (!group) return;
     this.pendingSubmissionGroups.delete(groupKey);
+    let items = [];
     try {
-      const prepared = group.items.map((item) => ({
+      items = (await Promise.all(group.items.map(async (queued) => {
+        try {
+          return {
+            ...await queued.prepare(),
+            resolve: queued.resolve,
+            reject: queued.reject,
+          };
+        } catch (err) {
+          queued.reject(err);
+          return null;
+        }
+      }))).filter(Boolean);
+      if (items.length === 0) return;
+      const partitionable = items.map((item) => ({
         ...item,
         id: item.customId,
         jsonl: JSON.stringify({
@@ -382,7 +400,7 @@ export default class OpenAIBatchProvider {
           body: item.responsesRequest.body,
         }) + '\n',
       }));
-      const partitions = partitionBatchItems(prepared, {
+      const partitions = partitionBatchItems(partitionable, {
         maxRequests: this.maxBatchRequests,
         maxBytes: this.maxBatchInputBytes,
       });
@@ -390,9 +408,9 @@ export default class OpenAIBatchProvider {
       for (const partition of partitions) {
         handles.push(...await this.#submitPreparedGroup(partition));
       }
-      group.items.forEach((item, index) => item.resolve(handles[index]));
+      items.forEach((item, index) => item.resolve(handles[index]));
     } catch (err) {
-      group.items.forEach((item) => item.reject(err));
+      items.forEach((item) => item.reject(err));
     }
   }
 

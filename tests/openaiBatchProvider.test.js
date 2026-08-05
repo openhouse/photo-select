@@ -154,6 +154,92 @@ describe('OpenAIBatchProvider', () => {
     );
   });
 
+  it('coalesces worker submissions before staggered request preparation can split the Batch', async () => {
+    const immediateBuildInput = helpers.buildInput;
+    helpers.buildInput = vi.fn(async (prompt, images, curators) => {
+      if (path.basename(images[0]) === 'slow.jpg') {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return immediateBuildInput(prompt, images, curators);
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const fastImage = path.join(tmpDir, 'fast.jpg');
+    const slowImage = path.join(tmpDir, 'slow.jpg');
+    await Promise.all([
+      fs.writeFile(fastImage, 'fast'),
+      fs.writeFile(slowImage, 'slow'),
+    ]);
+
+    await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview fast.jpg',
+        images: [fastImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview slow.jpg',
+        images: [slowImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('keeps valid cohort members grouped when one request cannot be prepared', async () => {
+    const immediateBuildInput = helpers.buildInput;
+    helpers.buildInput = vi.fn(async (prompt, images, curators) => {
+      if (path.basename(images[0]) === 'broken.jpg') {
+        throw new Error('synthetic preparation failure');
+      }
+      return immediateBuildInput(prompt, images, curators);
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const imagePaths = ['first.jpg', 'broken.jpg', 'third.jpg']
+      .map((name) => path.join(tmpDir, name));
+    await Promise.all(imagePaths.map((file) => fs.writeFile(file, 'data')));
+
+    const results = await Promise.allSettled(imagePaths.map((file) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `stable context\nreview ${path.basename(file)}`,
+        images: [file],
+        model: 'gpt-5.6-terra',
+      })
+    ));
+
+    expect(results.map((result) => result.status)).toEqual([
+      'fulfilled',
+      'rejected',
+      'fulfilled',
+    ]);
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
   it('splits an aggregate before the configured Batch request limit', async () => {
     const provider = new OpenAIBatchProvider({
       client,
