@@ -3,6 +3,12 @@ import crypto from 'node:crypto';
 const CACHE_KEY_VERSION = 'v1';
 const MIN_CACHE_PREFIX_CHARS = 4096;
 
+export function promptCacheReadyFromUsage(usage = {}) {
+  const details = usage.input_tokens_details || {};
+  return Number(details.cached_tokens || 0) > 0 ||
+    Number(details.cache_write_tokens || 0) > 0;
+}
+
 function isGpt56OrLater(model = '') {
   const match = String(model).match(/^gpt-(\d+)\.(\d+)(?:$|[-.])/i);
   if (!match) return false;

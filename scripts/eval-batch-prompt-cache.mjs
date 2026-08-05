@@ -17,8 +17,12 @@ const { default: OpenAIBatchProvider } = await import(
 const model = process.env.PHOTO_SELECT_CACHE_EVAL_MODEL || 'gpt-5.6-terra';
 const count = Math.min(15, Math.max(
   2,
-  Number(process.env.PHOTO_SELECT_CACHE_EVAL_REQUESTS || 6)
+  Number(process.env.PHOTO_SELECT_CACHE_EVAL_REQUESTS || 4)
 ));
+const prefixRepetitions = Math.max(
+  300,
+  Number(process.env.PHOTO_SELECT_CACHE_EVAL_PREFIX_REPETITIONS || 2700)
+);
 const pollMs = Math.max(
   1000,
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_POLL_MS || 5000)
@@ -36,10 +40,10 @@ const staggerMs = Math.max(
   Number(process.env.PHOTO_SELECT_CACHE_EVAL_STAGGER_MS || 150)
 );
 const prefix = (
-  'Photo-select provider Batch prompt-cache evaluation, version 2. ' +
+  'Photo-select provider Batch prompt-cache evaluation, version 3. ' +
   'This synthetic context contains no image or archive data. ' +
   'Preserve it exactly as the stable developer prefix. '
-).repeat(200) + ` Run ${Date.now()}.`;
+).repeat(prefixRepetitions) + ` Run ${Date.now()}.`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const helpers = {
@@ -173,9 +177,13 @@ try {
     cache_hit_requests: 0,
     cache_write_requests: 0,
   });
-  const topologyPassed = inputFiles.length === 1 &&
-    inputRowCounts.length === 1 && inputRowCounts[0] === count &&
-    batchIds.length === 1;
+  const expectedRowCounts = [1, count - 1].sort((a, b) => a - b);
+  const topologyPassed = inputFiles.length === 2 &&
+    inputRowCounts.length === 2 &&
+    inputRowCounts.slice().sort((a, b) => a - b).every(
+      (rows, index) => rows === expectedRowCounts[index]
+    ) &&
+    batchIds.length === 2;
   const cachePassed = usages.length === count &&
     usages.every((usage) => usage.status_code === 200) &&
     totals.cache_write_requests === 1 &&
@@ -183,9 +191,10 @@ try {
     totals.cached_tokens > totals.cache_write_tokens;
   const passed = topologyPassed && cachePassed;
   console.log(JSON.stringify({
-    eval: 'provider_deferred_preparation_grouped_batch_explicit_prompt_cache',
+    eval: 'provider_seeded_deferred_preparation_explicit_prompt_cache',
     model,
     request_count: count,
+    stable_prefix_chars: prefix.length,
     aggregation_ms: aggregationMs,
     preparation_stagger_ms: staggerMs,
     batch_count: batchIds.length,
