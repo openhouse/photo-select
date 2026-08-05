@@ -1,6 +1,7 @@
 import { OpenAI } from 'openai';
 import { mkdir, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { AsyncResource } from 'node:async_hooks';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
@@ -255,6 +256,7 @@ async function streamToText(resp) {
 export default class OpenAIBatchProvider {
   name = 'openai-batch';
   supportsAsync = true;
+  supportsDeferredPreparation = true;
 
   constructor({
     client,
@@ -286,67 +288,82 @@ export default class OpenAIBatchProvider {
   async submit(options = {}) {
     const {
       levelDir,
-      prompt,
-      promptCachePrefix,
-      images = [],
-      curators = [],
-      baseCuratorCount = curators.length,
-      dynamicCuratorCount,
       model = 'gpt-5',
-      minutesMin = 3,
-      minutesMax = 12,
       reasoningEffort,
-      verbosity = 'low',
     } = options;
     if (!levelDir) throw new Error('levelDir is required for openai-batch provider');
     if (reasoningEffort && !ALLOWED_REASONING_EFFORT.has(reasoningEffort)) {
       throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
     }
-    return this.#enqueueSubmission({
-      levelDir,
-      model,
-      prepare: async () => {
-        const dirs = await ensureDirs(levelDir);
-        const responsesRequest = await this.#buildResponsesRequest({
-          prompt,
-          promptCachePrefix,
-          images,
-          curators,
-          model,
-          minutesMin,
-          minutesMax,
-          reasoningEffort,
-          verbosity,
-          baseCuratorCount,
-          dynamicCuratorCount,
-        });
-        const customId = computeCustomId({
-          levelDir,
-          prompt,
-          model,
-          curators,
-          used: responsesRequest.used,
-          minutesMin,
-          minutesMax,
-          reasoningEffort,
-          verbosity,
-        });
-        return {
-          dirs,
-          customId,
-          safe: safeId(customId),
-          levelDir,
-          prompt,
-          images,
-          curators,
-          model,
-          minutesMin,
-          minutesMax,
-          verbosity,
-          responsesRequest,
-        };
-      },
+    const prepare = AsyncResource.bind(async () => {
+      const deferred = typeof options.prepare === 'function'
+        ? await options.prepare()
+        : {};
+      const preparedOptions = {
+        ...options,
+        ...(deferred || {}),
+        levelDir,
+        model,
+      };
+      const {
+        prompt,
+        promptCachePrefix,
+        images = [],
+        curators = [],
+        baseCuratorCount = curators.length,
+        dynamicCuratorCount,
+        minutesMin = 3,
+        minutesMax = 12,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity = 'low',
+      } = preparedOptions;
+      if (
+        preparedReasoningEffort &&
+        !ALLOWED_REASONING_EFFORT.has(preparedReasoningEffort)
+      ) {
+        throw new Error(`invalid reasoningEffort: ${preparedReasoningEffort}`);
+      }
+      const dirs = await ensureDirs(levelDir);
+      const responsesRequest = await this.#buildResponsesRequest({
+        prompt,
+        promptCachePrefix,
+        images,
+        curators,
+        model,
+        minutesMin,
+        minutesMax,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity,
+        baseCuratorCount,
+        dynamicCuratorCount,
+      });
+      const customId = computeCustomId({
+        levelDir,
+        prompt,
+        model,
+        curators,
+        used: responsesRequest.used,
+        minutesMin,
+        minutesMax,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity,
+      });
+      return {
+        dirs,
+        customId,
+        safe: safeId(customId),
+        levelDir,
+        prompt,
+        images,
+        curators,
+        model,
+        minutesMin,
+        minutesMax,
+        verbosity,
+        responsesRequest,
+      };
     });
+    return this.#enqueueSubmission({ levelDir, model, prepare });
   }
 
   #enqueueSubmission(item) {

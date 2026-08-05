@@ -716,47 +716,56 @@ export async function triageDirectory(options) {
                   }
                 };
 
-                const names = batch.map((file) => path.basename(file));
-                const peopleLists = await Promise.all(
-                  names.map((name) => getPeople(name))
-                );
-                const photos = names.map((name, i) => ({
-                  file: name,
-                  people: sanitizePeople(peopleLists[i]),
-                }));
-                const { finalCurators, added } = finalizeCurators(curators, photos);
-                if (added.length) {
-                  log(
-                    `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
-                  );
-                }
-                const first = await buildPrompt(promptPath, {
-                  curators: finalCurators,
-                  contextPath,
-                  images: batch,
-                  hasFieldNotes: false,
-                  isSecondPass: false,
-                });
                 const meta = { model, verbosity, reasoningEffort };
                 let attemptNum = 1;
-                await saveText('prompt', attemptNum, first.prompt);
-                const firstResult = await runSession({
-                  prompt: first.prompt,
-                  promptCachePrefix: first.promptCachePrefix,
-                  images: batch,
-                  model,
-                  curators: finalCurators,
-                  baseCuratorCount: curators.length,
-                  dynamicCuratorCount: added.length,
-                  verbosity,
-                  reasoningEffort,
-                  minutesMin: first.minutesMin,
-                  minutesMax: first.minutesMax,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                  stream: true,
-                });
+                let finalCurators = curators;
+                let added = [];
+                const prepareFirstRequest = async () => {
+                  const names = batch.map((file) => path.basename(file));
+                  const peopleLists = await Promise.all(
+                    names.map((name) => getPeople(name))
+                  );
+                  const photos = names.map((name, i) => ({
+                    file: name,
+                    people: sanitizePeople(peopleLists[i]),
+                  }));
+                  const finalized = finalizeCurators(curators, photos);
+                  finalCurators = finalized.finalCurators;
+                  added = finalized.added;
+                  if (added.length) {
+                    log(
+                      `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
+                    );
+                  }
+                  const first = await buildPrompt(promptPath, {
+                    curators: finalCurators,
+                    contextPath,
+                    images: batch,
+                    hasFieldNotes: false,
+                    isSecondPass: false,
+                  });
+                  await saveText('prompt', attemptNum, first.prompt);
+                  return {
+                    prompt: first.prompt,
+                    promptCachePrefix: first.promptCachePrefix,
+                    images: batch,
+                    model,
+                    curators: finalCurators,
+                    baseCuratorCount: curators.length,
+                    dynamicCuratorCount: added.length,
+                    verbosity,
+                    reasoningEffort,
+                    minutesMin: first.minutesMin,
+                    minutesMax: first.minutesMax,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                    stream: true,
+                  };
+                };
+                const firstResult = provider.supportsDeferredPreparation
+                  ? await runSession({ model, prepare: prepareFirstRequest })
+                  : await runSession(await prepareFirstRequest());
                 reply = firstResult.raw;
                 await saveText('response', attemptNum, reply);
                 if (looksLikeOpenAIResponseEnvelope(reply)) {
