@@ -425,6 +425,35 @@ describe("chatCompletion", () => {
     expect(result).toBe("ok");
   });
 
+  it("serializes the explicit cache boundary for synchronous GPT-5.6 requests", async () => {
+    responsesSpy.mockClear();
+    responsesSpy.mockResolvedValueOnce({ output_text: "ok" });
+    const stablePrefix = "Stable curatorial context. ".repeat(300);
+    const prompt = `${stablePrefix}Review this batch.`;
+
+    await chatCompletion({
+      prompt,
+      promptCachePrefix: stablePrefix,
+      images: [],
+      model: "gpt-5.6-terra",
+      cache: false,
+    });
+
+    const args = responsesSpy.mock.calls[0][0];
+    expect(args.instructions).toBeUndefined();
+    expect(args.prompt_cache_options).toEqual({ mode: "explicit", ttl: "30m" });
+    expect(args.input[0].role).toBe("developer");
+    const serializedInstructions = args.input[0].content
+      .map((part) => part.text)
+      .join("");
+    expect(serializedInstructions).toBe(
+      `${prompt}\nRespond in json format.\nOnly include these filenames; do not invent new ones.`
+    );
+    expect(args.input[0].content[0].prompt_cache_breakpoint).toEqual({
+      mode: "explicit",
+    });
+  });
+
   it("extracts JSON from output_json when output_text is empty", async () => {
     responsesSpy.mockClear();
     const payload = {

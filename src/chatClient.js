@@ -18,6 +18,7 @@ import { enforceEffortGuard } from "./effortGuard.js";
 import { getSurrogateImage } from "./imagePreprocessor.js";
 import { drain } from "./net.js";
 import { SimpleSemaphore } from "./lib/semaphore.js";
+import { buildCacheableResponsesPrompt } from "./core/promptCaching.js";
 
 function numEnv(name, fallback) {
   const v = process.env[name];
@@ -513,6 +514,7 @@ export async function buildInput(prompt, images, curators = []) {
  */
 export async function chatCompletion({
   prompt,
+  promptCachePrefix,
   images,
   model = "gpt-4o",
   verbosity = "low",
@@ -645,10 +647,15 @@ export async function chatCompletion({
           for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
         }
         onProgress("request");
-        const baseOpts = {
+        const promptFields = buildCacheableResponsesPrompt({
           model,
           instructions,
           input,
+          promptCachePrefix,
+        });
+        const baseOpts = {
+          model,
+          ...promptFields,
           text: {
             verbosity,
             format: {
@@ -886,10 +893,15 @@ export async function chatCompletion({
           for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
         }
         onProgress("request");
-        const baseOpts = {
+        const promptFields = buildCacheableResponsesPrompt({
           model,
           instructions,
           input,
+          promptCachePrefix,
+        });
+        const baseOpts = {
+          model,
+          ...promptFields,
           text: {
             verbosity,
             format: {

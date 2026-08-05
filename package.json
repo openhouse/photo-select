@@ -9,6 +9,7 @@
   "scripts": {
     "start": "photo-select",
     "test": "vitest run",
+    "evals:prompt-cache": "node scripts/eval-prompt-cache.mjs",
     "undici:smoke": "node scripts/undici-smoke.mjs",
     "debug:batch": "node scripts/debug-batch.mjs"
   },

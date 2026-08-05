@@ -8,6 +8,7 @@ import { buildReplySchema } from '../replySchema.js';
 import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens } from '../tokenEstimate.js';
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
+import { buildCacheableResponsesPrompt } from '../core/promptCaching.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
@@ -269,6 +270,7 @@ export default class OpenAIBatchProvider {
     const {
       levelDir,
       prompt,
+      promptCachePrefix,
       images = [],
       curators = [],
       baseCuratorCount = curators.length,
@@ -286,6 +288,7 @@ export default class OpenAIBatchProvider {
     const dirs = await ensureDirs(levelDir);
     const responsesRequest = await this.#buildResponsesRequest({
       prompt,
+      promptCachePrefix,
       images,
       curators,
       model,
@@ -540,7 +543,7 @@ export default class OpenAIBatchProvider {
     }
   }
 
-  async #buildResponsesRequest({ prompt, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity, baseCuratorCount = curators.length, dynamicCuratorCount }) {
+  async #buildResponsesRequest({ prompt, promptCachePrefix, images, curators, model, minutesMin, minutesMax, reasoningEffort, verbosity, baseCuratorCount = curators.length, dynamicCuratorCount }) {
     const { instructions, input, used } = await this.helpers.buildInput(
       prompt,
       images,
@@ -580,10 +583,15 @@ export default class OpenAIBatchProvider {
       );
       for (const warning of budget.warnings) console.warn(`⚠️ ${warning}`);
     }
-    const body = {
+    const promptFields = buildCacheableResponsesPrompt({
       model,
       instructions,
       input,
+      promptCachePrefix,
+    });
+    const body = {
+      model,
+      ...promptFields,
       text: {
         verbosity,
         format: {
