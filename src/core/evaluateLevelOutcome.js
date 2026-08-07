@@ -9,9 +9,23 @@ export function evaluateLevelOutcome({
   complete,
   hasKeep,
   hasAside,
+  levelSize,
+  targetLevelSize,
 }) {
   if (!complete) {
     return { state: "incomplete", shouldStop: false };
+  }
+
+  const hasTarget =
+    Number.isInteger(targetLevelSize) && targetLevelSize > 0;
+  const hasKnownLevelSize = Number.isInteger(levelSize) && levelSize >= 0;
+
+  if (
+    hasTarget &&
+    hasKnownLevelSize &&
+    levelSize <= targetLevelSize
+  ) {
+    return { state: "target_reached", shouldStop: true };
   }
 
   if (hasKeep && hasAside) {
@@ -19,7 +33,12 @@ export function evaluateLevelOutcome({
   }
 
   if (hasKeep) {
-    return { state: "unanimous_keep", shouldStop: true };
+    const shouldContinueTowardTarget =
+      hasTarget && hasKnownLevelSize && levelSize > targetLevelSize;
+    return {
+      state: "unanimous_keep",
+      shouldStop: !shouldContinueTowardTarget,
+    };
   }
 
   if (hasAside) {

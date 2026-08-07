@@ -158,6 +158,7 @@ through to the script unchanged.
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
@@ -207,6 +208,21 @@ or the `--stage-concurrency` flag when staging needs to be throttled.
 Recursive runs settle every photo in the current level before deciding what happens
 next. If the completed level is unanimous—every photo is in `_keep`, or every photo
 is in `_aside`—the run stops. A mixed level descends into `_keep` and continues.
+
+That unanimous-level rule remains the default. To request a smaller terminal level,
+set a positive target:
+
+```bash
+/path/to/photo-select/photo-select-here.sh --target-level-size 10
+```
+
+With `--target-level-size 10`, the tool completes and archives each level until a
+completed `_level-*` contains 10 or fewer source photos. Unanimous `_keep` above the
+target continues into `_keep`; unanimous `_aside` remains terminal because no photos
+remain to refine. The target is an upper bound, so a mixed level may reduce the next
+level from above 10 to below 10. Omitting the option preserves unanimous stopping
+exactly as before. The option changes recursive stopping only; it does not alter the
+curatorial prompt or decision schema.
 
 ### Concurrency: `--workers` (recommended)
 
@@ -490,7 +506,9 @@ through that API, so no extra flags are needed.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
 5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-   If every photo at a level is kept or every photo is set aside, recursion stops early.
+   By default, if every photo at a level is kept or every photo is set aside, recursion
+   stops early. With `--target-level-size N`, unanimous keep above `N` continues until
+   a completed level contains at most `N` source photos; unanimous aside still stops.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
 8. Stop when a directory has zero unclassified images.
 

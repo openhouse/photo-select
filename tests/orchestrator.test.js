@@ -103,6 +103,45 @@ describe("triageDirectory", () => {
     await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
   });
 
+  it("completes a target-sized level after continuing past unanimous keep", async () => {
+    await fs.writeFile(path.join(tmpDir, "3.jpg"), "c");
+    let completedLevels = 0;
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file)).sort();
+      completedLevels += 1;
+      if (completedLevels === 1) {
+        return JSON.stringify({ keep: names, aside: [] });
+      }
+      if (completedLevels === 2) {
+        return JSON.stringify({ keep: names.slice(0, 2), aside: names.slice(2) });
+      }
+      return JSON.stringify({ keep: names, aside: [] });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      targetLevelSize: 2,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    const targetArchive = path.join(
+      tmpDir,
+      "_keep",
+      "_keep",
+      "_level-003"
+    );
+    const targetPhotos = (await fs.readdir(targetArchive)).filter((name) =>
+      name.endsWith(".jpg")
+    );
+    expect(targetPhotos).toHaveLength(2);
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "_keep", "_level-004"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("evaluates unanimity after the entire level, not after each batch", async () => {
     for (let i = 3; i <= 11; i++) {
       await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
