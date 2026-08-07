@@ -8,6 +8,7 @@ import path from "node:path";
 import { DEFAULT_PROMPT_PATH } from "./templates.js";
 import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
+import { parsePositiveInteger } from "./core/parsePositiveInteger.js";
 
 function parseEnvFlag(value, fallback = false) {
   if (value == null || value === "") return fallback;
@@ -69,6 +70,11 @@ program
     process.env.PHOTO_SELECT_REASONING_EFFORT
   )
   .option("--no-recurse", "Process a single directory only")
+  .option(
+    "--target-level-size <n>",
+    "Continue until a completed level contains at most N photos",
+    parsePositiveInteger
+  )
   .option(
     "--retry-needs-review",
     "Re-include files listed in NEEDS_REVIEW for an explicit retry",
@@ -137,6 +143,7 @@ let {
   concurrency: concurrencyFlag,
   disablePhotoFilter,
   retryNeedsReview,
+  targetLevelSize,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -263,6 +270,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       verbosity,
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
+      targetLevelSize,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

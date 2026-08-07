@@ -31,4 +31,49 @@ describe("evaluateLevelOutcome", () => {
   ])("$name", ({ input, expected }) => {
     expect(evaluateLevelOutcome(input)).toEqual(expected);
   });
+
+  it.each([
+    {
+      name: "at the requested size",
+      levelSize: 10,
+    },
+    {
+      name: "below the requested size",
+      levelSize: 9,
+    },
+  ])("stops a completed mixed level $name", ({ levelSize }) => {
+    expect(
+      evaluateLevelOutcome({
+        complete: true,
+        hasKeep: true,
+        hasAside: true,
+        levelSize,
+        targetLevelSize: 10,
+      })
+    ).toEqual({ state: "target_reached", shouldStop: true });
+  });
+
+  it("continues past unanimous keep while the completed level is above the target", () => {
+    expect(
+      evaluateLevelOutcome({
+        complete: true,
+        hasKeep: true,
+        hasAside: false,
+        levelSize: 11,
+        targetLevelSize: 10,
+      })
+    ).toEqual({ state: "unanimous_keep", shouldStop: false });
+  });
+
+  it("still stops after unanimous aside above the target because no photos remain", () => {
+    expect(
+      evaluateLevelOutcome({
+        complete: true,
+        hasKeep: false,
+        hasAside: true,
+        levelSize: 11,
+        targetLevelSize: 10,
+      })
+    ).toEqual({ state: "unanimous_aside", shouldStop: true });
+  });
 });

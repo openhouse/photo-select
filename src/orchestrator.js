@@ -287,13 +287,35 @@ export async function findShallowestLevelWithEligibleImages(rootDir, options = {
       dirExists(path.join(current, "_keep")),
       dirExists(path.join(current, "_aside")),
     ]);
+    let levelSize;
+    if (Number.isInteger(options.targetLevelSize)) {
+      try {
+        levelSize = (
+          await listImages(
+            path.join(current, `_level-${String(level).padStart(3, "0")}`)
+          )
+        ).length;
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    }
     const outcome = evaluateLevelOutcome({
       complete: state.needsReviewImages.length === 0,
       hasKeep,
       hasAside,
+      levelSize,
+      targetLevelSize: options.targetLevelSize,
     });
     if (outcome.shouldStop) {
-      return { dir: current, depth, level, state, stopped: true, outcome };
+      return {
+        dir: current,
+        depth,
+        level,
+        levelSize,
+        state,
+        stopped: true,
+        outcome,
+      };
     }
     const next = path.join(current, "_keep");
     if (!(await dirExists(next))) return null;
@@ -307,6 +329,12 @@ export async function triageTree(options) {
   const rootDir = options.dir;
   let lastDepth = 0;
 
+  if (Number.isInteger(options.targetLevelSize)) {
+    console.log(
+      `🎯  target-level-size=${options.targetLevelSize}: complete levels until one contains at most this many photos.`
+    );
+  }
+
   while (true) {
     const work = await findShallowestLevelWithEligibleImages(rootDir, options);
     if (!work) {
@@ -314,6 +342,12 @@ export async function triageTree(options) {
       break;
     }
     if (work.stopped) {
+      if (work.outcome.state === "target_reached") {
+        console.log(
+          `${"  ".repeat(work.depth)}🎯  Completed level ${work.level} contains ${work.levelSize} photo(s), meeting target ≤ ${options.targetLevelSize}; stopping recursion.`
+        );
+        break;
+      }
       const bucket = work.outcome.state === "unanimous_keep" ? "kept" : "set aside";
       console.log(
         `${"  ".repeat(work.depth)}🎯  All images ${bucket} at completed level ${work.level}; stopping recursion.`
@@ -460,6 +494,7 @@ export async function resolveResumeLevel(startDir) {
  * @param {Object} options.provider     Chat provider instance
  * @param {string} options.model        Model id for the provider
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+ * @param {number} [options.targetLevelSize] Continue until a completed level has at most this many photos
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
 * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
@@ -487,6 +522,7 @@ export async function triageDirectory(options) {
     stageConcurrency,
     retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false),
     allowDescendWithNeedsReview = envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false),
+    targetLevelSize,
     _cascadeLevel = false,
   } = options;
   if (!provider) {
@@ -1039,12 +1075,20 @@ export async function triageDirectory(options) {
       complete: true,
       hasKeep,
       hasAside,
+      levelSize: await countImages(levelDir),
+      targetLevelSize,
     });
     const keepHasWork = keepCount > 0 || hasDeeperKeep;
     if (outcome.shouldStop) {
-      const bucket = outcome.state === "unanimous_keep" ? "kept" : "set aside";
-      console.log(`${indent}🎯  All images ${bucket} at this level; stopping recursion.`);
-    } else if (outcome.state === "mixed" && keepHasWork) {
+      if (outcome.state === "target_reached") {
+        console.log(
+          `${indent}🎯  Completed level ${depth + 1} meets target ≤ ${targetLevelSize}; stopping recursion.`
+        );
+      } else {
+        const bucket = outcome.state === "unanimous_keep" ? "kept" : "set aside";
+        console.log(`${indent}🎯  All images ${bucket} at this level; stopping recursion.`);
+      }
+    } else if (keepHasWork) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -1064,6 +1108,7 @@ export async function triageDirectory(options) {
         update,
         forceRebuild,
         stageConcurrency,
+        targetLevelSize,
       });
     }
   }

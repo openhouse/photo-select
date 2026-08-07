@@ -13,7 +13,7 @@
     "evals:batch-aggregation": "vitest run tests/batchAggregation.test.js tests/openaiBatchProvider.test.js tests/orchestratorBatchAggregation.test.js",
     "evals:batch-prompt-cache": "node scripts/eval-batch-prompt-cache.mjs",
     "evals:filename-recovery": "vitest run tests/orchestratorSafety.test.js",
-    "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js",
+    "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js tests/cliTargetLevelSize.test.js",
     "undici:smoke": "node scripts/undici-smoke.mjs",
     "debug:batch": "node scripts/debug-batch.mjs"
   },
