@@ -36,6 +36,104 @@ afterEach(async () => {
 });
 
 describe("triageDirectory safety validation", () => {
+  it("recovers a unique trailing-zero timestamp expansion without a restart", async () => {
+    const canonicalKeep = "20190219T003218580000Z-community-meeting-01.jpg";
+    const expandedKeep = "20190219T003218580000000Z-community-meeting-01.jpg";
+    const canonicalAside = "20190219T003219120000Z-community-meeting-02.jpg";
+    await fs.rename(path.join(tmpDir, "1.jpg"), path.join(tmpDir, canonicalKeep));
+    await fs.rename(path.join(tmpDir, "2.jpg"), path.join(tmpDir, canonicalAside));
+    chatCompletion.mockResolvedValueOnce(JSON.stringify({
+      minutes: [{
+        speaker: "Deborah Treisman",
+        text: "The first image carries the sequence; what should lead the next pass?",
+      }],
+      decisions: [
+        { filename: expandedKeep, decision: "keep", reason: "sequence anchor" },
+        { filename: canonicalAside, decision: "aside", reason: "repeats the beat" },
+      ],
+    }));
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      saveIo: true,
+    });
+
+    await expect(fs.stat(path.join(tmpDir, "_keep", canonicalKeep))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", canonicalAside))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "NEEDS_REVIEW"))).rejects.toThrow();
+    const minutesName = (await fs.readdir(tmpDir)).find((name) => name.startsWith("minutes-"));
+    const minutes = JSON.parse(await fs.readFile(path.join(tmpDir, minutesName), "utf8"));
+    expect(minutes.decisions.map(({ filename }) => filename).sort()).toEqual([
+      canonicalKeep,
+      canonicalAside,
+    ].sort());
+    expect(JSON.stringify(minutes)).not.toContain(expandedKeep);
+    const responseDir = path.join(tmpDir, "_level-001", "_responses");
+    const responseName = (await fs.readdir(responseDir))[0];
+    const rawResponse = await fs.readFile(path.join(responseDir, responseName), "utf8");
+    expect(rawResponse).toContain(expandedKeep);
+  });
+
+  it("does not recover a filename whose semantic suffix changed", async () => {
+    const canonical = "20190219T003218580000Z-community-meeting-01.jpg";
+    const changedSuffix = "20190219T003218580000000Z-community-meeting-02.jpg";
+    await fs.rename(path.join(tmpDir, "1.jpg"), path.join(tmpDir, canonical));
+    chatCompletion.mockResolvedValueOnce(JSON.stringify({
+      minutes: [{
+        speaker: "Deborah Treisman",
+        text: "The returned name changes the subject; what evidence could resolve it?",
+      }],
+      decisions: [
+        { filename: changedSuffix, decision: "keep", reason: "unsafe mismatch" },
+        { filename: "2.jpg", decision: "aside", reason: "secondary" },
+      ],
+    }));
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    await expect(fs.stat(path.join(tmpDir, canonical))).resolves.toBeTruthy();
+    const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
+    expect(marker).toContain("INVALID_DECISIONS");
+  });
+
+  it("does not guess when a trailing-zero timestamp expansion is ambiguous", async () => {
+    const shorter = "20190219T00321858000Z-community-meeting.jpg";
+    const longer = "20190219T003218580000Z-community-meeting.jpg";
+    const expanded = "20190219T0032185800000Z-community-meeting.jpg";
+    await fs.rename(path.join(tmpDir, "1.jpg"), path.join(tmpDir, shorter));
+    await fs.rename(path.join(tmpDir, "2.jpg"), path.join(tmpDir, longer));
+    chatCompletion.mockResolvedValueOnce(JSON.stringify({
+      minutes: [{
+        speaker: "Deborah Treisman",
+        text: "Two originals fit this transcription; which one did the model mean?",
+      }],
+      decisions: [
+        { filename: expanded, decision: "keep", reason: "ambiguous timestamp" },
+        { filename: longer, decision: "aside", reason: "explicit second choice" },
+      ],
+    }));
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    await expect(fs.stat(path.join(tmpDir, shorter))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, longer))).resolves.toBeTruthy();
+    const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
+    expect(marker).toContain("INVALID_DECISIONS");
+  });
+
   it("leaves files unmoved and marks NEEDS_REVIEW for raw provider envelopes", async () => {
     chatCompletion.mockResolvedValueOnce(JSON.stringify({
       object: "response",
