@@ -13,6 +13,7 @@ import { MultiBar, Presets } from "cli-progress";
 import { sanitizePeople } from "./lib/people.js";
 import { finalizeCurators } from "./core/finalizeCurators.js";
 import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
+import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js";
 
 const exec = promisify(execFile);
 
@@ -721,6 +722,18 @@ export async function triageDirectory(options) {
                 };
 
                 const meta = { model, verbosity, reasoningEffort };
+                const reconcileReply = (raw) => {
+                  const result = reconcileDecisionFilenames(
+                    raw,
+                    batch.map((file) => path.basename(file))
+                  );
+                  for (const repair of result.repairs) {
+                    log(
+                      `${indent}🔧  Reconciled response filename ${repair.returned} → ${repair.canonical}`
+                    );
+                  }
+                  return result.reply;
+                };
                 let attemptNum = 1;
                 let finalCurators = curators;
                 let added = [];
@@ -777,6 +790,7 @@ export async function triageDirectory(options) {
                   err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
                   throw err;
                 }
+                reply = reconcileReply(reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
                   batch,
@@ -822,6 +836,7 @@ export async function triageDirectory(options) {
                       err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
                       throw err;
                     }
+                    reply = reconcileReply(reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
                       batch,
