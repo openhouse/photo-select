@@ -24,6 +24,21 @@ const createClient = () => {
   return { files, batches, responses };
 };
 
+const CACHE_WRITE_USAGE = {
+  input_tokens: 7000,
+  input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+};
+const CACHE_HIT_USAGE = {
+  input_tokens: 7000,
+  input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
+};
+const RATE_LIMIT_HEADERS = {
+  'x-ratelimit-limit-requests': '500',
+  'x-ratelimit-remaining-requests': '499',
+  'x-ratelimit-limit-tokens': '2000000',
+  'x-ratelimit-remaining-tokens': '1900000',
+};
+
 function installCacheResponsesMock(client, usages) {
   client.responses.create.mockImplementation(async (body) => {
     const index = client.responses.create.mock.calls.length - 1;
@@ -41,6 +56,43 @@ function installCacheResponsesMock(client, usages) {
         }],
       }],
     };
+  });
+}
+
+function installCacheResponsesWithHeadersMock(client, usages, headers, {
+  readerDelayMs = 0,
+  activity,
+} = {}) {
+  client.responses.create.mockImplementation((body) => {
+    const index = client.responses.create.mock.calls.length - 1;
+    const data = {
+      id: `resp_${index + 1}`,
+      object: 'response',
+      status: 'completed',
+      service_tier: body.service_tier,
+      usage: usages[index],
+      output: [{ type: 'message', content: [{
+        type: 'output_json', json: { minutes: [], decisions: [] },
+      }] }],
+    };
+    const apiPromise = Promise.resolve(data);
+    apiPromise.withResponse = async () => {
+      const isReader = index >= 2;
+      if (isReader && activity) {
+        activity.active += 1;
+        activity.max = Math.max(activity.max, activity.active);
+      }
+      if (isReader && readerDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, readerDelayMs));
+      }
+      if (isReader && activity) activity.active -= 1;
+      return {
+        data,
+        response: { headers: new Headers(headers[index] || headers.at(-1)) },
+        request_id: `req_${index + 1}`,
+      };
+    };
+    return apiPromise;
   });
 }
 
@@ -313,6 +365,57 @@ describe('OpenAIBatchProvider', () => {
       .toEqual(['flex', 'flex', 'flex', 'flex']);
     expect(tickets.map((ticket) => ticket.cache_role))
       .toEqual(['seed', 'probe', 'reader', 'reader']);
+  });
+
+  it('uses a rolling adaptive reader window and persists sanitized rate-limit capacity', async () => {
+    const usages = [CACHE_WRITE_USAGE, ...Array(7).fill(CACHE_HIT_USAGE)];
+    const rateHeaders = usages.map(() => ({
+      ...RATE_LIMIT_HEADERS,
+      'x-request-id': 'do-not-persist',
+    }));
+    const activity = { active: 0, max: 0 };
+    installCacheResponsesWithHeadersMock(client, usages, rateHeaders, {
+      readerDelayMs: 10,
+      activity,
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+      maxBatchRequests: 2,
+      adaptiveConcurrency: true,
+      adaptiveOptions: {
+        minConcurrency: 1,
+        maxConcurrency: 3,
+        initialConcurrency: 1,
+        successesPerIncrease: 1,
+        cacheKeyRequestsPerMinute: Infinity,
+      },
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+
+    const handles = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${index}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+      })
+    ));
+
+    expect(activity.max).toBeGreaterThan(1);
+    expect(activity.max).toBeLessThanOrEqual(3);
+    const readerTicket = JSON.parse(await fs.readFile(handles[2].ticketPath, 'utf8'));
+    expect(readerTicket.rate_limits).toEqual({
+      limitRequests: 500,
+      remainingRequests: 499,
+      limitTokens: 2_000_000,
+      remainingTokens: 1_900_000,
+    });
+    expect(JSON.stringify(readerTicket)).not.toContain('do-not-persist');
+    const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
+    expect(ledger).toContain('adaptive_parallelism');
   });
 
   it.each([

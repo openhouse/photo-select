@@ -18,6 +18,10 @@ import {
   OPENAI_BATCH_MAX_REQUESTS,
   planCacheSeededBatches,
 } from '../core/batchAggregation.js';
+import {
+  AdaptiveConcurrencyController,
+  readRateLimitSnapshot,
+} from '../core/adaptiveConcurrency.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
@@ -36,6 +40,18 @@ const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
 const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
 const MAX_SAFE_ID_LENGTH = 200;
+
+function envBool(name, fallback = false) {
+  const value = process.env[name];
+  if (value == null || value === '') return fallback;
+  return /^(1|true|yes|on)$/i.test(value);
+}
+
+function estimatedRateLimitTokens(item) {
+  const budget = item.responsesRequest.budget;
+  return Number(budget?.inputs?.estimatedInputTokens || 0) +
+    Number(budget?.maxOutputTokens || 0);
+}
 
 function safeId(customId) {
   const sanitized = customId.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -273,6 +289,8 @@ export default class OpenAIBatchProvider {
     maxBatchRequests = OPENAI_BATCH_MAX_REQUESTS,
     enableFallback = true,
     helpers = {},
+    adaptiveConcurrency = envBool('PHOTO_SELECT_ADAPTIVE_WORKERS'),
+    adaptiveOptions = {},
   } = {}) {
     this.client = client || new OpenAI();
     this.pollIntervalMs = pollIntervalMs;
@@ -282,6 +300,13 @@ export default class OpenAIBatchProvider {
     this.maxBatchRequests = Math.max(1, Number(maxBatchRequests) || 1);
     this.enableFallback = enableFallback;
     this.pendingSubmissionGroups = new Map();
+    this.adaptiveController = adaptiveConcurrency
+      ? new AdaptiveConcurrencyController({
+          minConcurrency: Number(process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS || 1),
+          maxConcurrency: Number(process.env.PHOTO_SELECT_ADAPTIVE_MAX_WORKERS || 10),
+          ...adaptiveOptions,
+        })
+      : null;
     this.helpers = {
       buildInput,
       buildMessages,
@@ -449,12 +474,14 @@ export default class OpenAIBatchProvider {
         err.usage = probeHandles[0].completedResult.usage;
         throw err;
       }
-
-      const readerGroups = await Promise.all(
-        plan.batches.slice(2).map((partition) =>
-          this.#submitPreparedFlexGroup(partition, 'reader')
-        )
-      );
+      if (this.adaptiveController) {
+        this.adaptiveController.observe(probeHandles[0].adaptiveObservation);
+      }
+      const readerGroups = this.adaptiveController
+        ? [await this.#submitPreparedFlexGroup(
+            plan.batches.slice(2).flat(), 'reader')]
+        : await Promise.all(plan.batches.slice(2).map((partition) =>
+            this.#submitPreparedFlexGroup(partition, 'reader')));
       const missedReader = readerGroups.flat().find((handle) =>
         !promptCacheHitFromUsage(handle.completedResult?.usage));
       if (missedReader) {
@@ -464,6 +491,12 @@ export default class OpenAIBatchProvider {
         err.code = 'PROMPT_CACHE_READER_MISS';
         err.usage = missedReader.completedResult?.usage;
         throw err;
+      }
+      if (this.adaptiveController) {
+        await appendLedger(items[0].dirs.base, {
+          event: 'adaptive_parallelism',
+          ...this.adaptiveController.snapshot(),
+        });
       }
 
       const handles = [
@@ -478,7 +511,7 @@ export default class OpenAIBatchProvider {
   }
 
   async #submitPreparedFlexGroup(items, cacheRole) {
-    return Promise.all(items.map(async (item) => {
+    const submitOne = async (item) => {
       const requestBody = {
         ...item.responsesRequest.body,
         service_tier: FLEX_SERVICE_TIER,
@@ -492,10 +525,20 @@ export default class OpenAIBatchProvider {
       }) + '\n', 'utf8');
 
       const submittedAt = new Date().toISOString();
-      const response = await this.client.responses.create(requestBody, {
+      const apiPromise = this.client.responses.create(requestBody, {
         headers: { 'Idempotency-Key': crypto.randomUUID() },
         timeout: FLEX_TIMEOUT_MS,
       });
+      let response;
+      let responseHeaders;
+      if (typeof apiPromise?.withResponse === 'function') {
+        const raw = await apiPromise.withResponse();
+        response = raw.data;
+        responseHeaders = raw.response?.headers;
+      } else {
+        response = await apiPromise;
+      }
+      const rateLimits = readRateLimitSnapshot(responseHeaders);
       const parsed = extractStructured(response, { customId: item.customId });
       const completedAt = new Date().toISOString();
       const ticketPath = path.join(item.dirs.tickets, `${item.safe}.ticket.json`);
@@ -513,6 +556,7 @@ export default class OpenAIBatchProvider {
         completed_at: completedAt,
         used_images: item.responsesRequest.used.map((file) => path.basename(file)),
         output_budget: budgetArtifact(item.responsesRequest.budget),
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
       };
       await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
       await writeFile(statusPath, JSON.stringify({
@@ -520,6 +564,7 @@ export default class OpenAIBatchProvider {
         status: response.status,
         service_tier: response.service_tier || FLEX_SERVICE_TIER,
         usage: response.usage,
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
       }, null, 2));
       await writeFile(resultPath, JSON.stringify({
         custom_id: item.customId,
@@ -534,6 +579,7 @@ export default class OpenAIBatchProvider {
         cache_role: cacheRole,
         status: response.status,
         usage: response.usage,
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
         output_budget: budgetArtifact(item.responsesRequest.budget),
       });
 
@@ -554,8 +600,31 @@ export default class OpenAIBatchProvider {
           json: parsed.json,
           usage: response.usage,
         },
+        adaptiveObservation: {
+          cacheHit: promptCacheHitFromUsage(response.usage),
+          headers: responseHeaders,
+          estimatedTokens: estimatedRateLimitTokens(item),
+        },
       };
-    }));
+    };
+
+    if (!this.adaptiveController || cacheRole !== 'reader') {
+      return Promise.all(items.map(submitOne));
+    }
+    const cacheKey = items[0]?.responsesRequest.body.prompt_cache_key;
+    return this.adaptiveController.run(items, async (item) => {
+      const handle = await submitOne(item);
+      if (!handle.adaptiveObservation.cacheHit) {
+        const err = new Error(
+          'OpenAI Flex reader completed without reporting cached tokens; the cache cohort was stopped'
+        );
+        err.code = 'PROMPT_CACHE_READER_MISS';
+        err.usage = handle.completedResult?.usage;
+        err.adaptiveObservation = handle.adaptiveObservation;
+        throw err;
+      }
+      return { value: handle, observation: handle.adaptiveObservation };
+    }, { cacheKey });
   }
 
   async #submitPreparedGroup(items) {
