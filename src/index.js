@@ -109,6 +109,19 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option(
+    "--adaptive-workers",
+    "Dynamically tune OpenAI request concurrency; --workers is the ceiling",
+    parseEnvFlag(process.env.PHOTO_SELECT_ADAPTIVE_WORKERS, false)
+  )
+  .option(
+    "--adaptive-min-workers <n>",
+    "Minimum request concurrency while adaptive workers are enabled",
+    parsePositiveInteger,
+    process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS
+      ? parsePositiveInteger(process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS)
+      : 1
+  )
+  .option(
     "--concurrency <n>",
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
@@ -144,6 +157,8 @@ let {
   disablePhotoFilter,
   retryNeedsReview,
   targetLevelSize,
+  adaptiveWorkers,
+  adaptiveMinWorkers,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -152,6 +167,14 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
 if (!workers) workers = 1;
+if (adaptiveWorkers && adaptiveMinWorkers > workers) {
+  program.error("--adaptive-min-workers cannot exceed --workers");
+}
+if (adaptiveWorkers) {
+  process.env.PHOTO_SELECT_ADAPTIVE_WORKERS = "1";
+  process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS = String(adaptiveMinWorkers);
+  process.env.PHOTO_SELECT_ADAPTIVE_MAX_WORKERS = String(workers);
+}
 
 const envConc = Number(process.env.CONCURRENCY);
 const envWorkers = Number(process.env.WORKERS);
@@ -191,6 +214,9 @@ scheduler.setConcurrency(Math.min(concurrency, undiciConnections));
 console.log(
   `⚙️  workers=${workers} concurrency=${concurrency} undici_connections=${undiciConnections}`
 );
+if (adaptiveWorkers) {
+  console.log(`⚙️  adaptive=on range=${adaptiveMinWorkers}..${workers}`);
+}
 
 let shuttingDown = false;
 async function handleSignal(sig) {
