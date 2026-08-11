@@ -131,6 +131,11 @@ program
     "Disable photo-filter API lookups for this job",
     disablePhotoFilterDefault
   )
+  .option(
+    "--refresh-people-index",
+    "Force one verified rebuild of Photo Filter's people index",
+    parseEnvFlag(process.env.PHOTO_SELECT_REFRESH_PEOPLE_INDEX, false)
+  )
   .parse(process.argv);
 
 let {
@@ -159,6 +164,7 @@ let {
   targetLevelSize,
   adaptiveWorkers,
   adaptiveMinWorkers,
+  refreshPeopleIndex,
 } = program.opts();
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
@@ -297,6 +303,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
       targetLevelSize,
+      refreshPeopleIndex,
     });
     console.log("🎉  Finished triaging.");
   } catch (err) {

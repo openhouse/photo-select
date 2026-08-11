@@ -13,10 +13,11 @@ vi.mock("../src/chatClient.js", async () => {
     ...actual,
     chatCompletion: vi.fn(),
     getPeople: vi.fn().mockResolvedValue([]),
+    prefetchPeople: vi.fn().mockResolvedValue({ mode: "bulk", names: 0 }),
   };
 });
 
-import { chatCompletion, getPeople } from "../src/chatClient.js";
+import { chatCompletion, getPeople, prefetchPeople } from "../src/chatClient.js";
 import { triageDirectory } from "../src/orchestrator.js";
 
 let tmpDir;
@@ -36,6 +37,23 @@ afterEach(async () => {
 });
 
 describe("triageDirectory", () => {
+  it("prefetches level metadata before the first paid request", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    expect(prefetchPeople).toHaveBeenCalledTimes(1);
+    expect(prefetchPeople.mock.invocationCallOrder[0]).toBeLessThan(
+      chatCompletion.mock.invocationCallOrder[0]
+    );
+  });
+
   it("moves files into keep and aside", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
