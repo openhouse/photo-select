@@ -159,6 +159,7 @@ through to the script unchanged.
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
+| `--refresh-people-index` | `false` | Force one atomic rebuild of Photo Filter's people index before the level prefetch |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
@@ -354,7 +355,9 @@ on startup.
 
 ### People metadata (optional)
 
-Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip these lookups for a single job.
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. Before each level, supported servers bulk-resolve the filenames from one content-addressed `photos.json` snapshot and prime the existing per-filename cache. Older servers fall back to `/api/photos/by-filename/<filename>/persons`. In either case the prompt receives the same JSON blob, such as `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. If duplicate album exports for one semantic photograph disagree, the bulk index keeps the deterministic union of their known people labels rather than whichever album happened to be scanned first.
+
+Pass `--refresh-people-index` (or set `PHOTO_SELECT_REFRESH_PEOPLE_INDEX=1`) when the derived index may be stale. This forces one atomic rebuild from the active `photos.json` files. The returned corpus hash proves the index matches those files; it cannot prove the files match the current Apple Photos library, so upstream source freshness remains reported separately as `unknown`. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip people lookups for a single job.
 
 Example:
 

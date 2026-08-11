@@ -6,7 +6,7 @@
 | **Audience** | Photo Select and Photo Filter contributors |
 | **Author** | Jamie Burkart with collaborators |
 | **Created** | 2026-08-11 |
-| **Companion** | `openhouse/photo-filter` RFC 0008 |
+| **Companion** | [`openhouse/photo-filter` RFC 0008](https://github.com/openhouse/photo-filter/pull/68) |
 
 ---
 
@@ -17,10 +17,12 @@ people metadata through Photo Filter's content-addressed bulk API. Populate the
 existing in-process people cache from one verified corpus snapshot, then let
 the established prompt path proceed unchanged.
 
-This is a performance repair, not a curatorial-policy change. The CLI,
-filenames, prompt wording, context brief, person ordering, repeated-person
-curator additions, decisions, resume behavior, and output artifacts remain the
-same.
+This is primarily a performance repair, not a curatorial-policy change. The
+CLI, filenames, prompt wording, context brief, repeated-person curator rule,
+decisions, resume behavior, and output artifacts remain the same. The companion
+index also repairs one metadata inconsistency: duplicate album memberships
+union their known people labels instead of allowing the first membership to
+erase labels present on another.
 
 ## 2 — Motivation
 
@@ -87,8 +89,9 @@ the Apple Photos library.
 
 ## 6 — Prompt and cache invariants
 
-The bulk path returns the same ordered people arrays as the legacy endpoint.
-Therefore it does not:
+For consistent metadata, the bulk path returns the same ordered people arrays
+as the legacy endpoint. For conflicting duplicate album exports, it returns a
+deterministic union. The transport change itself does not:
 
 - truncate or rewrite `--context`;
 - change prompt templates or message ordering;
@@ -130,7 +133,8 @@ Code-based evals must establish:
 3. A hash mismatch or malformed response commits no partial cache entries.
 4. A bulk `404` preserves the current legacy request path.
 5. Bulk and legacy paths serialize byte-identical people metadata into prompt
-   inputs for exact, semantic-alias, missing, and ambiguous fixtures.
+   inputs for consistent exact, semantic-alias, missing, and ambiguous fixtures;
+   conflicting duplicate memberships follow the documented union rule.
 6. Two photographs containing the same person still add that person to the
    curators under the existing rule.
 7. Context bytes and prompt-template bytes are identical before and after the

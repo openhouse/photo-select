@@ -6,7 +6,7 @@ import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { ensureArchiveLevel } from "./archive/ensureArchiveLevel.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
-import { parseReply, getPeople } from "./chatClient.js";
+import { parseReply, getPeople, prefetchPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
@@ -497,6 +497,7 @@ export async function resolveResumeLevel(startDir) {
  * @param {number} [options.targetLevelSize] Continue until a completed level has at most this many photos
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
+ * @param {boolean} [options.refreshPeopleIndex=false] Force one derived people-index refresh
 * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
 * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
@@ -523,6 +524,7 @@ export async function triageDirectory(options) {
     retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false),
     allowDescendWithNeedsReview = envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false),
     targetLevelSize,
+    refreshPeopleIndex = false,
     _cascadeLevel = false,
   } = options;
   if (!provider) {
@@ -680,6 +682,20 @@ export async function triageDirectory(options) {
       await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
       console.warn(
         `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
+      );
+    }
+
+    const peopleStart = Date.now();
+    const peopleResult = await prefetchPeople(images, {
+      force: refreshPeopleIndex,
+    });
+    if (verbose && peopleResult.mode === "bulk") {
+      console.log(
+        `${indent}people-index: status=${peopleResult.indexStatus} corpus=${peopleResult.corpusSha256.slice(0, 12)} sources=${peopleResult.sourceCount} names=${peopleResult.names} elapsed=${((Date.now() - peopleStart) / 1000).toFixed(1)}s source_freshness=${peopleResult.sourceFreshness}`,
+      );
+    } else if (verbose && peopleResult.mode === "legacy-fallback") {
+      console.warn(
+        `${indent}people-index: mode=legacy-fallback reason=${peopleResult.reason ?? "unsupported"}`,
       );
     }
 
