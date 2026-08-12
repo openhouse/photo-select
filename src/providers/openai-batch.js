@@ -22,6 +22,10 @@ import {
   AdaptiveConcurrencyController,
   readRateLimitSnapshot,
 } from '../core/adaptiveConcurrency.js';
+import {
+  isBillingLimitError,
+  providerErrorSummary,
+} from '../core/providerErrors.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
@@ -424,6 +428,19 @@ export default class OpenAIBatchProvider {
     if (!group) return;
     this.pendingSubmissionGroups.delete(groupKey);
     let items = [];
+    const completedHandles = new Map();
+    const resolved = new Set();
+    const recordHandle = (handle) => {
+      completedHandles.set(handle.customId, handle);
+      return handle;
+    };
+    const resolveHandle = (handle) => {
+      const item = items.find((candidate) => candidate.customId === handle.customId);
+      if (!item || resolved.has(item.customId)) return handle;
+      resolved.add(item.customId);
+      item.resolve(handle);
+      return handle;
+    };
     try {
       items = (await Promise.all(group.items.map(async (queued) => {
         try {
@@ -458,14 +475,18 @@ export default class OpenAIBatchProvider {
       if (!plan.seeded) {
         const handles = [];
         for (const partition of plan.batches) {
-          handles.push(...await this.#submitPreparedGroup(partition));
+          const submitted = await this.#submitPreparedGroup(partition);
+          submitted.forEach(recordHandle);
+          handles.push(...submitted);
         }
-        items.forEach((item, index) => item.resolve(handles[index]));
+        handles.forEach(resolveHandle);
         return;
       }
 
-      const seedHandles = await this.#submitPreparedFlexGroup(plan.batches[0], 'seed');
-      const probeHandles = await this.#submitPreparedFlexGroup(plan.batches[1], 'probe');
+      const seedHandles = await this.#submitPreparedFlexGroup(
+        plan.batches[0], 'seed', recordHandle);
+      const probeHandles = await this.#submitPreparedFlexGroup(
+        plan.batches[1], 'probe', recordHandle);
       if (!promptCacheHitFromUsage(probeHandles[0].completedResult.usage)) {
         const err = new Error(
           'OpenAI prompt-cache probe completed without reporting cached tokens; reader fanout was stopped'
@@ -479,9 +500,9 @@ export default class OpenAIBatchProvider {
       }
       const readerGroups = this.adaptiveController
         ? [await this.#submitPreparedFlexGroup(
-            plan.batches.slice(2).flat(), 'reader')]
+            plan.batches.slice(2).flat(), 'reader', recordHandle)]
         : await Promise.all(plan.batches.slice(2).map((partition) =>
-            this.#submitPreparedFlexGroup(partition, 'reader')));
+            this.#submitPreparedFlexGroup(partition, 'reader', recordHandle)));
       const missedReader = readerGroups.flat().find((handle) =>
         !promptCacheHitFromUsage(handle.completedResult?.usage));
       if (missedReader) {
@@ -504,13 +525,18 @@ export default class OpenAIBatchProvider {
         ...probeHandles,
         ...readerGroups.flat(),
       ];
-      items.forEach((item, index) => item.resolve(handles[index]));
+      handles.forEach(resolveHandle);
     } catch (err) {
-      items.forEach((item) => item.reject(err));
+      if (isBillingLimitError(err)) {
+        for (const handle of completedHandles.values()) resolveHandle(handle);
+      }
+      for (const item of items) {
+        if (!resolved.has(item.customId)) item.reject(err);
+      }
     }
   }
 
-  async #submitPreparedFlexGroup(items, cacheRole) {
+  async #submitPreparedFlexGroup(items, cacheRole, onCompleted) {
     const submitOne = async (item) => {
       const requestBody = {
         ...item.responsesRequest.body,
@@ -524,19 +550,32 @@ export default class OpenAIBatchProvider {
         body: requestBody,
       }) + '\n', 'utf8');
 
-      const submittedAt = new Date().toISOString();
-      const apiPromise = this.client.responses.create(requestBody, {
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
-        timeout: FLEX_TIMEOUT_MS,
-      });
       let response;
       let responseHeaders;
-      if (typeof apiPromise?.withResponse === 'function') {
-        const raw = await apiPromise.withResponse();
-        response = raw.data;
-        responseHeaders = raw.response?.headers;
-      } else {
-        response = await apiPromise;
+      const submittedAt = new Date().toISOString();
+      try {
+        const apiPromise = this.client.responses.create(requestBody, {
+          headers: { 'Idempotency-Key': crypto.randomUUID() },
+          timeout: FLEX_TIMEOUT_MS,
+        });
+        if (typeof apiPromise?.withResponse === 'function') {
+          const raw = await apiPromise.withResponse();
+          response = raw.data;
+          responseHeaders = raw.response?.headers;
+        } else {
+          response = await apiPromise;
+        }
+      } catch (err) {
+        const summary = providerErrorSummary(err);
+        await appendLedger(item.dirs.base, {
+          custom_id: item.customId,
+          event: 'submit_error',
+          endpoint: DEFAULT_ENDPOINT,
+          service_tier: FLEX_SERVICE_TIER,
+          cache_role: cacheRole,
+          ...summary,
+        });
+        throw err;
       }
       const rateLimits = readRateLimitSnapshot(responseHeaders);
       const parsed = extractStructured(response, { customId: item.customId });
@@ -608,13 +647,11 @@ export default class OpenAIBatchProvider {
       };
     };
 
-    if (!this.adaptiveController || cacheRole !== 'reader') {
-      return Promise.all(items.map(submitOne));
-    }
-    const cacheKey = items[0]?.responsesRequest.body.prompt_cache_key;
-    return this.adaptiveController.run(items, async (item) => {
-      const handle = await submitOne(item);
-      if (!handle.adaptiveObservation.cacheHit) {
+    const accept = (handle) => {
+      if (
+        cacheRole === 'reader' &&
+        !handle.adaptiveObservation.cacheHit
+      ) {
         const err = new Error(
           'OpenAI Flex reader completed without reporting cached tokens; the cache cohort was stopped'
         );
@@ -623,7 +660,20 @@ export default class OpenAIBatchProvider {
         err.adaptiveObservation = handle.adaptiveObservation;
         throw err;
       }
-      return { value: handle, observation: handle.adaptiveObservation };
+      onCompleted?.(handle);
+      return handle;
+    };
+
+    if (!this.adaptiveController || cacheRole !== 'reader') {
+      return Promise.all(items.map(async (item) => accept(await submitOne(item))));
+    }
+    const cacheKey = items[0]?.responsesRequest.body.prompt_cache_key;
+    return this.adaptiveController.run(items, async (item) => {
+      const handle = await submitOne(item);
+      return {
+        value: accept(handle),
+        observation: handle.adaptiveObservation,
+      };
     }, { cacheKey });
   }
 
@@ -691,12 +741,14 @@ export default class OpenAIBatchProvider {
         break;
       } catch (err) {
         lastErr = err;
+        const summary = providerErrorSummary(err);
         await Promise.all(items.map((item) => appendLedger(item.dirs.base, {
           custom_id: item.customId,
           event: 'submit_error',
           endpoint,
-          message: err?.message,
+          ...summary,
         })));
+        if (isBillingLimitError(err)) throw err;
         if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) throw err;
       }
     }
