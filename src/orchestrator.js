@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat, rename, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
@@ -14,6 +14,7 @@ import { sanitizePeople } from "./lib/people.js";
 import { finalizeCurators } from "./core/finalizeCurators.js";
 import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
 import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js";
+import { planNeedsReviewRetry } from "./core/planNeedsReviewRetry.js";
 
 const exec = promisify(execFile);
 
@@ -240,6 +241,50 @@ async function clearNeedsReviewEntries(dir, files) {
   await writeFile(marker, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
 }
 
+const NEEDS_REVIEW_RETRY_SCHEMA = 1;
+
+async function readNeedsReviewRetryState(statePath) {
+  try {
+    const parsed = JSON.parse(await readFile(statePath, "utf8"));
+    if (
+      parsed?.schemaVersion !== NEEDS_REVIEW_RETRY_SCHEMA ||
+      !Number.isInteger(parsed?.retriesUsed) ||
+      parsed.retriesUsed < 0
+    ) {
+      throw new Error("invalid retry-state shape");
+    }
+    return parsed.retriesUsed;
+  } catch (err) {
+    if (err?.code === "ENOENT") return 0;
+    const wrapped = new Error(
+      `Cannot read NEEDS_REVIEW retry state at ${statePath}: ${err.message}`
+    );
+    wrapped.code = "INVALID_NEEDS_REVIEW_RETRY_STATE";
+    wrapped.cause = err;
+    throw wrapped;
+  }
+}
+
+async function writeNeedsReviewRetryState(statePath, { retriesUsed, maxRetries }) {
+  await mkdir(path.dirname(statePath), { recursive: true });
+  const temporaryPath = `${statePath}.${process.pid}.tmp`;
+  await writeFile(
+    temporaryPath,
+    JSON.stringify(
+      {
+        schemaVersion: NEEDS_REVIEW_RETRY_SCHEMA,
+        retriesUsed,
+        maxRetries,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await rename(temporaryPath, statePath);
+}
+
 export async function listLevelState(dir, { retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false) } = {}) {
   const allImages = await listImages(dir);
   const needsReviewNames = await readNeedsReviewNames(dir);
@@ -332,6 +377,11 @@ export async function triageTree(options) {
   if (Number.isInteger(options.targetLevelSize)) {
     console.log(
       `🎯  target-level-size=${options.targetLevelSize}: complete levels until one contains at most this many photos.`
+    );
+  }
+  if (options.retryNeedsReview) {
+    console.log(
+      `🔁  needs-review-retries=${options.needsReviewRetries}: automatic repair passes per level.`
     );
   }
 
@@ -495,6 +545,8 @@ export async function resolveResumeLevel(startDir) {
  * @param {string} options.model        Model id for the provider
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
  * @param {number} [options.targetLevelSize] Continue until a completed level has at most this many photos
+ * @param {boolean} [options.retryNeedsReview=false] Automatically repair held files
+ * @param {number} [options.needsReviewRetries=2] Maximum repair passes per level
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
  * @param {boolean} [options.refreshPeopleIndex=false] Force one derived people-index refresh
@@ -522,11 +574,15 @@ export async function triageDirectory(options) {
     forceRebuild = false,
     stageConcurrency,
     retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false),
+    needsReviewRetries = Number(process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES || 2),
     allowDescendWithNeedsReview = envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false),
     targetLevelSize,
     refreshPeopleIndex = false,
     _cascadeLevel = false,
   } = options;
+  if (!Number.isInteger(needsReviewRetries) || needsReviewRetries < 1) {
+    throw new Error("needsReviewRetries must be a positive integer");
+  }
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
@@ -536,6 +592,7 @@ export async function triageDirectory(options) {
       ...options,
       provider,
       retryNeedsReview,
+      needsReviewRetries,
       allowDescendWithNeedsReview,
     });
   }
@@ -653,17 +710,67 @@ export async function triageDirectory(options) {
 
   let completedBatches = 0;
   const retrySuppressedNames = new Set();
+  const needsReviewRetryStatePath = path.join(
+    levelDir,
+    ".batch",
+    "needs-review-retries.json"
+  );
+  let needsReviewRetriesUsed = retryNeedsReview
+    ? await readNeedsReviewRetryState(needsReviewRetryStatePath)
+    : 0;
 
   while (true) {
-    const state = await listLevelState(dir, { retryNeedsReview });
-    const images = state.eligibleImages.filter(
+    const state = await listLevelState(dir, { retryNeedsReview: false });
+    const activeImages = state.eligibleImages.filter(
       (file) => !retrySuppressedNames.has(path.basename(file))
     );
+    const retryableHeldImages = state.needsReviewImages.filter(
+      (file) => !retrySuppressedNames.has(path.basename(file))
+    );
+    const retryPlan = planNeedsReviewRetry({
+      enabled: retryNeedsReview,
+      retriesUsed: needsReviewRetriesUsed,
+      maxRetries: needsReviewRetries,
+      heldCount: retryableHeldImages.length,
+    });
+    let images = activeImages;
+    if (retryPlan.shouldRetry) {
+      needsReviewRetriesUsed = retryPlan.retriesUsed;
+      await writeNeedsReviewRetryState(needsReviewRetryStatePath, {
+        retriesUsed: needsReviewRetriesUsed,
+        maxRetries: needsReviewRetries,
+      });
+      images = [...activeImages, ...retryableHeldImages];
+      console.log(
+        `${indent}🔁  NEEDS_REVIEW repair pass ${retryPlan.attempt}/${needsReviewRetries}: ${retryableHeldImages.length} held image(s).`
+      );
+    }
     console.log(`${indent}📊  level ${depth + 1}: ${state.allImages.length} source image(s): ${images.length} eligible, ${state.needsReviewImages.length} NEEDS_REVIEW`);
     if (images.length === 0) {
       if (state.needsReviewImages.length > 0) {
+        const pendingRetry = planNeedsReviewRetry({
+          enabled: retryNeedsReview,
+          retriesUsed: needsReviewRetriesUsed,
+          maxRetries: needsReviewRetries,
+          heldCount: state.needsReviewImages.length,
+        });
+        if (pendingRetry.shouldRetry && retrySuppressedNames.size > 0) {
+          retrySuppressedNames.clear();
+          console.log(
+            `${indent}🔁  Preparing automatic NEEDS_REVIEW repair pass ${pendingRetry.attempt}/${needsReviewRetries}.`
+          );
+          continue;
+        }
+        if (retryNeedsReview && pendingRetry.reason === "exhausted") {
+          console.warn(
+            `${indent}⚠️  NEEDS_REVIEW automatic repair budget exhausted (${needsReviewRetriesUsed}/${needsReviewRetries}) for level ${depth + 1}.`
+          );
+        }
         console.warn(`${indent}⚠️  Level blocked: ${dir} has ${state.needsReviewImages.length} image file(s) needing review. Not descending.`);
         return { blocked: true, blockedCount: state.needsReviewImages.length };
+      }
+      if (retryNeedsReview) {
+        await rm(needsReviewRetryStatePath, { force: true });
       }
       console.log(`${indent}✅  Level settled: ${dir} has 0 active image files.`);
       break;
@@ -983,7 +1090,7 @@ export async function triageDirectory(options) {
                 if (keep.length + aside.length > 0) {
                   completedBatches++;
                   const elapsedSec = (Date.now() - levelStart) / 1000;
-                  const remainingNow = (await listLevelState(dir, { retryNeedsReview })).eligibleImages.length;
+                  const remainingNow = (await listLevelState(dir, { retryNeedsReview: false })).eligibleImages.length;
                   const remainingBatchesNow = Math.ceil(remainingNow / BATCH_SIZE);
                   const tps = completedBatches / elapsedSec;
                   const etaSec = tps > 0 ? Math.ceil(remainingBatchesNow / tps) : Infinity;
@@ -1049,7 +1156,7 @@ export async function triageDirectory(options) {
       } finally {
         multibar.stop();
       }
-      const nextState = await listLevelState(dir, { retryNeedsReview });
+      const nextState = await listLevelState(dir, { retryNeedsReview: false });
       const remaining = nextState.eligibleImages.filter(
         (file) => !retrySuppressedNames.has(path.basename(file))
       ).length;
@@ -1124,6 +1231,8 @@ export async function triageDirectory(options) {
         update,
         forceRebuild,
         stageConcurrency,
+        retryNeedsReview,
+        needsReviewRetries,
         targetLevelSize,
       });
     }

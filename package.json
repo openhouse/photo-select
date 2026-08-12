@@ -14,6 +14,7 @@
     "evals:batch-prompt-cache": "node scripts/eval-batch-prompt-cache.mjs",
     "evals:adaptive-parallelism": "node scripts/eval-adaptive-parallelism.mjs",
     "evals:filename-recovery": "vitest run tests/orchestratorSafety.test.js",
+    "evals:needs-review-retries": "vitest run tests/planNeedsReviewRetry.test.js tests/orchestrator.test.js tests/cliNeedsReviewRetries.test.js",
     "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js tests/cliTargetLevelSize.test.js",
     "evals:people-index": "vitest run tests/peoplePrefetch.test.js tests/cliPeopleIndex.test.js tests/integration/prompt-curators.int.test.js tests/orchestrator.test.js",
     "undici:smoke": "node scripts/undici-smoke.mjs",
