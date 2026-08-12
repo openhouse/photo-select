@@ -526,6 +526,15 @@ through that API, so no extra flags are needed.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
 8. Stop when a directory has zero unclassified images.
 
+### Billing interruptions
+
+If OpenAI reports exhausted credits or a billing limit, Photo Select stops
+submitting new work, drains already-completed in-flight batches, and exits with
+status 75. Completed classifications remain in place; the current level records
+`.batch/billing-pause.json` plus a `billing_paused` ledger event. Add credits and
+rerun the same command to resume. Billing failures do not create `NEEDS_REVIEW`
+entries, and the pause marker is cleared after the next successful batch.
+
 ### Structured outputs (OpenAI)
 
 OpenAI requests now include a JSON schema so the API returns typed responses.
