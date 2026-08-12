@@ -77,8 +77,16 @@ program
   )
   .option(
     "--retry-needs-review",
-    "Re-include files listed in NEEDS_REVIEW for an explicit retry",
+    "Automatically retry files listed in NEEDS_REVIEW",
     parseEnvFlag(process.env.PHOTO_SELECT_RETRY_NEEDS_REVIEW, false)
+  )
+  .option(
+    "--needs-review-retries <n>",
+    "Maximum automatic repair passes per level",
+    parsePositiveInteger,
+    process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES
+      ? parsePositiveInteger(process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES)
+      : 2
   )
   .option(
     "-P, --parallel <n>",
@@ -161,6 +169,7 @@ let {
   concurrency: concurrencyFlag,
   disablePhotoFilter,
   retryNeedsReview,
+  needsReviewRetries,
   targetLevelSize,
   adaptiveWorkers,
   adaptiveMinWorkers,
@@ -302,6 +311,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       verbosity,
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
+      needsReviewRetries,
       targetLevelSize,
       refreshPeopleIndex,
     });

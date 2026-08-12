@@ -159,6 +159,8 @@ through to the script unchanged.
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
+| `--retry-needs-review` | `false` | Automatically retry held `NEEDS_REVIEW` files without restarting the CLI |
+| `--needs-review-retries` | `2` | Maximum automatic repair passes per `_level-*` when retries are enabled |
 | `--refresh-people-index` | `false` | Force one atomic rebuild of Photo Filter's people index before the level prefetch |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
@@ -224,6 +226,15 @@ remain to refine. The target is an upper bound, so a mixed level may reduce the 
 level from above 10 to below 10. Omitting the option preserves unanimous stopping
 exactly as before. The option changes recursive stopping only; it does not alter the
 curatorial prompt or decision schema.
+
+With `--retry-needs-review`, a safe batch failure remains marked and unmoved, then
+only the held files are submitted again automatically. The default allowance is two
+repair passes after the ordinary pass, independently for each `_level-*`. The used
+allowance is recorded under that level's `.batch` directory before submission, so a
+process restart cannot silently replenish it. Override the limit with
+`--needs-review-retries N` (or `PHOTO_SELECT_NEEDS_REVIEW_RETRIES`). If the allowance
+is exhausted, the level stays blocked for human review. Omitting
+`--retry-needs-review` preserves the existing fail-closed behavior.
 
 ### Concurrency: `--workers` (recommended)
 

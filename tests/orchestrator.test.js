@@ -639,4 +639,106 @@ describe("cascade scheduler invariants", () => {
     const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
     expect(marker.trim()).toBe("");
   });
+
+  it("automatically retries a failed level up to twice without a manual restart", async () => {
+    const incomplete = JSON.stringify({
+      object: "response",
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [],
+    });
+    chatCompletion
+      .mockResolvedValueOnce(incomplete)
+      .mockResolvedValueOnce(incomplete)
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+      );
+
+    const result = await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    });
+
+    expect(result).toEqual({ blocked: false, blockedCount: 0 });
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
+    const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
+    expect(marker.trim()).toBe("");
+  });
+
+  it("retries only the failed batch and never resubmits classified files", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    let failedNames;
+    let singletonCalls = 0;
+    const seen = [];
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file)).sort();
+      seen.push(names);
+      if (names.length === 1) {
+        singletonCalls += 1;
+        failedNames = names;
+        if (singletonCalls === 1) {
+          return JSON.stringify({
+            object: "response",
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output: [],
+          });
+        }
+      }
+      return JSON.stringify({ keep: [], aside: names });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 1,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    });
+
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toEqual(failedNames);
+    expect(seen[2]).toHaveLength(1);
+    expect(seen[0].some((name) => seen[2].includes(name))).toBe(false);
+  });
+
+  it("persists the two-retry allowance so a restart cannot reset it", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    chatCompletion.mockResolvedValue(
+      JSON.stringify({
+        object: "response",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+      })
+    );
+
+    const options = {
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    };
+    const first = await triageDirectory(options);
+    const second = await triageDirectory(options);
+
+    expect(first).toEqual({ blocked: true, blockedCount: 2 });
+    expect(second).toEqual({ blocked: true, blockedCount: 2 });
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    expect(
+      warnSpy.mock.calls.some(([message]) => message.includes("exhausted (2/2)"))
+    ).toBe(true);
+  });
 });
