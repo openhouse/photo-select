@@ -1,28 +1,28 @@
 {
   "schemaVersion": 1,
   "feature": "github-tools-during-curation",
-  "ready": false,
+  "ready": true,
   "gates": {
     "implementation": "passed",
-    "exactCommand": "rerunning-after-base-merge",
-    "privateGithubDuringCuration": "rerunning-after-base-merge",
+    "exactCommand": "passed",
+    "privateGithubDuringCuration": "passed",
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending-merged-candidate"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The first installed-command canary passed. PR CI correctly detected newer base-branch production bytes; those commits are now merged and live acceptance is being repeated before renewing readiness.",
+  "note": "All technical acceptance gates passed after integrating the current PR base. The renewed live receipt binds production source/prompt files by SHA-256; evals reject stale evidence. Editorial usefulness and exhaustive coverage remain unmeasured.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "ciEvidence": {
-    "implementationCommit": "25a8fc2205b446619db9bd70b0257642306d984a",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34515955608",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34515958860",
+    "implementationCommit": "94a862b4e3950351c77a3377b458a4f03a5f4dc4",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34516979748",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34516984739",
     "conclusion": "success"
   }
 }
