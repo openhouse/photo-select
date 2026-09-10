@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "scope": "synthetic-reference-only",
+  "scope": "synthetic-reference-and-traces-only",
   "candidate": {
-    "sha256": "47a4f75d54805424b1b8518a8d8e425773a097d5a007ce0d5a144a225e826094",
-    "files": 113
+    "sha256": "ad9f1f201661a065bc7fc1e9d06aff2c99cfe1109bf5645a2f02a87c9559c84e",
+    "files": 116
   },
-  "passed": 32,
+  "passed": 64,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,
@@ -14,5 +14,5 @@
   "json_validity_rate": null,
   "retry_recovery_rate": null,
   "usefulness": "unmeasured",
-  "limitation": "Descriptors are assumed verified by a future adapter; no authentication, real retrieval, model resistance, or consent is certified."
+  "limitation": "Synthetic context and live-exploration traces assume verified descriptors; no authentication, real retrieval, model resistance, or consent is certified."
 }

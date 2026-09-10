@@ -583,4 +583,4 @@ Now everything—random choice, conversation, and file moves—happens automatic
 
 ## Private knowledge context proposal
 
-[RFC 0011](docs/rfcs/0011-private-knowledge-context.md) proposes scoped GitHub knowledge access for ChatGPT and Photo Select. The [close reading](docs/reviews/2026-09-09-knowledge-ecosystem.md) explains the source architecture and curatorial purpose. Run `npm run evals:knowledge` for its synthetic contract tests or `npm run hillclimb` for the full regression gate. No private-access adapter is enabled by this proposal.
+[RFC 0011](docs/rfcs/0011-private-knowledge-context.md) proposes scoped GitHub knowledge access for ChatGPT and Photo Select. The [close reading](docs/reviews/2026-09-09-knowledge-ecosystem.md) explains the source architecture and curatorial purpose. [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md) proposes model-led live exploration through a local GitHub adapter, with a source receipt produced after research. Run `npm run evals:knowledge` for both proposals' synthetic contract tests or `npm run hillclimb` for the full regression gate. No private-access adapter is enabled by this proposal.

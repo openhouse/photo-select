@@ -11,6 +11,8 @@
 
 ## Purpose and decision
 
+[RFC 0012](0012-live-knowledge-exploration.md) supersedes the packet-first rollout sequence below for proposed live exploration. Its model-led research step requires no prepared packet; the shared source and privacy contracts in this RFC still apply.
+
 Give Jamie's LLM curators access to the depth of his authorized private understanding across GitHub knowledge repositories. A photograph belongs to a field of utterances, institutions, histories, relationships, disagreements, and artistic choices. Context should help the curator ask better questions of the image, preserve competing accounts, and recognize what the photograph contributes beyond its caption.
 
 Propose a read-only knowledge broker with a private repository registry, source-specific adapters, and frozen context packets. ChatGPT and Photo Select can consume the same source references through different clients. Any authorized knowledge repository can participate; the registry is extensible and does not hard-code an event or repository family. Deep source passages may enter private reasoning when their scope allows it. Public-safe summaries are not the ceiling of private understanding.
