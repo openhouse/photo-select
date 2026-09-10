@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "scope": "synthetic-reference-only",
   "candidate": {
-    "sha256": "6940211d01b6d031902539a2c50a99f00c9680574c086734d37dbf06dd38ef02",
+    "sha256": "47a4f75d54805424b1b8518a8d8e425773a097d5a007ce0d5a144a225e826094",
     "files": 113
   },
-  "passed": 31,
+  "passed": 32,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,

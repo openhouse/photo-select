@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { planKnowledgeContext } from '../src/core/knowledgeContext.js';
 
 const sha = text => createHash('sha256').update(text).digest('hex');
@@ -43,6 +44,10 @@ const failures = [
 ];
 
 describe('RFC 0011 synthetic context contract (not an authentication boundary)', () => {
+  it('keeps runtime context and image caches out of Git without global ignores', () => {
+    const result = spawnSync('git', ['-c', 'core.excludesFile=/dev/null', 'check-ignore', '--no-index', '.cache/synthetic-response.json']);
+    expect(result.status).toBe(0);
+  });
   it('retains two conflicting voices with exact citations and private output', () => {
     const out = planKnowledgeContext(fixture());
     expect(out.status).toBe('ready');
