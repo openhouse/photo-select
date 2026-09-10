@@ -107,3 +107,17 @@ it('records completed discovery without invoking the model or copying photos',as
   expect(respond).not.toHaveBeenCalled();expect(await fs.readdir(run.images)).toEqual([]);
  } finally {await fs.rm(root,{recursive:true,force:true});}
 });
+
+
+describe('grouped source citations observed in the live canary',()=>{
+ for(const [label,citation,valid] of [['valid group','[source-1, source-2]',true],['invented grouped ID','[source-1, source-invented]',false]]) {
+  it(label,async()=>{
+   const json={minutes:[{speaker:CURATORS[0],text:'A source-qualified account [source-1]. What next?'}],decisions:[{filename:'a.jpg',decision:'keep',reason:citation}]};
+   const save=vi.fn();
+   const provider=new LiveKnowledgeProvider({context:{id:'fixture',records:[{id:'source-1'},{id:'source-2'}]},respond:async()=>({output_text:JSON.stringify(json)}),assertCurrent:async()=>{},encodeImage:async()=>Buffer.from('fixture'),save});
+   const response=provider.chat({model:'gpt-4o',images:['a.jpg'],minutesMin:1,minutesMax:8});
+   if(valid) {await expect(response).resolves.toHaveProperty('json',json);expect(save).toHaveBeenCalledTimes(1);}
+   else {await expect(response).rejects.toThrow();expect(save).not.toHaveBeenCalled();}
+  });
+ }
+});

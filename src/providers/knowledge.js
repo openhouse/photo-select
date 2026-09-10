@@ -36,7 +36,8 @@ export class LiveKnowledgeProvider {
           json=JSON.parse(response.output_text);
           validateCuration(json,filenames);
           if(json.minutes.length<schema.properties.minutes.minItems || json.minutes.length>schema.properties.minutes.maxItems) throw knowledgeError('Minutes count is outside the requested range.');
-          const cites=[...JSON.stringify(json).matchAll(/\[(source-[\w-]+)\]/g)].map(m=>m[1]);
+          const texts=[...json.minutes.map(m=>m.text),...json.decisions.map(d=>d.reason)];
+          const cites=texts.flatMap(text=>[...text.matchAll(/\[[^\]]*\]/g)].flatMap(m=>m[0].match(/source-[\w-]+/g)||[]));
           if(!cites.length || cites.some(id=>!this.ids.has(id))) throw knowledgeError('Curation citations are missing or invalid.');
         } catch(error) { if(attempt) throw error; else continue; }
           await this.assertCurrent();

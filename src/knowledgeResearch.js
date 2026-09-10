@@ -6,7 +6,7 @@ export const KNOWLEDGE_TOOLS=[
 ];
 export async function researchKnowledge({github,catalog,brief,model,respond,save=async()=>{},signal,scope={},maxTurns=16,maxToolCalls=32,maxTokens=60000,maxContextBytes=220000,maxMilliseconds=300000}) {
   const started=Date.now(), input=[{role:'user',content:JSON.stringify({brief,catalog})}], trace=[];
-  let tokens=0,calls=0; const callIds=new Set();
+  let tokens=0,calls=0,readReminder=false,idReminder=false; const callIds=new Set();
   const check=()=>{if(signal?.aborted||Date.now()-started>maxMilliseconds) throw knowledgeError('Research cancelled or timed out.');};
   try {
     for(let turn=0;turn<maxTurns;turn++) {
@@ -19,6 +19,13 @@ export async function researchKnowledge({github,catalog,brief,model,respond,save
       input.push(...(response.output||[]));
       const requests=(response.output||[]).filter(x=>x.type==='function_call');
       if(!requests.length) {
+        if(response.output_text?.trim()&&!github.readRecords.length&&!readReminder&&trace.some(t=>t.tool==='knowledge_search'&&t.result?.items?.length)) {
+          readReminder=true;
+          input.push({role:'user',content:'Search excerpts are discovery only. Before finishing, call knowledge_read for the relevant issued source IDs so the receipt contains full source bodies. Follow the original brief; do not substitute more searches for reading.'});
+          trace.push({event:'read-required',reason:'The model attempted to finish after search without fetching evidence.'});
+          await save({status:'researching',trace,input,tokens,toolCalls:calls});
+          continue;
+        }
         if(!response.output_text?.trim()||!github.readRecords.length) throw knowledgeError('Research finished without fetched evidence.');
         await github.assertCurrent();
         const frozen={version:1,scope,subject:github.subject,model,brief,summary:response.output_text,records:github.readRecords,catalog:[...github.catalog],coverage:[...github.coverage],tokens,toolCalls:calls,trust:'untrusted-source-data',publication:'held'};
@@ -33,7 +40,13 @@ export async function researchKnowledge({github,catalog,brief,model,respond,save
         const args=JSON.parse(call.arguments);
         const allowed=call.name==='knowledge_search'?['repositoryId','query','cursor']:['sourceId'];
         if(!args||Object.keys(args).some(k=>!allowed.includes(k))) throw knowledgeError('Research tool arguments are invalid.');
-        const output=call.name==='knowledge_search'?await github.search(args):await github.read(args);
+        let output;
+        const issued=trace.some(t=>t.tool==='knowledge_search'&&t.result?.items?.some(item=>item.id===args.sourceId));
+        if(call.name==='knowledge_read'&&!issued) {
+          if(idReminder) throw knowledgeError('Unknown source ID.');
+          idReminder=true;
+          output={error:'unknown_source_id',message:'Call knowledge_search with a repositoryId from the catalog first. Then pass an id from its returned items to knowledge_read. Repository IDs and filenames are not source IDs.'};
+        } else output=call.name==='knowledge_search'?await github.search(args):await github.read(args);
         trace.push({callId:call.call_id,tool:call.name,args,result:output});
         input.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(output)});
         await save({status:'researching',trace,input,tokens,toolCalls:calls});

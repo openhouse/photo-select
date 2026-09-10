@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Implemented opt-in local mode; private-source API canary pending |
+| Status | Implemented opt-in local mode; bounded private-source API canary passed |
 | Decision owner | Jamie Burkart |
 | Author | Jamie Burkart with Codex |
 | Created | 2026-09-09 |

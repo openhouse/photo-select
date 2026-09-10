@@ -138,3 +138,62 @@ describe('live adapter pressure tests',()=>{
     await expect(github.read({sourceId:hits.items[0].id})).rejects.toThrow();
   });
 });
+
+
+describe('observed search-only premature completion',()=>{
+  async function setup(readAfterReminder,{maxTurns=8}={}) {
+    const github=new KnowledgeGithub({request:apiFixture()}),catalog=await github.discover(),saved=[];
+    const respond=vi.fn(async request=>{
+      const turn=respond.mock.calls.length;
+      if(turn===1) return {output:[{type:'function_call',call_id:'search',name:'knowledge_search',arguments:JSON.stringify({repositoryId:catalog[0].id,query:'speaker',cursor:null})}],usage:{total_tokens:10}};
+      if(turn===3&&readAfterReminder) {
+        expect(request.input.at(-1).content).toContain('knowledge_read');
+        const hit=JSON.parse(request.input.find(x=>x.type==='function_call_output').output).items[0];
+        return {output:[{type:'function_call',call_id:'read',name:'knowledge_read',arguments:JSON.stringify({sourceId:hit.id})}],usage:{total_tokens:10}};
+      }
+      return {output:[],output_text:'A source-qualified account.',usage:{total_tokens:10}};
+    });
+    const run=researchKnowledge({github,catalog,brief:'Read the sources',model:'gpt-4o',respond,save:async x=>saved.push(x),maxTurns});
+    return {run,respond,saved};
+  }
+  it('requires a full read after search-only completion and records one bounded correction',async()=>{
+    const {run,respond,saved}=await setup(true);const context=await run;
+    expect(respond).toHaveBeenCalledTimes(4);expect(context.records).toHaveLength(1);expect(context.tokens).toBe(40);
+    expect(saved.some(x=>x.trace.some(t=>t.event==='read-required'))).toBe(true);
+    expect(saved.at(-1).status).toBe('ready');
+  });
+  it('holds when the model ignores the single read correction',async()=>{
+    const {run,respond,saved}=await setup(false);await expect(run).rejects.toThrow(/without fetched evidence/);
+    expect(respond).toHaveBeenCalledTimes(3);expect(saved.at(-1).status).toBe('held');
+  });
+  it('does not extend the turn budget for the correction',async()=>{
+    const {run,respond}=await setup(true,{maxTurns:2});await expect(run).rejects.toThrow(/budget/);
+    expect(respond).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe('unissued source ID correction',()=>{
+  it('explains an unissued ID once, then permits search and an actual issued read',async()=>{
+    const github=new KnowledgeGithub({request:apiFixture()}),catalog=await github.discover(),requests=[];
+    const read=vi.spyOn(github,'read');
+    const respond=async request=>{
+      requests.push(request);const turn=requests.length;
+      if(turn===1) return {output:[{type:'function_call',call_id:'wrong',name:'knowledge_read',arguments:JSON.stringify({sourceId:catalog[0].id})}],usage:{total_tokens:10}};
+      if(turn===2) {
+        expect(JSON.parse(request.input.at(-1).output).error).toBe('unknown_source_id');
+        return {output:[{type:'function_call',call_id:'search',name:'knowledge_search',arguments:JSON.stringify({repositoryId:catalog[0].id,query:'',cursor:null})}],usage:{total_tokens:10}};
+      }
+      if(turn===3) return {output:[{type:'function_call',call_id:'read',name:'knowledge_read',arguments:JSON.stringify({sourceId:JSON.parse(request.input.at(-1).output).items[0].id})}],usage:{total_tokens:10}};
+      return {output:[],output_text:'Read and attributed.',usage:{total_tokens:10}};
+    };
+    const context=await researchKnowledge({github,catalog,brief:'event',model:'gpt-4o',respond});
+    expect(context.records).toHaveLength(1);expect(read).toHaveBeenCalledTimes(1);expect(context.toolCalls).toBe(3);
+  });
+  it('holds a repeated unissued ID without attempting any source read',async()=>{
+    const github=new KnowledgeGithub({request:apiFixture()}),catalog=await github.discover(),read=vi.spyOn(github,'read');let calls=0;
+    const respond=async()=>({output:[{type:'function_call',call_id:String(++calls),name:'knowledge_read',arguments:JSON.stringify({sourceId:catalog[0].id})}],usage:{total_tokens:10}});
+    await expect(researchKnowledge({github,catalog,brief:'event',model:'gpt-4o',respond})).rejects.toThrow(/Unknown source ID/);
+    expect(calls).toBe(2);expect(read).not.toHaveBeenCalled();
+  });
+});
