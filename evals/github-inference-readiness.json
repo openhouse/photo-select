@@ -3,17 +3,19 @@
   "feature": "github-tools-during-curation",
   "ready": false,
   "gates": {
-    "implementation": "blocked-by-automatic-approval-review",
-    "exactCommand": "not-implemented",
-    "privateGithubDuringCuration": "blocked-by-automatic-approval-review",
+    "implementation": "passed",
+    "exactCommand": "live-verification-in-progress",
+    "privateGithubDuringCuration": "live-verification-in-progress",
     "batchWithImagesAndTools": "passed",
-    "credentialSinks": "not-implemented",
-    "workers20": "not-implemented",
-    "ci": "no-implementation-candidate"
+    "credentialSinks": "passed",
+    "workers20": "passed",
+    "ci": "pending-implementation-candidate"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The revised RFC requires model-directed GitHub reads inside the image-curation response. Existing knowledge-live research runs before curation and does not satisfy this feature.",
+  "note": "Private-tunnel implementation is installed. No GitHub credential is forwarded to OpenAI. Readiness awaits source-text delivery in the final installed-command canary and CI.",
   "batchEvidence": "evals/probes/2026-09-10-public-mcp-batch.json",
-  "batchEvidenceScope": "Public MCP tool plus synthetic image, requested model/high effort/twelve voices; authenticated GitHub remains a separate unmet gate."
+  "batchEvidenceScope": "Public MCP tool plus synthetic image, requested model/high effort/twelve voices; authenticated GitHub remains a separate unmet gate.",
+  "transport": "private-tunnel",
+  "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image."
 }

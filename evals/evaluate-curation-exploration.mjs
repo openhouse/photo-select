@@ -15,12 +15,17 @@ export function evaluateCurationExploration(trace) {
   if(trace.privateOutput!==true)fail('private-output');
   const tools=(request.tools||[]).filter(x=>x.type==='mcp'&&x.server_label==='github');
   if(!tools.length)fail('same-request-tools');
-  for(const tool of tools)if(tool.server_url!=='https://api.githubcopilot.com/mcp/readonly'||!Array.isArray(tool.allowed_tools)||!tool.allowed_tools.length||tool.allowed_tools.some(t=>!READ_TOOLS.has(t)))fail('read-only');
+  for(const tool of tools){
+    const transport=trace.transport==='private-tunnel'
+      ? /^tunnel_[a-f0-9]{32}$/.test(tool.tunnel_id||'')&&!tool.server_url&&!tool.authorization&&trace.githubCredentialDestination==='github-only'&&trace.bridgeReadOnly===true
+      : tool.server_url==='https://api.githubcopilot.com/mcp/readonly';
+    if(!transport||!Array.isArray(tool.allowed_tools)||!tool.allowed_tools.length||tool.allowed_tools.some(t=>!READ_TOOLS.has(t)))fail('read-only');
+  }
   const parts=(Array.isArray(request.input)?request.input:[]).flatMap(x=>Array.isArray(x.content)?x.content:[]);
   if(!parts.some(x=>x.type==='input_image'))fail('same-request-images');
   const input=JSON.stringify(request.input);
   if((trace.sourceBodies||[]).some(body=>input.includes(body)))fail('precollected-source');
-  const stripped={...request,tools:(request.tools||[]).map(({authorization,...tool})=>tool)};
+  const stripped=trace.transport==='private-tunnel'?request:{...request,tools:(request.tools||[]).map(({authorization,...tool})=>tool)};
   const sinks=JSON.stringify([stripped,response,trace.artifacts]);
   if((trace.secrets||[]).some(secret=>secret&&sinks.includes(secret)))fail('credential-leak');
   if(trace.cleanup!=='deleted')fail('credential-retention');

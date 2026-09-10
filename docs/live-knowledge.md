@@ -1,79 +1,71 @@
-# Use research-first knowledge mode
+# Read GitHub during photo curation
 
-**This mode researches before image curation. It does not provide GitHub tools inside the curatorial API call.** The requested `--github-all` feature is not implemented or installed. Its [revised RFC 0012](rfcs/0012-live-knowledge-exploration.md) and [readiness record](../evals/github-inference-readiness.json) explain the remaining work and current execution blocker.
+Add `--github-all` to your existing command. The curatorial model can follow private repository links, search other accessible repositories, inspect branches and read source text **during the same Responses API call that contains your photographs**. No research pass or source packet runs beforehand.
 
-The earlier private-source canary verified this research-first sequence only. Do not use it as evidence that the corrected feature is ready.
-
-To use the existing research-first mode from this worktree, run:
+Your current Mac is configured: the GitHub login and OpenAI key are reused, OpenAI's tunnel client is installed, and the tunnel ID is saved in local Git configuration. The existing launcher routes this flag to `work/2026-09-09-knowledge`.
 
 ```sh
-npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "My DCLA / Brooklyn Arts Council listening-event project"
+PHOTO_SELECT_MAX_OLD_SPACE_MB=32768 \
+/Volumes/16TB_SSD/Sites/photo-select/photo-select-here.sh \
+  --github-all \
+  --provider openai-batch \
+  --model gpt-5.6-terra \
+  --reasoning-effort high \
+  --workers 20 \
+  --verbose \
+  --curators "Prof. Ingeborg Gerdes, Prof. Margaret Morse, Prof. Warren Sack, Lilli Carré, Jonas Mekas, Zora Neale Hurston, Peter Weibel, Bruno Latour, Ken Burns, Vivian Gornick, MM Bakhtin, Deborah Treisman" \
+  --context "/Volumes/16TB_SSD/Photos/2026-04-09/merge-02/NYC Open Data Week 2026/project-overview.txt"
 ```
 
-The GitHub CLI uses your existing login. Photo Select uses the existing OpenAI key from your environment or the original checkout's `.env`. The command requires no copied key, prepared packet, or repository list. An existing `--context` file can supplement the inline brief. Your configured model is retained; `--model` can override it explicitly.
+Run it from the image directory as before. Put relevant GitHub URLs and the photographic question in your context file. An inline `--knowledge-brief "..."` can supplement or replace that file. Your explicit curator names remain fixed throughout the session and repairs. Without `--curators`, the four default curator names apply. All voices are fictionalized lenses.
 
-## What happens
+## What the flag does
 
-1. Photo Select creates a private run directory and copies eligible top-level images from the source folder into that run. It preserves the originals. Existing keep/aside subdirectories are not imported into a fresh run.
-2. It inventories your owned repositories, including private ones, with complete pagination. Knowledge-related names, topics, descriptions, and explicit inclusions identify the initial catalog. Reading links can add other owned repositories. New unrelated names without these signals may require a `knowledge-wiki` topic or an inclusion entry.
-3. It ranks branch heads by commit date, with a stable name tie-break. The newest branch, up to two nearby alternatives, and the default branch remain separate snapshots. The private catalog records every selected full commit and the number of other branches. An explicit branch override takes precedence.
-4. The research model searches and reads source passages, follows graph references, and asks further questions. Instructions preserve semantic relationships, evidence, source custody, source voices, corrections, dissent, and uncertainty. Sources remain untrusted data and cannot add tools or grant permissions.
-5. The curator team receives the recorded evidence alongside images. Each response must preserve the fixed fictional curator roster, valid source citations, and the exact filename set. A format failure gets one repair using identical evidence.
-6. Responses and field notes are committed together in a private local Git repository with no configured remote. The existing photo-selection algorithm operates on the copies.
+The launcher starts a private tunnel and a local GitHub read-only bridge. The model chooses tools inside its image-curation request; the bridge performs the requested reads using your GitHub login. Source text returns through the tunnel as tool results. GitHub credentials go only to GitHub, never into the OpenAI request, Batch file, prompt or audit record. The existing OpenAI key authenticates the OpenAI API and tunnel.
 
-Runs on an external volume default to `/Volumes/<volume>/.photo-select/runs/`. Other runs use `~/.photo-select/runs/`. The command prints the actual directory. It contains `catalog.json`, `research.json`, `corpus.json`, curation JSON files, `field-notes.md`, a private runtime log, and `images/` with the resulting selections. Private directories use mode 0700. Credentials do not enter the catalog, prompt, or receipt.
+The scope is everything the active GitHub credential can read, including public, private, collaborator and organization repositories. Discovery has no fixed repository catalog, owner restriction or knowledge/wiki naming rule. New repositories and branches are available on subsequent tool calls. GitHub API permissions, organization SSO and rate limits still govern access.
 
-The normal application command keeps its existing behavior when live mode is omitted. Live mode currently supports OpenAI through the Responses API and uses the fixed source-aware prompt. Field notes are compiled from validated replies; they do not require another model request. Live responses are not reused from disk caches.
+The prompt directs the team to follow relevant links, inspect branch heads and commit dates, prefer commit-pinned reads, preserve competing editions and qualify incomplete coverage. This is model-directed exploration, not an exhaustive crawler. A recent branch is not automatically adopted or authoritative. The private trace shows what was actually read.
 
-## Inspect discovery or research separately
+The bridge exposes only selected read tools that GitHub also marks read-only. It blocks writes, arbitrary URLs/commands, credential-file reads, credential-like output and unsupported binary resources. Embedded text resources are converted to explicit text so the API receives file contents, not merely a download notice. Individual GitHub responses are bounded at 8 MB and 60 seconds; each curation attempt permits up to 32 tool calls.
 
-```sh
-node src/index.js --knowledge-discover
-npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "Project context" --knowledge-research-only
-```
+## Where the edit goes
 
-Discovery makes no OpenAI request and copies no images. Research-only mode saves the source record and stops before image curation. These modes still need a readable source directory; it defaults to the current directory.
+Photo Select copies supported top-level images to a new private run and performs the usual selection algorithm there. Originals remain in place. Existing keep/aside subdirectories are not imported into a fresh run.
 
-## Optional private profile
+The printed run path is on the source external volume at `/Volumes/<volume>/.photo-select/runs/`, or under `~/.photo-select/runs/` for other source directories. It contains:
 
-Use `--knowledge-live /private/path/profile.json` when you need exceptions. Keep the profile outside public repositories.
+- `images/`: working copies and the resulting selections.
+- `session.json` and `corpus.json`: mode, roster, source-image hashes and settings.
+- `curation-*.json`: exact requests, returned tool traces, validated replies, source refs, token usage and repair history.
+- `field-notes.md`: the attributed curatorial discussion and decisions.
+- `batch-*.json`: remote Batch/file IDs, status and cleanup receipts.
+- `runtime.log`: private operational output.
 
-```json
-{
-  "include": ["your-account/new-research-repo"],
-  "exclude": ["your-account/unrelated-private-repo"],
-  "branches": {"your-account/new-research-repo": "work/selected-branch"},
-  "brief": "The project's research question",
-  "runRoot": "/Volumes/YourDrive/private-photo-runs",
-  "maxTurns": 16,
-  "maxToolCalls": 32,
-  "maxTokens": 60000,
-  "maxRequests": 2000,
-  "maxMilliseconds": 300000
-}
-```
+The run uses private filesystem permissions. Each response and updated field notes are committed together in a local Git repository with no remote; concurrent workers serialize those commits. The application does not publish the output. Source access does not establish consent, identity or publication rights.
 
-The automatic scope is the signed-in account's owned repositories. Inclusion does not grant access to another owner's repository. Exclusions apply to both initial discovery and linked repositories. Profile changes hold an active run. A repository can add a `.photo-select-knowledge.json` file at its selected branch root to narrow this access:
+## Batch and interruption
 
-```json
-{
-  "enabled": true,
-  "paths": ["wiki/", "docs/", "README.md"],
-  "exclude": ["wiki/held/"],
-  "purposes": ["photo-reading"],
-  "providers": ["openai"],
-  "revision": "1"
-}
-```
+Keep this Mac awake, online and attached to the drive until the command finishes. The application keeps the tunnel running while Batch waits and executes, then stops it. Batch may queue work for up to its 24-hour completion window; reads happen when the model runs. `--provider openai` also supports the same tools for synchronous Responses calls. The application never silently changes provider, model or tool availability.
 
-`enabled: false` prevents reading that repository's source bodies. Paths are literal files or directory prefixes, not globs. This policy narrows the account/profile scope; it cannot widen it. Other repository-specific source conventions remain attributable source data, not universal permission grants.
+Batch requests are uploaded from memory. The temporary remote input and output files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation starts a fresh private edit rather than replaying a partial conversation.
 
-## Limits and recovery
+A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing schema and citation checks does not establish editorial quality or citation entailment.
 
-Search scans bounded pages of permitted text at pinned commits. The initial reader supports Markdown, text, JSON/JSONL, YAML, CSV, and JavaScript/TypeScript source files up to 64 KB each. It excludes hidden paths, dependency/build directories, common credential paths, symlinks, submodules, binary bodies, and credential-like text. Large graph exports and external custody links can remain unresolved; inspect coverage before interpreting a missing result as absence.
+## Setup on another machine
 
-The application stops when a used branch, account, permission, or profile changes; when a tree is truncated; when an explicit source policy denies access; or when a model reply violates the contract. Budgets include model tokens and tool turns; cancellation and deadlines stop further research. The research loop permits one correction for confusing repository IDs with source IDs, and one reminder when it tries to finish after search without reading full sources. Both remain inside the original budgets; repeated mistakes hold the run. A stopped research run retains its partial receipt. Start the same command again to discover a fresh revision. Automatic replay of partial model conversations is deferred.
+This setup is already complete on Jamie's current Mac. For a new installation:
 
-Private access does not establish consent, identify a photographed person, or authorize publication. Review the source record and the resulting edit before choosing any external audience. Authenticated private reads, a synthetic-data OpenAI canary, and a user-approved combined private-source-to-OpenAI canary have passed. The combined test used two exact reviewed passages and a synthetic image; it required one curation format repair. This verifies the technical path within that scope. It does not establish editorial quality or broad prompt-injection resistance.
+1. Sign in with `gh auth login` and supply the usual `OPENAI_API_KEY` in the environment or original checkout's `.env`.
+2. Install the official client: `brew install openai/tools/tunnel-client`.
+3. Create a tunnel in [OpenAI Platform](https://platform.openai.com/settings/organization/tunnels) associated with the API key's organization. The runtime principal needs Tunnels Read + Use. Save its ID locally: `git config --local photoSelect.githubTunnelId tunnel_YOUR_ID`.
 
-Run `npm run hillclimb` for the full offline regression suite and `npm run evals:knowledge` for focused contracts and implementation cases. See [RFC 0012](rfcs/0012-live-knowledge-exploration.md) for architecture and the [hill-climb record](reviews/2026-09-09-knowledge-hillclimb.md) for observed failures and corrections.
+You can instead set `PHOTO_SELECT_GITHUB_TUNNEL_ID`. The ID is a locator, not a credential. Do not paste a GitHub token into an OpenAI tool authorization field. The application supplies the local bridge command and starts/stops the tunnel automatically. See [OpenAI's tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) for organization permissions.
+
+For a development worktree, point the launcher at it with `git config --local photoSelect.knowledgeCheckout /absolute/path/to/worktree`. The configured worktree must remain available. Calls without `--github-all` use the original checkout.
+
+## Verification and the older mode
+
+Run `npm run hillclimb`. The [readiness record](../evals/github-inference-readiness.json) separates live acceptance evidence from offline tests; [the review log](reviews/2026-09-09-knowledge-hillclimb.md) records observed failures and fixes. [RFC 0012](rfcs/0012-live-knowledge-exploration.md) defines the architecture.
+
+The older [`--knowledge-live` mode](research-first-knowledge.md) researches first and passes frozen evidence into a later curation call. It remains available separately and cannot be combined with `--github-all`.

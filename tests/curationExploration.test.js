@@ -49,3 +49,8 @@ describe('RFC 0012 corrected contract: synthetic API-end curation traces',()=>{
   const status=JSON.parse(readFileSync('evals/github-inference-readiness.json','utf8'));expect(status.ready).toBe(false);expect(evaluateGithubReadiness(status.gates)).not.toHaveLength(0);
  });
 });
+it('accepts a private-tunnel trace only with local GitHub credentials and a read-only bridge',()=>{
+ const x=fixture();x.transport='private-tunnel';x.githubCredentialDestination='github-only';x.bridgeReadOnly=true;delete x.request.tools[0].authorization;delete x.request.tools[0].server_url;x.request.tools[0].tunnel_id='tunnel_'+'a'.repeat(32);expect(evaluateCurationExploration(x)).toEqual([]);
+ x.request.tools[0].authorization=secret;expect(evaluateCurationExploration(x)).toContain('credential-leak');expect(evaluateCurationExploration(x)).toContain('read-only');delete x.request.tools[0].authorization;
+ x.bridgeReadOnly=false;expect(evaluateCurationExploration(x)).toContain('read-only');
+});

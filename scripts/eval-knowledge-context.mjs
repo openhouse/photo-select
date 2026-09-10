@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = 'evals/reports/knowledge-context.json';
-const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js'];
+const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js'];
 function fingerprint() {
   const files = [...new Set(execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(p => p && p !== reportPath).sort();
@@ -21,7 +21,10 @@ try {
   const before = fingerprint();
   const jsonPath = path.join(scratch, 'vitest.json');
   const run = spawnSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...testFiles, '--maxWorkers=2', '--minWorkers=2', '--reporter=json', `--outputFile=${jsonPath}`], { cwd: root, encoding: 'utf8' });
-  if (run.error || run.status !== 0) throw new Error('Focused eval failed; run npm test -- tests/knowledgeContext.test.js tests/liveExploration.test.js for diagnostics.');
+  if (run.error || run.status !== 0) {
+    console.error((run.stderr || run.stdout || String(run.error)).slice(-6000));
+    throw new Error('Focused eval failed; inspect the failing suite above.');
+  }
   const result = JSON.parse(readFileSync(jsonPath, 'utf8'));
   if (testFiles.some(file => !result.testResults.some(suite => path.resolve(suite.name) === path.join(root, file)))) throw new Error('An expected eval suite did not run.');
   if (result.numTotalTests < 1 || result.numFailedTests || result.numPendingTests || result.numTodoTests) throw new Error('Incomplete eval result.');

@@ -103,3 +103,23 @@ The subsequent public MCP plus image canary passed through actual Batch on `gpt-
 A direct request to GitHub's own read-only MCP endpoint also succeeded using the existing CLI login, returning 28 tools marked read-only. The GitHub credential was sent only to GitHub, never to OpenAI. An explicit allowlist remains necessary because the default read-only toolset includes operations such as secret scanning that the curatorial feature does not need.
 
 The full offline regression run passed 318 tests across 36 suites and 137 focused checks before these final evidence-documentation updates. The final candidate receipt is regenerated after the updates; it continues to report the corrected feature as not ready. No production source or launcher change is included in this correction.
+
+## 2026-09-10 — Private tunnel implementation
+
+After Jamie approved a retry, automatic approval review again rejected forwarding a GitHub credential to OpenAI and stated that the approval could not override its restriction. No token was forwarded. Jamie then signed in to OpenAI Platform for the alternative private-tunnel route. An OHAI tunnel was created and the official Homebrew tunnel client installed. The local bridge sends the GitHub token only to GitHub; the curatorial API request contains a tunnel ID.
+
+The new `--github-all` path attaches tools to the actual image-curation Responses call, supports Batch without a Chat Completions fallback, preserves the explicit curator roster, starts/stops the tunnel automatically, and records private results with serialized Git commits. The existing launcher routes the opt-in flag to this worktree. Version 1.0.0 records the session-roster and private JSON/Git provenance contract changes. The selection algorithm remains unchanged.
+
+| Observed failure | Bounded change | Verification |
+| --- | --- | --- |
+| Missing provider/Batch modules and no launcher routing | Add isolated tunnel provider, full Responses transport and opt-in launcher | New tests failed before implementation; then passed. |
+| Twenty workers could otherwise collide on audit filenames/Git locks | Serialize private response/field-note writes | Twenty simultaneous saves produce twenty distinct atomic commits with no remote. |
+| First live tunnel probe reported completed tools but only an 81-byte download notice | Convert GitHub embedded resources into text | The resource regression first failed, then passed. This probe is not counted as source-text acceptance. |
+| Installed-command canary still received only the first text block | Join every returned source text into one MCP text block | The single-block regression failed before the correction. |
+| Valid commit-pinned citation was rejected because GitHub used `sha`, not `ref` | Bind file citation provenance to either supported argument | The immutable-citation regression first failed, then passed. |
+| Forced shutdown could lose remote Batch/file IDs | Save private lifecycle receipts before polling and after cleanup | The receipt regression first failed, then passed; cancellation and submission-failure cleanup also pass. |
+| Encoded credential paths bypassed the initial path check | Decode bounded encoding layers and normalize separators | Four adversarial cases first failed and now hold before GitHub execution. |
+
+The complete local regression suite and focused evals pass after these changes. Live source-text acceptance is recorded separately after the installed-command rerun. The synthetic image canary does not measure source recall, editorial usefulness, citation entailment or broad model resistance. Twenty-worker concurrency is exercised deterministically; a one-image live run cannot establish twenty simultaneous paid curations.
+
+The aggregate PR remains above the repository change-size thresholds. Required review marker: `--mechanical`; the changes require substantive review. No auto-merge or deployment is performed.

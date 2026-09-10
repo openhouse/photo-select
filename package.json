@@ -1,6 +1,6 @@
 {
   "name": "photo-select",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
   "type": "module",
   "bin": {

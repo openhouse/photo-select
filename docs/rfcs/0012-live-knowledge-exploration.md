@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Revised requirement accepted; implementation and authenticated acceptance check blocked; not ready to use |
+| Status | Implemented through private MCP tunnel; acceptance tracked in the readiness record |
 | Decision owner | Jamie Burkart |
 | Author | Jamie Burkart with Codex |
 | Created | 2026-09-09 |
@@ -20,21 +20,23 @@ Jamie explicitly clarified this requirement on 2026-09-10 and authorized read ac
 
 ## Requested command and minimal application change
 
-The intended interface is one additional flag, `--github-all`, on Jamie's existing command. Preserve `--provider openai-batch`, `--model gpt-5.6-terra`, `--reasoning-effort high`, `--workers 20`, the exact `--curators` list, `--context`, and the caller's image directory. The installed `photo-select-here.sh` path must execute the feature without asking Jamie to switch worktrees or copy credentials. The flag is **not implemented or installed yet**; do not document this command as ready.
+The intended interface is one additional flag, `--github-all`, on Jamie's existing command. Preserve `--provider openai-batch`, `--model gpt-5.6-terra`, `--reasoning-effort high`, `--workers 20`, the exact `--curators` list, `--context`, and the caller's image directory. The installed `photo-select-here.sh` path must execute the feature without asking Jamie to switch worktrees or copy credentials. The flag is implemented and installed on Jamie's Mac. The [acceptance record](../../evals/github-inference-readiness.json) distinguishes completed checks from pending gates.
 
 Omitting the flag preserves the existing application path. Limit changes to request construction, authenticated read-only tool transport, private audit storage, the launcher, and the tests that exercise those boundaries. Retain the existing image-selection algorithm, filename whitelist, strict reply keys, and atomic response/field-note commits. No database, embeddings, index, materialized research packet, or separate research call is required.
 
-For this feature, the explicit CLI curator roster is the session's fixed voice registry. Use the existing default roster only when the user supplies none. Apply the same roster to prompts, schema validation, repair, recursive passes, and field notes. Adoption of that change must update AGENTS and the major package version because the current contract names an immutable default roster. This RFC does not claim that contract change has already been implemented.
+For this feature, the explicit CLI curator roster is the session's fixed voice registry. Use the existing default roster only when the user supplies none. Apply the same roster to prompts, schema validation, repair, recursive passes, and field notes. AGENTS and the major package version are updated to 1.0.0 for this session-registry change. Private JSON records and atomic Git history preserve provenance without adding a database.
 
 ## API mechanism
 
 Use a remote MCP tool attached directly to the curatorial Responses request. OpenAI's [MCP and Connectors guide](https://developers.openai.com/api/docs/guides/tools-connectors-mcp) documents server-side tool discovery and invocation, `server_url`, `authorization`, `allowed_tools`, and approval configuration. A URL in a prompt alone does not grant browsing, GitHub authentication, or any other tool capability; the application must attach the tool.
 
-The smallest hosted option is GitHub's official MCP service, using its `/mcp/readonly` endpoint and a narrow list of repository, branch, commit, file, search, and relevant issue/PR read tools. GitHub documents the [read-only endpoint](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md) and [authentication](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md). Both the server restriction and an explicit read-tool allowlist are required. Do not expose arbitrary shell, git execution, browser credentials, write operations, or an arbitrary authenticated URL fetcher.
+The implemented transport is a local read-only GitHub MCP bridge connected through [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels). The Responses MCP tool specifies `tunnel_id`, not `server_url` or GitHub `authorization`. The application starts the official tunnel client as a child process, waits for local readiness, and stops it on completion or cancellation. The saved tunnel and original OpenAI key are reused automatically.
 
-With the hosted option, an existing GitHub access token would be supplied as transport authorization to the MCP tool, never embedded in model instructions or source context. It would leave the local machine for OpenAI's tool orchestration and GitHub's service; describing this as credentials staying local would be false. OpenAI documents that Responses omits the `authorization` value from the response and does not store that field. This does **not** imply that a raw Batch input file containing it is credential-free.
+The model initiates GitHub tool calls inside its image-curation request. The local bridge resolves the existing GitHub credential from `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`; it sends that credential only to GitHub's fixed `https://api.githubcopilot.com/mcp/readonly` endpoint with redirects disabled. Selected tool names and GitHub's read-only annotations must both permit the call. No arbitrary authenticated fetch, shell, git execution or write tool is exposed.
 
-A private read-only MCP adapter through [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) is an alternative that can keep GitHub credentials at the GitHub-facing adapter. OpenAI would still initiate tools during the same curation call; it is not local research performed in advance. It requires a configured tunnel, appropriate Platform permissions, and a running adapter/client. That setup is absent in this environment and has not been deployed. Do not silently replace the requested one-flag hosted path with this additional infrastructure.
+GitHub source bodies are returned on demand. Embedded resource text is converted to explicit MCP text blocks because the first live API probe exposed only GitHub's download notice. Tool-level errors, credential paths (including encoded variants), credential-like text and unsupported binary resources are held. Responses are bounded at 8 MB and 60 seconds per GitHub request. The model has at most 32 tool calls per curation attempt.
+
+The previously considered hosted option would have forwarded GitHub authorization to OpenAI and placed it in a Batch input file. Automatic approval review rejected that transfer, including after Jamie approved a retry. It is not implemented. Jamie subsequently signed in to configure the private-tunnel alternative. The OHAI tunnel and local client are now configured; no public listener or ChatGPT workspace connector is required for the API path.
 
 ## Scope and branch exploration
 
@@ -50,7 +52,7 @@ The Batch API accepts `/v1/responses` request bodies, according to its [guide](h
 
 Do not silently change provider, model, reasoning effort, or tool availability. A tool-enabled request must never fall back to a Chat Completions or image-only request that loses tools. If Batch cannot support the request, hold with an accurate reason. A synchronous alternative requires an explicit user choice.
 
-For hosted authorization in Batch, construct the upload in memory and keep unredacted request JSONL off local disk. The remote input file necessarily contains tool authorization while it exists. Record its identifier privately, delete it when no longer needed, handle interruption and submission failure, and report failed cleanup. Never imply that `store:false` removes a Files API upload. Also suppress SDK body debugging and redact authorization from errors, fingerprints, receipts, caches, runtime logs, and any exported artifacts.
+Construct Batch uploads in memory. They contain images, the brief and a tunnel ID, but no GitHub credential. `store:false` does not remove Files API uploads. Save input and Batch IDs privately before polling, delete temporary input/output/error files after use, handle interruption and submission failure, and hold on failed cleanup. A forced machine/process shutdown may require cleanup using the retained Batch receipt.
 
 Record returned MCP call inputs/results and source URLs with each curatorial response. This is an audit record produced by exploration, not input research packaging. Preserve branch/commit information actually returned; do not manufacture source hashes or completeness claims. Cite successful reads, and distinguish citations to moving branches from commit permalinks. Retain tool failures and access limits. Capturing concise minutes and tool traces does not require storing private chain of thought.
 
@@ -58,7 +60,7 @@ A format repair must retain the same tools, images, context and roster. It is a 
 
 ## Acceptance and evaluation
 
-The new [offline trace checker](../../evals/evaluate-curation-exploration.mjs) and [tests](../../tests/curationExploration.test.js) express the corrected boundary. They reject separate research, sources prefetched into the image request, missing tools/images, provider/model changes, narrow ownership scope, write tools, credential leaks, missing cleanup, failed source reads, invented citations, changed curators, and incomplete responses. Useful-positive traces must pass alongside the negative mutations. These hand-authored traces do not execute the application, authenticate GitHub, or establish editorial usefulness.
+The [offline trace checker](../../evals/evaluate-curation-exploration.mjs) and [tests](../../tests/curationExploration.test.js) express the corrected boundary. They reject separate research, sources prefetched into the image request, missing tools/images, provider/model changes, narrow ownership scope, write tools, credential leaks, missing cleanup, failed source reads, invented citations, changed curators, and incomplete responses. Useful-positive traces must pass alongside the negative mutations. These hand-authored traces do not execute the application, authenticate GitHub, or establish editorial usefulness.
 
 The [readiness record](../../evals/github-inference-readiness.json) is separate from passing offline tests. All seven gates must be satisfied:
 
@@ -72,11 +74,11 @@ The [readiness record](../../evals/github-inference-readiness.json) is separate 
 
 The older research-first canary and public MCP probes cannot satisfy the private-GitHub gate. Broader model quality requires held-out source/event/photo cases and Jamie's assessment of citation support, visual/source confusion, attribution, countervoices, and editorial usefulness. A passing authentication canary does not measure these qualities.
 
-## Current execution state
+## Runtime setup and acceptance evidence
 
-Automatic approval review rejected both an authenticated hosted-MCP canary and the write operation that would implement token forwarding. Its stated concern was extracting a GitHub credential and sending it to OpenAI, including persistent code enabling that transfer. No GitHub token was sent by either rejected action, and the rejected implementation was not written. This is an execution-environment blocker, not a claim that the documented API mechanism is impossible or that Jamie did not request it.
+The existing launcher routes only `--github-all` to the feature worktree. Local Git configuration stores the worktree path and tunnel ID, not a credential. The current Mac has the official tunnel client installed and an OHAI tunnel associated with its API organization. Keep the Mac awake and connected while Batch waits and runs. The flag provides tools; it cannot guarantee exhaustive discovery or that every response will use them.
 
-Unaffected work continues: this corrected RFC, honest usage documentation, offline acceptance tests, the separate readiness record, public credential-free compatibility probes, and the draft PR update. The first public MCP probe failed on its example server. A later public documentation MCP probe passed, including a separate Batch canary with a synthetic image, high reasoning effort, and all twelve requested curator voices. Direct GitHub-only authentication also returned 28 tools marked read-only. These checks establish the component capabilities; they do not establish authenticated GitHub reads inside curation. See the [public canary receipt](../../evals/probes/2026-09-10-public-mcp-batch.json) and hill-climb log. Do not describe the feature as fully ready until the implementation and authenticated acceptance gates pass.
+The initial private tunnel probe completed tool calls but exposed only a download notice for its README. The first installed-command canary then exposed two defects: multiple text blocks still lost the source body in the API trace, and citation validation did not recognize GitHub's `sha` argument. The bridge now joins all text into one explicit result block, and provenance accepts both `sha` and `ref`. These failures have deterministic regressions. The live acceptance receipt and [readiness record](../../evals/github-inference-readiness.json) govern completion; passing tool status alone does not prove source-text delivery.
 
 ## Four editorial perspectives
 

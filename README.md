@@ -581,20 +581,12 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
 
-## Research-first knowledge mode
+## GitHub access during curation
 
-The existing `--knowledge-live` mode researches repositories **before** image curation and then supplies frozen evidence. It does not attach GitHub tools to the curatorial API call. The requested `--github-all` feature is not implemented or installed; see the [corrected RFC](docs/rfcs/0012-live-knowledge-exploration.md) and [readiness record](evals/github-inference-readiness.json).
+Add `--github-all` to your existing command. The model can follow private GitHub links, discover accessible repositories and inspect recent branches during the same API call that curates your images. Your GitHub credential stays in a local read-only bridge; OpenAI's private tunnel carries the tool requests and source results.
 
-Photo Select can discover your owned knowledge repositories and their newest branches, research them through authenticated GitHub tools, and supply that evidence to a later curation call. GitHub CLI must already be signed in (`gh auth login` if needed). An existing OpenAI key is reused from the environment or original checkout's `.env`; no key is copied into this worktree.
+The flag supports `openai` and `openai-batch`, preserves your model and exact custom curator list, and automatically starts the configured tunnel. Jamie's current launcher is configured. Run from your image directory as before; results and tool traces go to a new private run whose path is printed.
 
-```sh
-npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "My DCLA / Brooklyn Arts Council listening-event project"
-```
+See [the command and setup guide](docs/live-knowledge.md), [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md), and the [acceptance record](evals/github-inference-readiness.json). Keep the Mac awake and online during Batch processing. Run `npm run hillclimb` for regression checks.
 
-No profile or prepared packet is required. You can keep using `--context` for an existing brief. The command prints a private run directory containing copied photographs, the branch catalog, source passages, research record, curation replies, field notes, and a local Git history. Originals stay in place. On an external volume, runs default to that volume's `.photo-select/runs`; elsewhere they use your home directory.
-
-- Check discovery without model requests: `node src/index.js --knowledge-discover`.
-- Save research only: add `--knowledge-research-only` to the command above.
-- Optional controls: `--knowledge-live /private/path/profile.json`; see [the live research guide](docs/live-knowledge.md).
-
-The original command remains unchanged when live mode is omitted. Live mode currently uses OpenAI, a fixed fictional curator roster, and private working copies. It holds on source access changes or invalid replies. [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md) records the design and limits; [RFC 0011](docs/rfcs/0011-private-knowledge-context.md) preserves source authority and attribution boundaries. Run `npm run hillclimb` for the full regression and knowledge eval gate.
+The older `--knowledge-live` mode remains a separate [research-first workflow](docs/research-first-knowledge.md); it does not attach GitHub tools to the image-curation call.

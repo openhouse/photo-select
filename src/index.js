@@ -12,7 +12,7 @@ import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
 import { parsePositiveInteger } from "./core/parsePositiveInteger.js";
 
-if (process.argv.some(arg => /^--knowledge-(live|discover|research-only)(=|$)/.test(arg)) && !process.argv.includes('--help')) {
+if (process.argv.some(arg => /^(?:--knowledge-(?:live|discover|research-only)|--github-all)(=|$)/.test(arg)) && !process.argv.includes('--help')) {
   const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
   await reuseRepositoryEnvironment();
 }
@@ -101,6 +101,7 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option("--field-notes", "Enable field notes workflow")
+  .option("--github-all", "Let the curatorial model read all accessible GitHub repositories live through your private tunnel")
   .option("--knowledge-live [profile]", "Explore current knowledge repositories automatically; optional private JSON profile")
   .option("--knowledge-brief <text>", "Describe the photo project inline; no context file needed")
   .option("--knowledge-discover", "Refresh the knowledge repository/branch catalog without model requests or photo changes")
@@ -185,11 +186,15 @@ let {
   adaptiveWorkers,
   adaptiveMinWorkers,
   refreshPeopleIndex,
-  knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief,
+  knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief, githubAll,
 } = program.opts();
 const liveEnabled = Boolean(knowledgeLive || knowledgeDiscover || knowledgeResearchOnly);
+const privateEnabled = liveEnabled || githubAll;
 const liveAbort = new AbortController();
-if (knowledgeBrief && !liveEnabled) program.error("--knowledge-brief requires --knowledge-live.");
+if (githubAll && liveEnabled) program.error("Use --github-all by itself; --knowledge-live is the separate research-first mode.");
+if (githubAll && !["openai", "openai-batch"].includes(providerName)) program.error("--github-all supports openai and openai-batch.");
+if (githubAll && program.getOptionValueSource("prompt") === "cli") program.error("--github-all uses its live GitHub prompt; omit --prompt.");
+if (knowledgeBrief && !privateEnabled) program.error("--knowledge-brief requires --knowledge-live.");
 if (liveEnabled && providerName !== "openai") program.error("Live knowledge requires --provider openai; batch and Ollama are not supported yet.");
 if (liveEnabled && program.getOptionValueSource("prompt") === "cli") program.error("Live knowledge uses its source-aware prompt; omit --prompt.");
 
@@ -254,7 +259,7 @@ let shuttingDown = false;
 async function handleSignal(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
-  if (liveEnabled) { liveAbort.abort(); return; }
+  if (privateEnabled) { liveAbort.abort(); return; }
   console.log(`\n🛑  received ${sig}, shutting down…`);
   scheduler.setConcurrency(0);
   await scheduler.waitForIdle().catch(() => {});
@@ -300,27 +305,32 @@ if (!finalReasoningEffort) {
 process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
 (async () => {
+  let liveRun;
   try {
-    if (liveEnabled) {
+    if (privateEnabled) {
       const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
       await reuseRepositoryEnvironment();
     }
-    if (provider === 'openai' && !process.env.OPENAI_API_KEY && !knowledgeDiscover) {
+    if ((provider === 'openai' || githubAll) && !process.env.OPENAI_API_KEY && !knowledgeDiscover) {
       console.error(
         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
       );
       process.exit(1);
     }
     let absDir = path.resolve(dir);
-    let liveRun;
     let restoreOutput = () => {};
-    if (liveEnabled) {
+    if (privateEnabled) {
+      const brief = [knowledgeBrief, contextPath ? await readFile(path.resolve(contextPath), 'utf8') : undefined].filter(Boolean).join('\n\n') || undefined;
+      if (githubAll) {
+        const { startGithubRun } = await import('./githubRun.js');
+        liveRun = await startGithubRun({source:absDir,brief,curators,provider,signal:liveAbort.signal,progress:line=>console.log(line)});
+      } else {
       const { startLiveKnowledge, loadLiveProfile } = await import('./knowledgeRun.js');
       const profile = await loadLiveProfile(knowledgeLive || true);
-      const brief = [knowledgeBrief, contextPath ? await readFile(path.resolve(contextPath), 'utf8') : undefined].filter(Boolean).join('\n\n') || undefined;
       liveRun = await startLiveKnowledge({profile, source:absDir, brief, model:finalModel,
         discoverOnly:knowledgeDiscover, researchOnly:knowledgeResearchOnly, signal:liveAbort.signal, progress:line=>console.log(line)});
       if (knowledgeDiscover || knowledgeResearchOnly) { console.log(`knowledge: saved ${liveRun.root}`); return; }
+      }
       absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = liveRun.provider.promptPath;
       process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
       process.umask(0o077);
@@ -357,10 +367,10 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       targetLevelSize,
       refreshPeopleIndex,
     });
-    } finally { restoreOutput(); }
+    } finally { restoreOutput(); await liveRun?.stop?.(); }
     console.log(liveRun ? `knowledge: curation and field notes saved in ${liveRun.root}` : "🎉  Finished triaging.");
   } catch (err) {
-    if (liveEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exit(liveAbort.signal.aborted ? 130 : 1); }
+    if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
         "🛑  Billing limit reached. Please review your provider usage before retrying."
@@ -372,5 +382,5 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     }
     console.error("❌  Error:", err);
     process.exit(1);
-  }
+  } finally { await liveRun?.stop?.(); }
 })();
