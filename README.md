@@ -580,3 +580,7 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
+
+## Private knowledge context proposal
+
+[RFC 0011](docs/rfcs/0011-private-knowledge-context.md) proposes scoped GitHub knowledge access for ChatGPT and Photo Select. The [close reading](docs/reviews/2026-09-09-knowledge-ecosystem.md) explains the source architecture and curatorial purpose. Run `npm run evals:knowledge` for its synthetic contract tests or `npm run hillclimb` for the full regression gate. No private-access adapter is enabled by this proposal.

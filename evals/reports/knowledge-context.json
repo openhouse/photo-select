@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "scope": "synthetic-reference-only",
+  "candidate": {
+    "sha256": "6940211d01b6d031902539a2c50a99f00c9680574c086734d37dbf06dd38ef02",
+    "files": 113
+  },
+  "passed": 31,
+  "failed": 0,
+  "skipped": 0,
+  "sourceAccess": false,
+  "modelRequests": 0,
+  "publicationAuthority": "none",
+  "json_validity_rate": null,
+  "retry_recovery_rate": null,
+  "usefulness": "unmeasured",
+  "limitation": "Descriptors are assumed verified by a future adapter; no authentication, real retrieval, model resistance, or consent is certified."
+}
