@@ -373,12 +373,18 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
-        "🛑  Billing limit reached. Please review your provider usage before retrying."
+        `⏸️  OpenAI API credits exhausted. Run paused${
+          Number.isInteger(err?.remainingImages)
+            ? ` with ${err.remainingImages} image(s) remaining`
+            : ""
+        }; completed work was preserved.`
       );
+      console.error("   Add credits, then rerun the same command to resume.");
       if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
         console.error("  ↳ cause:", err.cause);
       }
-      process.exit(1);
+      process.exitCode = err?.exitCode || 75;
+      return;
     }
     console.error("❌  Error:", err);
     process.exit(1);

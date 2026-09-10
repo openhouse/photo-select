@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat, rename, rm } from "node:fs/promises";
+import { appendFile, readFile, writeFile, mkdir, stat, rename, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
@@ -15,6 +15,11 @@ import { finalizeCurators } from "./core/finalizeCurators.js";
 import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
 import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js";
 import { planNeedsReviewRetry } from "./core/planNeedsReviewRetry.js";
+import {
+  createBillingLimitError,
+  isBillingLimitError,
+  providerErrorSummary,
+} from "./core/providerErrors.js";
 
 const exec = promisify(execFile);
 
@@ -606,32 +611,6 @@ export async function triageDirectory(options) {
   const indent = "  ".repeat(depth);
   let notesWriter;
 
-  function isBillingLimitError(err) {
-    if (!err) return false;
-    const candidates = [
-      err?.message,
-      err?.error?.message,
-      err?.cause?.message,
-      err?.response?.data?.error?.message,
-      err?.response?.data?.message,
-      err?.response?.error?.message,
-      err?.response?.message,
-      err?.body?.error?.message,
-      err?.body?.message,
-    ]
-      .flat()
-      .filter(Boolean)
-      .map((msg) => String(msg));
-    return candidates.some((message) => /billing (hard )?limit/i.test(message));
-  }
-
-  function createBillingLimitError(err) {
-    const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
-    wrapped.code = "BILLING_LIMIT";
-    wrapped.cause = err;
-    return wrapped;
-  }
-
   function isPromptCacheSafetyError(err) {
     return err?.code === "PROMPT_CACHE_PROBE_MISS";
   }
@@ -692,6 +671,60 @@ export async function triageDirectory(options) {
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const billingPausePath = path.join(levelDir, ".batch", "billing-pause.json");
+  const billingLedgerPath = path.join(levelDir, ".batch", "jobs.ndjson");
+  const appendBillingLedger = async (entry) => {
+    await mkdir(path.dirname(billingLedgerPath), { recursive: true });
+    await appendFile(
+      billingLedgerPath,
+      `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
+      "utf8"
+    );
+  };
+  const writeBillingPause = async (err) => {
+    const remainingState = await listLevelState(dir, { retryNeedsReview: false });
+    const remainingImages = remainingState.eligibleImages.length;
+    const pause = {
+      schemaVersion: 1,
+      state: "paused",
+      reason: "billing_exhausted",
+      code: "BILLING_LIMIT",
+      pausedAt: new Date().toISOString(),
+      level: depth + 1,
+      source: dir,
+      remainingImages,
+      remainingBatches: Math.ceil(remainingImages / BATCH_SIZE),
+      cause: providerErrorSummary(err),
+    };
+    await mkdir(path.dirname(billingPausePath), { recursive: true });
+    const temporaryPath = `${billingPausePath}.${process.pid}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify(pause, null, 2), "utf8");
+    await rename(temporaryPath, billingPausePath);
+    await appendBillingLedger({
+      event: "billing_paused",
+      code: pause.cause.code,
+      type: pause.cause.type,
+      status: pause.cause.status,
+      level: pause.level,
+      remaining_images: pause.remainingImages,
+      remaining_batches: pause.remainingBatches,
+    });
+    return pause;
+  };
+  const clearBillingPause = async () => {
+    try {
+      await stat(billingPausePath);
+    } catch (err) {
+      if (err?.code === "ENOENT") return false;
+      throw err;
+    }
+    await rm(billingPausePath, { force: true });
+    await appendBillingLedger({
+      event: "billing_resumed",
+      level: depth + 1,
+    });
+    return true;
+  };
   const runSession = async (payload) => {
     const handle = await provider.submit({
       levelDir,
@@ -1087,6 +1120,9 @@ export async function triageDirectory(options) {
                   moveFiles(aside, asideDir, notes),
                 ]);
                 await clearNeedsReviewEntries(dir, [...keep, ...aside]);
+                if (await clearBillingPause()) {
+                  log(`${indent}▶️  Billing pause cleared after successful progress.`);
+                }
                   if (unclassified.length && keep.length + aside.length > 0) {
                     queue.push(...unclassified);
                   }
@@ -1145,11 +1181,12 @@ export async function triageDirectory(options) {
                   }
                   throw err;
                 }
-                if (isBillingLimitError(err) && !abortProcessing) {
-                  abortProcessing = true;
-                  queue.length = 0;
-                  log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
-                  throw createBillingLimitError(err);
+                if (isBillingLimitError(err)) {
+                  if (!abortProcessing) {
+                    abortProcessing = true;
+                    queue.length = 0;
+                  }
+                  throw err;
                 }
               }
             });
@@ -1160,7 +1197,21 @@ export async function triageDirectory(options) {
           { length: Math.min(dynamicWorkers, Math.max(queue.length, 1)) },
           () => workerFn()
         );
-        await Promise.all(pool);
+        const outcomes = await Promise.allSettled(pool);
+        const failure = outcomes.find((outcome) => outcome.status === "rejected");
+        if (failure) {
+          if (!isBillingLimitError(failure.reason)) throw failure.reason;
+          const pause = await writeBillingPause(failure.reason);
+          log(
+            `${indent}⏸️  OpenAI API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
+          );
+          log(`${indent}   Add credits, then rerun the same command to resume.`);
+          throw createBillingLimitError(failure.reason, {
+            pausePath: billingPausePath,
+            remainingImages: pause.remainingImages,
+            remainingBatches: pause.remainingBatches,
+          });
+        }
       } finally {
         multibar.stop();
       }

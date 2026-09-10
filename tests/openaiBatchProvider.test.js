@@ -367,6 +367,72 @@ describe('OpenAIBatchProvider', () => {
       .toEqual(['seed', 'probe', 'reader', 'reader']);
   });
 
+  it('preserves completed cache-barrier work when a later reader exhausts credits', async () => {
+    client.responses.create.mockImplementation(async (body) => {
+      const index = client.responses.create.mock.calls.length - 1;
+      if (index === 2) {
+        const exhausted = new Error(
+          'Your account does not have enough credits to perform the requested operation.'
+        );
+        exhausted.status = 429;
+        exhausted.error = {
+          message: exhausted.message,
+          type: 'insufficient_quota',
+          code: 'insufficient_quota',
+        };
+        throw exhausted;
+      }
+      return {
+        id: `resp_${index + 1}`,
+        object: 'response',
+        status: 'completed',
+        service_tier: body.service_tier,
+        usage: index === 0 ? CACHE_WRITE_USAGE : CACHE_HIT_USAGE,
+        output: [{
+          type: 'message',
+          content: [{
+            type: 'output_json',
+            json: { minutes: [], decisions: [] },
+          }],
+        }],
+      };
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+    const outcomes = await Promise.allSettled(['seed', 'probe', 'reader'].map((name) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${name}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+      })
+    ));
+    expect(outcomes.map((outcome) => outcome.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(outcomes[2].reason).toMatchObject({
+      status: 429,
+      error: { code: 'insufficient_quota' },
+    });
+    const tickets = await fs.readdir(path.join(tmpDir, '.batch', 'tickets'));
+    expect(tickets).toHaveLength(2);
+    const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
+    const events = ledger.trim().split('\n').map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.event === 'completed')).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'submit_error',
+      code: 'insufficient_quota',
+      status: 429,
+    }));
+  });
+
   it('uses a rolling adaptive reader window and persists sanitized rate-limit capacity', async () => {
     const usages = [CACHE_WRITE_USAGE, ...Array(7).fill(CACHE_HIT_USAGE)];
     const rateHeaders = usages.map(() => ({

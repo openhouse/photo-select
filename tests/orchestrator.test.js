@@ -477,13 +477,139 @@ describe("triageDirectory", () => {
           recurse: false,
           provider,
         })
-      ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+      ).rejects.toMatchObject({ code: "BILLING_LIMIT", exitCode: 75 });
     } finally {
       logSpy.mockRestore();
     }
     expect(provider.submit).toHaveBeenCalledTimes(1);
     await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("pauses modern exhausted-credit errors without repeating or marking photos for review", async () => {
+    const exhausted = new Error(
+      "Your account does not have enough credits to perform the requested operation. Please add more credits to your account and try again."
+    );
+    exhausted.status = 429;
+    exhausted.error = {
+      message: exhausted.message,
+      type: "insufficient_quota",
+      code: "insufficient_quota",
+    };
+    const unexpectedSecondAttempt = new Error(
+      "A second submission must never start after credit exhaustion"
+    );
+    unexpectedSecondAttempt.code = "PROMPT_CACHE_PROBE_MISS";
+    const provider = {
+      submit: vi.fn(async () => ({})),
+      collect: vi
+        .fn()
+        .mockRejectedValueOnce(exhausted)
+        .mockRejectedValueOnce(unexpectedSecondAttempt),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "gpt-5.6-terra",
+          recurse: false,
+          provider,
+        })
+      ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "NEEDS_REVIEW"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const levelDir = path.join(tmpDir, "_level-001");
+    const pause = JSON.parse(
+      await fs.readFile(path.join(levelDir, ".batch", "billing-pause.json"), "utf8")
+    );
+    expect(pause).toMatchObject({
+      schemaVersion: 1,
+      state: "paused",
+      reason: "billing_exhausted",
+      code: "BILLING_LIMIT",
+      level: 1,
+      remainingImages: 2,
+      remainingBatches: 1,
+      cause: {
+        code: "insufficient_quota",
+        type: "insufficient_quota",
+        status: 429,
+      },
+    });
+    const ledger = await fs.readFile(
+      path.join(levelDir, ".batch", "jobs.ndjson"),
+      "utf8"
+    );
+    expect(ledger).toContain('"event":"billing_paused"');
+  });
+
+  it("drains successful in-flight batches before reporting a billing pause", async () => {
+    for (let i = 3; i <= 11; i++) await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    const provider = {
+      submit: vi.fn(async ({ images }) => ({ images })),
+      collect: vi.fn(async ({ images }) => {
+        if (images.length === 1) {
+          const err = new Error("Your account does not have enough credits");
+          err.code = "insufficient_quota";
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          raw: JSON.stringify({
+            keep: images.map((file) => path.basename(file)),
+            aside: [],
+          }),
+        };
+      }),
+    };
+    await expect(
+      triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "gpt-5.6-terra",
+        recurse: false,
+        workers: 2,
+        provider,
+      })
+    ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    expect(await fs.readdir(path.join(tmpDir, "_keep"))).toHaveLength(10);
+    const pause = JSON.parse(await fs.readFile(
+      path.join(tmpDir, "_level-001", ".batch", "billing-pause.json")));
+    expect(pause.remainingImages).toBe(1);
+  });
+
+  it("clears a billing-pause checkpoint after the next successful batch", async () => {
+    const levelDir = path.join(tmpDir, "_level-001");
+    const pausePath = path.join(levelDir, ".batch", "billing-pause.json");
+    await fs.mkdir(path.dirname(pausePath), { recursive: true });
+    await fs.writeFile(
+      pausePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "paused",
+        reason: "billing_exhausted",
+      })
+    );
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    await expect(fs.stat(pausePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("stops processing when a prompt-cache probe misses", async () => {
