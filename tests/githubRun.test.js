@@ -15,3 +15,11 @@ it('serializes twenty audit commits with matching response and field notes',asyn
 it('starts no research phase and stops the tunnel if private preparation fails',async()=>{
  let stopped=false;await expect(startGithubRun({source:'/nonexistent-photos',tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({stop:async()=>{stopped=true;},assertCurrent:async()=>{}})})).rejects.toThrow();expect(stopped).toBe(true);
 });
+it('rejects an oversized brief locally before starting a tunnel or copying images',async()=>{
+ let started=false;
+ try {
+  await startGithubRun({source:'/nonexistent-photos',brief:'x '.repeat(1_060_000),tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>{started=true;return {stop:async()=>{},assertCurrent:async()=>{}};}});
+  throw Error('accepted oversized brief');
+ }catch(error){expect(error.message).toMatch(/context.*tokens/i);expect(error.message).toMatch(/shorter/i);}
+ expect(started).toBe(false);
+},20000);

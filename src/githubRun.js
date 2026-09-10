@@ -9,6 +9,7 @@ import {preparePrivateRun,reuseRepositoryEnvironment} from './knowledgeRun.js';
 import {configuredGithubTunnel,startGithubTunnel} from './githubTunnel.js';
 import {GithubCurationProvider} from './providers/github.js';
 import {GithubBatchTransport} from './githubBatch.js';
+import {validateGithubBrief} from './core/githubBrief.js';
 import {knowledgeError} from './core/knowledgeLive.js';
 const exec=promisify(execFile);
 async function atomic(file,value){const temp=file+'.'+randomUUID()+'.tmp';await fs.writeFile(temp,typeof value==='string'?value:JSON.stringify(value,null,2)+'\n',{mode:0o600});await fs.rename(temp,file);}
@@ -30,6 +31,8 @@ export async function createGithubAudit(root) {
   };
 }
 export async function startGithubRun({source,brief='',curators=[],provider='openai',tunnelId,signal,progress=()=>{},base},dependencies={}) {
+  const briefSize=validateGithubBrief(brief);
+  progress(`github: context ${briefSize.textTokens.toLocaleString('en-US')} text tokens (local count)`);
   await reuseRepositoryEnvironment();
   if(!['openai','openai-batch'].includes(provider))throw knowledgeError('--github-all supports openai and openai-batch.');
   if(process.env.OPENAI_BASE_URL&&process.env.OPENAI_BASE_URL.replace(/\/$/,'')!=='https://api.openai.com/v1')throw knowledgeError('--github-all requires the official OpenAI API endpoint.');
@@ -45,7 +48,7 @@ export async function startGithubRun({source,brief='',curators=[],provider='open
       assertCurrent:tunnel.assertCurrent,
       assertDirectory:async dir=>{const actual=await fs.realpath(dir);if(actual!==run.images&&!actual.startsWith(run.images+path.sep))throw knowledgeError('Curation escaped the private run.');},
       encodeImage:file=>sharp(file).rotate().resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:75}).toBuffer()});
-    await atomic(path.join(run.root,'session.json'),{mode:'github-during-curation',provider,tunnelId,curators:driver.curators,scope:'credential-readable-repositories',localResearchCalls:0,sourceBodiesPrecollected:false,githubCredentialDestination:'github-only'});
+    await atomic(path.join(run.root,'session.json'),{mode:'github-during-curation',provider,tunnelId,briefSize,curators:driver.curators,scope:'credential-readable-repositories',localResearchCalls:0,sourceBodiesPrecollected:false,githubCredentialDestination:'github-only'});
     return {...run,provider:driver,stop:tunnel.stop};
   }catch(error){await tunnel.stop();throw error;}
 }

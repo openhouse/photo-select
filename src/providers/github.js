@@ -42,7 +42,7 @@ export class GithubCurationProvider {
         return {raw:JSON.stringify(json),json};
       }
     }catch(error){
-      await this.save({status:'held',model,request,attempts,transport:error?.receipt??null,reason:'Curation, GitHub access or reply validation failed.'});
+      await this.save({status:'held',model,request,attempts,transport:error?.receipt??null,reason:error?.code==='KNOWLEDGE_HELD'?error.message:'Curation, GitHub access or reply validation failed.'});
       throw knowledgeError(error?.code==='KNOWLEDGE_HELD'?error.message:'GitHub curation held; see the private run receipt.');
     }
   }

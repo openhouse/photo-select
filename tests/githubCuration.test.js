@@ -40,3 +40,10 @@ it('accepts an immutable file citation when GitHub calls the commit parameter sh
  const sha='b'.repeat(40),source={type:'mcp_call',server_label:'github',name:'get_file_contents',arguments:JSON.stringify({owner:'fixture',repo:'wiki',path:'README.md',sha}),output:'Read source body'};
  const reply={...json,decisions:[{...json.decisions[0],reason:'https://github.com/fixture/wiki/blob/'+sha+'/README.md'}]};expect(()=>validateGithubReply(reply,['one.jpg'],curators,[source])).not.toThrow();
 });
+
+it('preserves an actionable Batch failure reason in the private curation record',async()=>{
+ const saved=[],failure=Object.assign(Error('Context exceeds the model window; use a shorter brief.'),{code:'KNOWLEDGE_HELD',receipt:{status:'held',errors:[{code:'context_length_exceeded'}]}});
+ const p=new GithubCurationProvider({tunnelId,curators,respond:async()=>{throw failure;},save:async r=>saved.push(r),encodeImage:async()=>Buffer.from('x')});
+ await expect(p.chat({images:['one.jpg']})).rejects.toThrow(/shorter brief/);
+ expect(saved[0].reason).toMatch(/shorter brief/);expect(saved[0].transport.errors[0].code).toBe('context_length_exceeded');expect(saved[0].attempts).toHaveLength(0);
+});

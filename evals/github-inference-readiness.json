@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "feature": "github-tools-during-curation",
-  "ready": true,
+  "ready": false,
   "gates": {
     "implementation": "passed",
     "exactCommand": "passed",
-    "privateGithubDuringCuration": "passed",
+    "privateGithubDuringCuration": "pending",
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "All technical acceptance gates passed after integrating the current PR base. The renewed live receipt binds production source/prompt files by SHA-256; evals reject stale evidence. Editorial usefulness and exhaustive coverage remain unmeasured.",
+  "note": "Readiness held while correcting error-only Batch handling and oversized context validation after the first full-corpus run. A fresh live canary and CI must bind the corrected production code.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",

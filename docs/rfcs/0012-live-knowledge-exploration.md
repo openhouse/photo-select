@@ -88,3 +88,11 @@ These are fictionalized analytical lenses, not quotations, participation, or end
 - **Vivian Gornick:** I want the photograph and the encountered account to alter each other's meaning during the reading. Preparing the account first closes that exchange too soon.
 - **Zora Neale Hurston:** I want each source voice to keep its setting and its disagreements. Access to the archive does not make its speakers the model's possessions.
 - **Deborah Treisman:** I want the record to show which encounter changed the edit. I also want “ready” to describe a tested capability, not the intention behind a proposal.
+
+## Operational correction: oversized briefs and Batch errors
+
+The first full-corpus attempt returned twenty failed requests in six completed Batch jobs, all with error files and no successful output files. The original transport did not read those error files and deleted them, then mislabeled the failure as a possible tunnel/access problem. Those deleted row errors cannot be recovered from Batch metadata, so their exact original codes are unknown.
+
+Local tokenization independently found over 2.53 million text tokens in a representative request, beyond the requested model's documented window. This is a confirmed input-size blocker, not evidence that GitHub credentials failed. GitHub-mode startup now counts the brief locally and holds briefs over 950,000 tokens before tunnel startup, image copying or paid requests. It leaves the original context intact and asks for a shorter question-and-links brief; no research pass or automatic summary is introduced.
+
+The Batch transport now reads both result files, preserves per-row API diagnostics privately before cleanup, redacts credential-like error text, and maps successful and failed rows independently. Receipt persistence/retrieval failures retain remote evidence for recovery. Held curation records and field notes retain the actionable reason. Regressions cover these failures; the renewed live acceptance receipt applies only to its bounded canary, not completion of the full photographic corpus.
