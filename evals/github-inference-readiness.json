@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "feature": "github-tools-during-curation",
+  "ready": false,
+  "gates": {
+    "implementation": "blocked-by-automatic-approval-review",
+    "exactCommand": "not-implemented",
+    "privateGithubDuringCuration": "blocked-by-automatic-approval-review",
+    "batchWithImagesAndTools": "passed",
+    "credentialSinks": "not-implemented",
+    "workers20": "not-implemented",
+    "ci": "no-implementation-candidate"
+  },
+  "olderResearchFirstCanaryQualifies": false,
+  "syntheticTraceTestsQualify": false,
+  "note": "The revised RFC requires model-directed GitHub reads inside the image-curation response. Existing knowledge-live research runs before curation and does not satisfy this feature.",
+  "batchEvidence": "evals/probes/2026-09-10-public-mcp-batch.json",
+  "batchEvidenceScope": "Public MCP tool plus synthetic image, requested model/high effort/twelve voices; authenticated GitHub remains a separate unmet gate."
+}

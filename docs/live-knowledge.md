@@ -1,6 +1,10 @@
-# Use live knowledge research
+# Use research-first knowledge mode
 
-From this worktree, run:
+**This mode researches before image curation. It does not provide GitHub tools inside the curatorial API call.** The requested `--github-all` feature is not implemented or installed. Its [revised RFC 0012](rfcs/0012-live-knowledge-exploration.md) and [readiness record](../evals/github-inference-readiness.json) explain the remaining work and current execution blocker.
+
+The earlier private-source canary verified this research-first sequence only. Do not use it as evidence that the corrected feature is ready.
+
+To use the existing research-first mode from this worktree, run:
 
 ```sh
 npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "My DCLA / Brooklyn Arts Council listening-event project"

@@ -77,3 +77,29 @@ The next combined run passed with two live GitHub blob reads, three research too
 The reply used grouped source citations. A mutation placing an invented ID inside a group exposed a validator gap: singleton citations were checked, but grouped IDs were skipped. A valid-group case passed while the invented-group case first failed; the parser now checks every source ID inside bracketed groups. The positive case also caught the need to scan text fields individually, so JSON array delimiters and ordinary prose such as "source-qualified" are not mistaken for citations. The actual saved live reply also passes replay through this stricter validator without another model request.
 
 This canary establishes technical operation within the approved two-passage scope. It is not an editorial benchmark: the synthetic-image interpretation was speculative and included possible confusion between the image's location and the knowledge repository. Citation entailment, retrieval recall, source/image provenance reasoning, and usefulness still need labeled human review. Private source bodies, model replies, local source identifiers and run paths remain outside this public repository.
+
+## 2026-09-10 — Corrected requirement: exploration inside curation
+
+Jamie clarified that the image-curation API call itself must have authenticated GitHub tools. The earlier local research loop and its successful two-source canary do not meet that requirement. RFC 0012 and the usage guide now say so explicitly. The requested `--github-all` flag must preserve the existing Batch provider, model, high reasoning effort, twenty workers, and custom curator roster.
+
+Automatic approval review blocked both an authenticated hosted-MCP probe and writing the implementation that would forward a GitHub credential as tool authorization. The rejected actions did not send a GitHub token or write that implementation. The source checkout launcher remains unchanged. OpenAI Secure MCP Tunnel was investigated as a way to retain GitHub credentials at a local adapter while serving model-initiated calls, but the required tunnel setup is absent. No alternate infrastructure or provider was silently substituted.
+
+| Check | Observation | Bounded response |
+| --- | --- | --- |
+| Initial same-call implementation tests | Missing implementation imports and launcher behavior | The implementation write was blocked by automatic review. Unimplemented test drafts were retained outside the repository, not counted as passing tests. |
+| Corrected offline trace-checker baseline | One positive passed; 21 negative/readiness cases failed | Add same-request images/tools, provider/model, scope, credentials, source reads, private sink, roster, and readiness checks. |
+| First complete corrected checker | 22/22 passed | Challenge URL matching and claimed source-body presence. |
+| Adversarial mutations | 22 passed; three failed | Reject empty source bodies, inspect citations in the actual response text, and compare complete returned URLs rather than matching arbitrary substrings. |
+| Repaired corrected checker | 25/25 passed | These are synthetic contract tests, not application implementation or private-source acceptance evidence. |
+| Credential-free Batch MCP probe, public dice server | Batch reached MCP tool-list retrieval; result HTTP 424, external connector failure | Do not report tool execution as successful. The uploaded input was deleted. |
+| Credential-free Batch MCP probe, official OpenAI documentation server | `gpt-5.6-terra` completed a response with successful remote MCP calls; 56,046 total tokens | Confirms remote MCP execution through Batch for this model using public tools. It contains no images or GitHub authentication and cannot establish the private-curation feature. The uploaded input was deleted. |
+
+The new `githubDuringCuration` field in the focused eval receipt reports unmet acceptance gates separately from offline regression results. Green offline tests must not turn the earlier research-first mode into a claim of readiness for the corrected feature. All seven readiness gates are conjunctive; unknown, omitted, blocked, and unverified states fail readiness. The manifest is an explicit acceptance record, not an independent authentication audit.
+
+This revision changes documentation and offline evaluation only. No credential-forwarding application implementation or installed launcher change is included. The draft PR still exceeds the repository's large-change thresholds overall: review marker `--mechanical`; substantive review required; no auto-merge.
+
+The subsequent public MCP plus image canary passed through actual Batch on `gpt-5.6-terra` at high reasoning effort: one successful `search_openai_docs` call, twelve minutes using every requested curator exactly once, one exact filename decision, a final question, and 1,649 total tokens. The uploaded input was deleted. The [public receipt](../../evals/probes/2026-09-10-public-mcp-batch.json) records response and request-script digests. This satisfies the generic Batch/images/tools gate only; it does not use GitHub credentials, private sources, the application launcher, or twenty workers.
+
+A direct request to GitHub's own read-only MCP endpoint also succeeded using the existing CLI login, returning 28 tools marked read-only. The GitHub credential was sent only to GitHub, never to OpenAI. An explicit allowlist remains necessary because the default read-only toolset includes operations such as secret scanning that the curatorial feature does not need.
+
+The full offline regression run passed 318 tests across 36 suites and 137 focused checks before these final evidence-documentation updates. The final candidate receipt is regenerated after the updates; it continues to report the corrected feature as not ready. No production source or launcher change is included in this correction.

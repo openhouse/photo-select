@@ -581,9 +581,11 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
 
-## Live knowledge research
+## Research-first knowledge mode
 
-Photo Select can discover your owned knowledge repositories and their newest branches, research them through authenticated GitHub tools, and use that evidence during curation. GitHub CLI must already be signed in (`gh auth login` if needed). An existing OpenAI key is reused from the environment or original checkout's `.env`; no key is copied into this worktree.
+The existing `--knowledge-live` mode researches repositories **before** image curation and then supplies frozen evidence. It does not attach GitHub tools to the curatorial API call. The requested `--github-all` feature is not implemented or installed; see the [corrected RFC](docs/rfcs/0012-live-knowledge-exploration.md) and [readiness record](evals/github-inference-readiness.json).
+
+Photo Select can discover your owned knowledge repositories and their newest branches, research them through authenticated GitHub tools, and supply that evidence to a later curation call. GitHub CLI must already be signed in (`gh auth login` if needed). An existing OpenAI key is reused from the environment or original checkout's `.env`; no key is copied into this worktree.
 
 ```sh
 npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "My DCLA / Brooklyn Arts Council listening-event project"
