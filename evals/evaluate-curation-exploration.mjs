@@ -44,3 +44,11 @@ export function evaluateCurationExploration(trace) {
   }catch{fail('response');}
   return [...failures];
 }
+export function evaluateGithubCanary(receipt,actualHashes={}) {
+  const failures=[];
+  if(receipt?.status!=='passed'||receipt.transport!=='private-tunnel'||receipt.localResearchCalls!==0||receipt.sourceBodiesInInitialRequest!==false||!(receipt.actualSourceTextBytes>0)||receipt.sameResponseImagesAndTools!==true||receipt.commitPinnedFileRead!==true)failures.push('live-source-evidence');
+  if(receipt?.temporaryFilesDeleted!==true||receipt.privateAtomicCommitVerified!==true||receipt.originalImageUnchanged!==true||receipt.githubAuthorizationInRequest!==false)failures.push('private-custody');
+  const hashes=receipt?.implementationSha256;
+  if(!hashes||!Object.keys(hashes).length||Object.entries(hashes).some(([file,hash])=>!/^[a-f0-9]{64}$/.test(hash)||actualHashes[file]!==hash))failures.push('implementation-changed');
+  return failures;
+}

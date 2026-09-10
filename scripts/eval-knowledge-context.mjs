@@ -1,4 +1,4 @@
-import { evaluateGithubReadiness } from '../evals/evaluate-curation-exploration.mjs';
+import { evaluateGithubReadiness, evaluateGithubCanary } from '../evals/evaluate-curation-exploration.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = 'evals/reports/knowledge-context.json';
-const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js'];
+const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js', 'tests/githubCanary.test.js'];
 function fingerprint() {
   const files = [...new Set(execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(p => p && p !== reportPath).sort();
@@ -31,6 +31,16 @@ try {
   if (fingerprint().sha256 !== before.sha256) throw new Error('Candidate changed during evaluation.');
   const readiness = JSON.parse(readFileSync(path.join(root, 'evals/github-inference-readiness.json'), 'utf8'));
   const unmetGates = evaluateGithubReadiness(readiness.gates);
+  if (readiness.liveEvidence) {
+    const receipt = JSON.parse(readFileSync(path.join(root, readiness.liveEvidence), 'utf8'));
+    const actualHashes = {};
+    for (const file of Object.keys(receipt.implementationSha256 || {})) {
+      if (path.isAbsolute(file) || file.split('/').includes('..')) throw new Error('Invalid canary implementation path.');
+      actualHashes[file] = createHash('sha256').update(readFileSync(path.join(root, file))).digest('hex');
+    }
+    const failures = evaluateGithubCanary(receipt, actualHashes);
+    if (failures.length && readiness.gates.privateGithubDuringCuration === 'passed') throw new Error('Live canary evidence is stale or incomplete: ' + failures.join(', '));
+  } else if (readiness.gates.privateGithubDuringCuration === 'passed') throw new Error('Live GitHub acceptance evidence is missing.');
   if (readiness.ready !== (unmetGates.length === 0)) throw new Error('GitHub readiness disagrees with its acceptance gates.');
   const report = { schemaVersion: 1, scope: 'offline-contract-and-implementation', candidate: before,
     githubDuringCuration: { ready: readiness.ready, unmetGates },

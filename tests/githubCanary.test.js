@@ -1,0 +1,5 @@
+import {it,expect} from 'vitest';
+import {evaluateGithubCanary} from '../evals/evaluate-curation-exploration.mjs';
+const receipt=()=>({status:'passed',transport:'private-tunnel',localResearchCalls:0,sourceBodiesInInitialRequest:false,actualSourceTextBytes:100,sameResponseImagesAndTools:true,commitPinnedFileRead:true,temporaryFilesDeleted:true,privateAtomicCommitVerified:true,originalImageUnchanged:true,githubAuthorizationInRequest:false,implementationSha256:{'src/providers/github.js':'a'.repeat(64)}});
+it('rejects live readiness after the implementation differs from the verified source-text canary',()=>{const r=receipt();expect(evaluateGithubCanary(r,r.implementationSha256)).toEqual([]);expect(evaluateGithubCanary(r,{'src/providers/github.js':'b'.repeat(64)})).toContain('implementation-changed');});
+it('requires actual source text, same-call images/tools and cleanup in the live receipt',()=>{for(const field of ['actualSourceTextBytes','sameResponseImagesAndTools','temporaryFilesDeleted']){const r=receipt();r[field]=false;expect(evaluateGithubCanary(r,r.implementationSha256).length).toBeGreaterThan(0);}});

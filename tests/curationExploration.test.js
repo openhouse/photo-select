@@ -45,8 +45,8 @@ describe('RFC 0012 corrected contract: synthetic API-end curation traces',()=>{
   expect(evaluateGithubReadiness({})).toHaveLength(7);
   expect(evaluateGithubReadiness({implementation:'passed',exactCommand:'passed',privateGithubDuringCuration:'passed',batchWithImagesAndTools:'passed',credentialSinks:'passed',workers20:'passed',ci:'passed'})).toEqual([]);
  });
- it('reports the current feature as not ready instead of mislabeling old research-first success',()=>{
-  const status=JSON.parse(readFileSync('evals/github-inference-readiness.json','utf8'));expect(status.ready).toBe(false);expect(evaluateGithubReadiness(status.gates)).not.toHaveLength(0);
+ it('keeps readiness consistent with every gate and excludes older research-first evidence',()=>{
+  const status=JSON.parse(readFileSync('evals/github-inference-readiness.json','utf8'));expect(status.ready).toBe(evaluateGithubReadiness(status.gates).length===0);expect(status.olderResearchFirstCanaryQualifies).toBe(false);expect(status.syntheticTraceTestsQualify).toBe(false);if(status.ready)expect(status.liveEvidence).toBeTruthy();
  });
 });
 it('accepts a private-tunnel trace only with local GitHub credentials and a read-only bridge',()=>{

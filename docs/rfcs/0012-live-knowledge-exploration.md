@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Implemented through private MCP tunnel; acceptance tracked in the readiness record |
+| Status | Implemented and technically verified through private MCP tunnel |
 | Decision owner | Jamie Burkart |
 | Author | Jamie Burkart with Codex |
 | Created | 2026-09-09 |
@@ -78,7 +78,7 @@ The older research-first canary and public MCP probes cannot satisfy the private
 
 The existing launcher routes only `--github-all` to the feature worktree. Local Git configuration stores the worktree path and tunnel ID, not a credential. The current Mac has the official tunnel client installed and an OHAI tunnel associated with its API organization. Keep the Mac awake and connected while Batch waits and runs. The flag provides tools; it cannot guarantee exhaustive discovery or that every response will use them.
 
-The initial private tunnel probe completed tool calls but exposed only a download notice for its README. The first installed-command canary then exposed two defects: multiple text blocks still lost the source body in the API trace, and citation validation did not recognize GitHub's `sha` argument. The bridge now joins all text into one explicit result block, and provenance accepts both `sha` and `ref`. These failures have deterministic regressions. The live acceptance receipt and [readiness record](../../evals/github-inference-readiness.json) govern completion; passing tool status alone does not prove source-text delivery.
+The initial private tunnel probe completed tool calls but exposed only a download notice for its README. The first installed-command canary then exposed two defects: multiple text blocks still lost the source body in the API trace, and citation validation did not recognize GitHub's `sha` argument. The bridge now joins all text into one explicit result block, and provenance accepts both `sha` and `ref`. These failures have deterministic regressions. The corrected installed-command canary passed with 3,744 bytes of actual private source text, six model-directed GitHub calls, 24 minutes covering all twelve requested curator voices, one image decision and no repair. Temporary Batch files were deleted; originals and atomic private provenance were verified. The [live acceptance receipt](../../evals/probes/2026-09-10-private-tunnel-curation.json) binds the production implementation by file hashes. The live acceptance receipt and [readiness record](../../evals/github-inference-readiness.json) govern completion; passing tool status alone does not prove source-text delivery.
 
 ## Four editorial perspectives
 
