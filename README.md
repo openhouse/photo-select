@@ -581,6 +581,18 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
 
-## Private knowledge context proposal
+## Live knowledge research
 
-[RFC 0011](docs/rfcs/0011-private-knowledge-context.md) proposes scoped GitHub knowledge access for ChatGPT and Photo Select. The [close reading](docs/reviews/2026-09-09-knowledge-ecosystem.md) explains the source architecture and curatorial purpose. [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md) proposes model-led live exploration through a local GitHub adapter, with a source receipt produced after research. Run `npm run evals:knowledge` for both proposals' synthetic contract tests or `npm run hillclimb` for the full regression gate. No private-access adapter is enabled by this proposal.
+Photo Select can discover your owned knowledge repositories and their newest branches, research them through authenticated GitHub tools, and use that evidence during curation. GitHub CLI must already be signed in (`gh auth login` if needed). An existing OpenAI key is reused from the environment or original checkout's `.env`; no key is copied into this worktree.
+
+```sh
+npm run knowledge -- --dir "/path/to/photos" --knowledge-brief "My DCLA / Brooklyn Arts Council listening-event project"
+```
+
+No profile or prepared packet is required. You can keep using `--context` for an existing brief. The command prints a private run directory containing copied photographs, the branch catalog, source passages, research record, curation replies, field notes, and a local Git history. Originals stay in place. On an external volume, runs default to that volume's `.photo-select/runs`; elsewhere they use your home directory.
+
+- Check discovery without model requests: `node src/index.js --knowledge-discover`.
+- Save research only: add `--knowledge-research-only` to the command above.
+- Optional controls: `--knowledge-live /private/path/profile.json`; see [the live research guide](docs/live-knowledge.md).
+
+The original command remains unchanged when live mode is omitted. Live mode currently uses OpenAI, a fixed fictional curator roster, and private working copies. It holds on source access changes or invalid replies. [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md) records the design and limits; [RFC 0011](docs/rfcs/0011-private-knowledge-context.md) preserves source authority and attribution boundaries. Run `npm run hillclimb` for the full regression and knowledge eval gate.

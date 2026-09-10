@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "photo-select",
+    "knowledge": "node src/index.js --knowledge-live",
     "test": "vitest run",
     "evals:prompt-cache": "node scripts/eval-prompt-cache.mjs",
     "evals:batch-aggregation": "vitest run tests/batchAggregation.test.js tests/openaiBatchProvider.test.js tests/orchestratorBatchAggregation.test.js",

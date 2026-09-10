@@ -587,6 +587,13 @@ export async function triageDirectory(options) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
+  if (provider.knowledge) {
+    curators = [...provider.curators];
+    promptPath = provider.promptPath;
+    contextPath = undefined;
+    await provider.assertDirectory(dir);
+    await provider.assertCurrent();
+  }
   if (recurse && depth === 0 && !_cascadeLevel) {
     return triageTree({
       ...options,
@@ -793,7 +800,7 @@ export async function triageDirectory(options) {
     }
 
     const peopleStart = Date.now();
-    const peopleResult = await prefetchPeople(images, {
+    const peopleResult = provider.knowledge ? { mode: "disabled" } : await prefetchPeople(images, {
       force: refreshPeopleIndex,
     });
     if (verbose && peopleResult.mode === "bulk") {
@@ -899,7 +906,7 @@ export async function triageDirectory(options) {
                 const prepareFirstRequest = async () => {
                   const names = batch.map((file) => path.basename(file));
                   const peopleLists = await Promise.all(
-                    names.map((name) => getPeople(name))
+                    names.map((name) => provider.knowledge ? [] : getPeople(name))
                   );
                   const photos = names.map((name, i) => ({
                     file: name,
@@ -1099,6 +1106,7 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
+                if (provider.knowledge) { abortProcessing = true; queue.length = 0; throw err; }
                 if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();

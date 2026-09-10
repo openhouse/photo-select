@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "scope": "synthetic-reference-and-traces-only",
+  "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "ad9f1f201661a065bc7fc1e9d06aff2c99cfe1109bf5645a2f02a87c9559c84e",
-    "files": 116
+    "sha256": "dbd1e04f94a4a52b3a4c4d7e2603fdc476985058b39ff45ba70db973998ae1d5",
+    "files": 127
   },
-  "passed": 64,
+  "passed": 105,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,
@@ -14,5 +14,5 @@
   "json_validity_rate": null,
   "retry_recovery_rate": null,
   "usefulness": "unmeasured",
-  "limitation": "Synthetic context and live-exploration traces assume verified descriptors; no authentication, real retrieval, model resistance, or consent is certified."
+  "limitation": "Offline reference and implementation tests mock network boundaries. Actual source access and model canaries are recorded separately; editorial usefulness and general model resistance remain unmeasured."
 }

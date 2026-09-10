@@ -5,10 +5,17 @@ import "./errorHandler.js";
 
 import { Command } from "commander";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
+import { openSync, writeSync, closeSync } from "node:fs";
 import { DEFAULT_PROMPT_PATH } from "./templates.js";
 import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
 import { parsePositiveInteger } from "./core/parsePositiveInteger.js";
+
+if (process.argv.some(arg => /^--knowledge-(live|discover|research-only)(=|$)/.test(arg)) && !process.argv.includes('--help')) {
+  const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
+  await reuseRepositoryEnvironment();
+}
 
 function parseEnvFlag(value, fallback = false) {
   if (value == null || value === "") return fallback;
@@ -94,6 +101,10 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option("--field-notes", "Enable field notes workflow")
+  .option("--knowledge-live [profile]", "Explore current knowledge repositories automatically; optional private JSON profile")
+  .option("--knowledge-brief <text>", "Describe the photo project inline; no context file needed")
+  .option("--knowledge-discover", "Refresh the knowledge repository/branch catalog without model requests or photo changes")
+  .option("--knowledge-research-only", "Save live research without starting photo curation")
   .option("-v, --verbose", "Print extra logs")
   .option(
     "--save-io",
@@ -174,7 +185,13 @@ let {
   adaptiveWorkers,
   adaptiveMinWorkers,
   refreshPeopleIndex,
+  knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief,
 } = program.opts();
+const liveEnabled = Boolean(knowledgeLive || knowledgeDiscover || knowledgeResearchOnly);
+const liveAbort = new AbortController();
+if (knowledgeBrief && !liveEnabled) program.error("--knowledge-brief requires --knowledge-live.");
+if (liveEnabled && providerName !== "openai") program.error("Live knowledge requires --provider openai; batch and Ollama are not supported yet.");
+if (liveEnabled && program.getOptionValueSource("prompt") === "cli") program.error("Live knowledge uses its source-aware prompt; omit --prompt.");
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   const n = Number(parallel) || 1;
@@ -237,6 +254,7 @@ let shuttingDown = false;
 async function handleSignal(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (liveEnabled) { liveAbort.abort(); return; }
   console.log(`\n🛑  received ${sig}, shutting down…`);
   scheduler.setConcurrency(0);
   await scheduler.waitForIdle().catch(() => {});
@@ -283,16 +301,40 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
 (async () => {
   try {
-    if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+    if (liveEnabled) {
+      const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
+      await reuseRepositoryEnvironment();
+    }
+    if (provider === 'openai' && !process.env.OPENAI_API_KEY && !knowledgeDiscover) {
       console.error(
         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
       );
       process.exit(1);
     }
-    const absDir = path.resolve(dir);
+    let absDir = path.resolve(dir);
+    let liveRun;
+    let restoreOutput = () => {};
+    if (liveEnabled) {
+      const { startLiveKnowledge, loadLiveProfile } = await import('./knowledgeRun.js');
+      const profile = await loadLiveProfile(knowledgeLive || true);
+      const brief = [knowledgeBrief, contextPath ? await readFile(path.resolve(contextPath), 'utf8') : undefined].filter(Boolean).join('\n\n') || undefined;
+      liveRun = await startLiveKnowledge({profile, source:absDir, brief, model:finalModel,
+        discoverOnly:knowledgeDiscover, researchOnly:knowledgeResearchOnly, signal:liveAbort.signal, progress:line=>console.log(line)});
+      if (knowledgeDiscover || knowledgeResearchOnly) { console.log(`knowledge: saved ${liveRun.root}`); return; }
+      absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = liveRun.provider.promptPath;
+      process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
+      process.umask(0o077);
+      process.chdir(liveRun.root);
+      const fd=openSync(path.join(liveRun.root,'runtime.log'),'a',0o600);
+      const stdout=process.stdout.write, stderr=process.stderr.write;
+      const privateWrite=(chunk,encoding,callback)=>{writeSync(fd,chunk);if(typeof encoding==='function')encoding();else callback?.();return true;};
+      process.stdout.write=privateWrite;process.stderr.write=privateWrite;
+      restoreOutput=()=>{process.stdout.write=stdout;process.stderr.write=stderr;closeSync(fd);};
+    }
+    try {
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
-    const driver = await getProvider(provider);
+    const driver = liveRun?.provider || await getProvider(provider);
     await triageDirectory({
       dir: absDir,
       promptPath,
@@ -315,8 +357,10 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       targetLevelSize,
       refreshPeopleIndex,
     });
-    console.log("🎉  Finished triaging.");
+    } finally { restoreOutput(); }
+    console.log(liveRun ? `knowledge: curation and field notes saved in ${liveRun.root}` : "🎉  Finished triaging.");
   } catch (err) {
+    if (liveEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exit(liveAbort.signal.aborted ? 130 : 1); }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
         "🛑  Billing limit reached. Please review your provider usage before retrying."

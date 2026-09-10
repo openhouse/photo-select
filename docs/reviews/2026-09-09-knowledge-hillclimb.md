@@ -36,3 +36,28 @@ The new proposal keeps application behavior unchanged and places model-led explo
 **Human review and labeled data — unmeasured:** No live retrieval/model traces or Jamie-labeled edits exist for this new mode. No judge is deployed or calibrated. Source recall, citation entailment, injection resistance, and usefulness require the private canary described in RFC 0012. Development case counts are not quality estimates.
 
 The combined PR exceeds the AGENTS 300-line warning and 500-line flag thresholds. Change-set review flag: `--mechanical`. This flag records the required large-change marker; the RFC and evaluator logic require substantive review and are not claimed to be mechanical transformations. This revision changes no production source, prompts, dependencies, or application options. It grants no merge or live-access authority.
+
+
+## RFC 0012 implementation, 2026-09-10
+
+Jamie authorized implementation, automatic discovery of the evolving ecosystem and latest branches, and reuse of the existing OpenAI key. The new mode uses an isolated provider, private working copies, and the existing selection flow. The ordinary mode remains unchanged.
+
+| Check | Observation | Change or interpretation |
+| --- | --- | --- |
+| Missing implementation modules and CLI option | Import and option tests failed before implementation | Add the live reader, research loop, private run, provider, and one-flag startup path. |
+| First implementation cases | 23 passed | Exact snapshots, live search/read sequencing, fixed reply contracts, and failure cases now execute against real code with fake network boundaries. |
+| Private directory tests | 29 passed; 1 failed | macOS system `/var` aliases were rejected. Permit the system `/var` and `/tmp` aliases while retaining checks on user-controlled output symlinks and Git ancestry. |
+| Cached authorization, malformed trees, source opt-outs, failed persistence | 31 passed; 4 failed | Recheck access on cached source use, validate tree shape, apply source policies before returning bodies, and keep storage errors outside the paid format-repair loop. |
+| Exact repaired-request identity | A regression found the audit hash used the original instructions | Hash the submitted repair request, including its actual instruction suffix. Evidence remains identical across the repair. |
+| Transport injection and atomic output | The synthetic test forbids the real GitHub transport and passes | The complete injected path uses invented sources and commits each response with its field notes. |
+| Actual GitHub discovery | Complete owned-repository inventory; 11 matching repositories and 32 branch snapshots | Confirms the installed CLI, branch-date query, pagination, and automatic selection path. Private identities remain outside this repository. |
+| Actual private GitHub reads | Two exact source bodies read and reauthorized locally; zero OpenAI calls | Confirms private fetch and provenance handling. The review material is stored outside this public repository. |
+| Live OpenAI synthetic canary | Two research tool calls; one fetched synthetic source; 2,490 research tokens; 1,951 curation tokens; valid 10-item minutes and one decision; no repair | Completed research, image processing, selection, and private response/field-note commit using gpt-4o. This one positive canary does not measure general resistance or usefulness. |
+
+Automatic approval review blocked the combined private-source-to-OpenAI canary because the exact private passages and external destination had not been specifically approved. No private source text was sent by that canary. A later concern about synthetic dependency injection was resolved by a test that forbids the real GitHub transport; the synthetic-only live canary then passed. The exact private passages are prepared locally for a separate approval.
+
+Offline CI makes no source or model requests. It now includes the runtime discovery/research/provider/private-output tests and the real orchestrator with fake network boundaries. The candidate receipt covers code, documentation, tests and evaluator files. The broader adversarial model evaluation and Jamie's assessment of actual photographic edits remain unmeasured. Current token/byte limits, supported file types, default/alternative branch distinctions, stopped-run behavior, and discovery omissions are documented in the live guide.
+
+This implementation exceeds the AGENTS change-size thresholds. Required review marker: `--mechanical`; the implementation is substantive and is not represented as a mechanical transformation. Auto-merge is prohibited above 800 changed lines. This task updates the draft PR without merging it.
+
+The final status review also exposed a completed discovery-only run still labeled `discovering`. A new integration case first failed on that mismatch, then passed after the run saved `discovered` with its catalog. No model calls or photo copies occur in that case.

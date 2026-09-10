@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = 'evals/reports/knowledge-context.json';
-const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js'];
+const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js'];
 function fingerprint() {
   const files = [...new Set(execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(p => p && p !== reportPath).sort();
@@ -25,11 +25,11 @@ try {
   if (testFiles.some(file => !result.testResults.some(suite => path.resolve(suite.name) === path.join(root, file)))) throw new Error('An expected eval suite did not run.');
   if (result.numTotalTests < 1 || result.numFailedTests || result.numPendingTests || result.numTodoTests) throw new Error('Incomplete eval result.');
   if (fingerprint().sha256 !== before.sha256) throw new Error('Candidate changed during evaluation.');
-  const report = { schemaVersion: 1, scope: 'synthetic-reference-and-traces-only', candidate: before,
+  const report = { schemaVersion: 1, scope: 'offline-contract-and-implementation', candidate: before,
     passed: result.numPassedTests, failed: result.numFailedTests, skipped: result.numPendingTests,
     sourceAccess: false, modelRequests: 0, publicationAuthority: 'none',
     json_validity_rate: null, retry_recovery_rate: null, usefulness: 'unmeasured',
-    limitation: 'Synthetic context and live-exploration traces assume verified descriptors; no authentication, real retrieval, model resistance, or consent is certified.' };
+    limitation: 'Offline reference and implementation tests mock network boundaries. Actual source access and model canaries are recorded separately; editorial usefulness and general model resistance remain unmeasured.' };
   mkdirSync(path.join(root, 'evals/reports'), { recursive: true });
   writeFileSync(path.join(root, reportPath), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));
