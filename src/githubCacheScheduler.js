@@ -1,8 +1,8 @@
 import {knowledgeError} from './core/knowledgeLive.js';
 import {validateGithubBrief} from './core/githubBrief.js';
 import {githubCacheUsage} from './core/githubPromptCache.js';
-// Actual Batch requests only. Seed/probe are useful image-curation jobs, not
-// synthetic warmups or a silent switch to another service tier.
+// Seed/probe are useful curation jobs. The selected transport and tier are
+// explicit in each request; queue release depends on reported reuse.
 export class GithubCacheScheduler {
   constructor({send,signal,progress=()=>{},now=Date.now}) {
     Object.assign(this,{send,signal,progress,now});this.groups=new Map();
@@ -10,7 +10,7 @@ export class GithubCacheScheduler {
   }
   respond(body) {
     if(this.signal?.aborted)return Promise.reject(knowledgeError('Curation cancelled.'));
-    if(!body.prompt_cache_key?.startsWith('photo-select:github-v1:'))return this.send(body);
+    if(!body.prompt_cache_key?.startsWith('photo-select:github-v2:'))return this.send(body);
     const key=body.prompt_cache_key;let group=this.groups.get(key);
     if(!group){
       const brief=JSON.parse(body.input[0].content[0].text).brief;
@@ -28,7 +28,7 @@ export class GithubCacheScheduler {
       while(group.queue.length&&!group.error){
         if(group.phase==='reader'&&this.now()-group.lastHit>=20*60*1000)group.phase='probe';
         const role=group.phase,jobs=group.queue.splice(0,role==='reader'?8:1);
-        this.progress(`github cache: ${role} submitted (${jobs.length} request${jobs.length===1?'':'s'}); waiting for Batch`);
+        this.progress(`github cache: ${role} submitted (${jobs.length} request${jobs.length===1?'':'s'}); waiting for ${jobs[0].body.service_tier==='flex'?'Flex':'Batch'}`);
         const results=await Promise.allSettled(jobs.map(job=>this.send(job.body)));
         let allHits=true;
         for(let index=0;index<jobs.length;index++){
@@ -40,7 +40,7 @@ export class GithubCacheScheduler {
           // A valid completed curation remains useful even when its cache misses.
           job.resolve({...response,_photoSelectCache:cache});
           allHits&&=usage.verified;
-          if(response.status!=='completed'||(role!=='seed'&&!usage.verified)||
+          if((job.body.service_tier==='flex'&&response.service_tier!=='flex')||response.status!=='completed'||(role!=='seed'&&!usage.verified)||
             (role==='seed'&&!usage.verified&&!(usage.writeTokens>=group.required))){
             this.hold(group,knowledgeError(`GitHub prompt cache ${role} did not confirm ${group.required} reusable tokens; further curation held. See private usage receipts before retrying.`));
           }

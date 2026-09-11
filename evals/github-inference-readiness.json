@@ -9,15 +9,15 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Full GitHub cache correction passed 422 tests and 237 focused evals. Live reads occurred, but repeated actual Batch checks also missed with an unchanged prefix. The guard held further submissions. Consistent live cache reuse, fresh private-source acceptance and full-corpus completion remain unverified.",
+  "note": "Flex cache repair passed 430 tests and 245 focused evals. The final full-brief live canary completed all four curations with 577,895 cached tokens and zero writes per call. Fresh private-source acceptance and full-corpus completion remain separate and pending.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
-  "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
+  "workers20Evidence": "tests/githubFlex.test.js holds twenty pending jobs behind the seed/probe and measures a peak of eight concurrent readers; CLI and audit tests cover per-batch rosters, normal image sorting and serialized atomic commits. Live cache acceptance uses four synthetic images, with measured API concurrency one.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "additionalCuratorsEvidence": {
     "tests": [
@@ -27,13 +27,14 @@
     "scope": "Real CLI, metadata HTTP bulk/fallback, custom base roster, repeated-tag additions, per-photo labels, opt-out, repair and twenty concurrent request rosters; OpenAI and tunnel IO are synthetic."
   },
   "cacheEvidence": {
-    "status": "held",
-    "path": "evals/probes/2026-09-11-github-cache-diagnostic.json",
+    "status": "passed",
+    "path": "evals/probes/2026-09-11-github-cache-flex.json",
     "priorEvidence": [
       "evals/probes/2026-09-11-github-cache-initial.json",
-      "evals/probes/2026-09-11-github-cache-held.json"
+      "evals/probes/2026-09-11-github-cache-held.json",
+      "evals/probes/2026-09-11-github-cache-diagnostic.json"
     ],
-    "scope": "Three bounded actual Batch tests: initial two reads hit; next test hit then missed; diagnostic test missed on probe and held its reader. Eight API curations total; no corpus restart. Cache miss cause remains unresolved."
+    "scope": "Final implementation: four Flex curations of synthetic images using the unchanged 573,984-token brief, gpt-5.6-terra/high and live GitHub get_me calls. All four reused 577,895 cached tokens with zero writes. Actual measured API concurrency was one; twenty queued workers and eight-reader fanout are tested offline. Prior full-brief test wrote once and reused on three follow-ups. Earlier Batch misses remain recorded."
   },
   "ciEvidence": {
     "implementationCommit": "08a4af4b89342c34ebf50abbd424e63ac659a476",

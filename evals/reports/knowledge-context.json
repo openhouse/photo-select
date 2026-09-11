@@ -2,21 +2,22 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "19e6c7ee210a2028c5de4e9513926abb7787d24e120487bb7c8a1bdbc46109f1",
-    "files": 163
+    "sha256": "0c388b75e5537e446796b4c1784d8acc069d36fdba991b41aca98f9375132ed3",
+    "files": 165
   },
   "githubDuringCuration": {
     "ready": false,
     "unmetGates": [
       "exactCommand",
-      "privateGithubDuringCuration"
+      "privateGithubDuringCuration",
+      "ci"
     ]
   },
   "promptCache": {
-    "status": "held",
-    "evidence": "evals/probes/2026-09-11-github-cache-diagnostic.json"
+    "status": "passed",
+    "evidence": "evals/probes/2026-09-11-github-cache-flex.json"
   },
-  "passed": 237,
+  "passed": 245,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,

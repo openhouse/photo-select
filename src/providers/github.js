@@ -10,11 +10,11 @@ import {githubTool,sessionCurators,curatorsForBatch,responseText,githubSources,v
 export class GithubCurationProvider {
   name='openai';knowledge=true;supportsPeopleMetadata=true;supportsAsync=false;
   promptPath=fileURLToPath(new URL('../../prompts/github_prompt.hbs',import.meta.url));
-  constructor({tunnelId,curators=[],brief='',briefSize,respond,encodeImage,save=async()=>{},assertDirectory=async()=>{},assertCurrent=async()=>{}}) {
+  constructor({tunnelId,curators=[],brief='',briefSize,cacheServiceTier,respond,encodeImage,save=async()=>{},assertDirectory=async()=>{},assertCurrent=async()=>{}}) {
     this.tool=githubTool(tunnelId);this.curators=sessionCurators(curators);
     if(credentialLike(brief))throw knowledgeError('Credential-like content in the brief is held.');
     this.briefTokens=(briefSize||validateGithubBrief(brief)).textTokens;
-    Object.assign(this,{brief,respond,encodeImage,save,assertDirectory,assertCurrent});
+    Object.assign(this,{brief,cacheServiceTier,respond,encodeImage,save,assertDirectory,assertCurrent});
   }
   async submit(options){return {promise:this.chat(options)};}
   async collect(handle){return handle.promise;}
@@ -32,19 +32,20 @@ export class GithubCurationProvider {
       request={model,store:false,instructions:`${prompt}\n${GITHUB_CURATION_INSTRUCTIONS}\nBatch curators: ${JSON.stringify(batchCurators)}\nFilenames: ${JSON.stringify(filenames)}\nAllowed JSON keys: minutes, decisions.`,input:[{role:'user',content}],tools:[this.tool],max_tool_calls:32,max_output_tokens:16000,text:{format:{type:'json_schema',name:'photo_select',strict:true,schema}}};
       if(/^gpt-[56]/i.test(model)&&verbosity)request.text.verbosity=verbosity;
       if(/^(?:gpt-[56]|o[1-9])/i.test(model)&&reasoningEffort&&reasoningEffort!=='auto')request.reasoning={effort:reasoningEffort};
-      request=cacheGithubRequest(request,{brief:this.brief,briefTokens:this.briefTokens});
+      request=cacheGithubRequest(request,{brief:this.brief,briefTokens:this.briefTokens,serviceTier:this.cacheServiceTier});
       for(let attempt=0;attempt<2;attempt++) {
         await this.assertCurrent();
         const submitted=attempt?repairGithubRequest(request):request;
         const response=await this.respond(submitted);
         if(credentialLike(response)){
           const redacted=redactCredentialContent(response);
-          transport=redacted.value._photoSelectBatch;
+          transport=redacted.value._photoSelectFlex??redacted.value._photoSelectBatch;
           attempts.push({request_sha256:sha256(submitted),response_sha256:sha256(response),response:redacted.value,redacted:true,credentialFindings:redacted.findings});
           throw knowledgeError('Credential-like response held; see redacted diagnostics in the private curation record.');
         }
-        transport=response._photoSelectBatch;
+        transport=response._photoSelectFlex??response._photoSelectBatch;
         attempts.push({request_sha256:sha256(submitted),response});
+        if(submitted.service_tier==='flex'&&response.service_tier!=='flex')throw knowledgeError('GitHub curation returned an unexpected service tier; further work held.');
         if(response.status!=='completed'||response.output?.some(x=>x.type==='mcp_approval_request'||x.type==='mcp_call'&&x.error))throw knowledgeError('Curation or GitHub tool execution did not complete.');
         let json;
         try {

@@ -41,6 +41,12 @@ async function setup(pairs=1,{people={},legacy=false}={}){
     }
     files.set(output,rows.map(x=>JSON.stringify(x)).join('\\n'));batches.set(id,{id,status:'completed',output_file_id:output});return {id};
    },retrieve:async id=>batches.get(id),cancel:async()=>{}}};
+  client.responses={create:async(request)=>{
+   count++;const user=request.input.at(-1),brief=JSON.parse(user.content[0].text);
+   await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,serviceTier:request.service_tier,tools:request.tools})+'\\n');
+   const minimum=Number(request.input[1].content[0].text.match(/between ([0-9]+) and/)[1]);
+   return {id:'response-'+count,status:'completed',service_tier:'flex',usage:{input_tokens:6000,input_tokens_details:{cached_tokens:count===1?0:5000,cache_write_tokens:count===1?5000:0}},output_text:JSON.stringify({minutes:Array.from({length:minimum},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'})),decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))})};
+  }};
   return actual({...options,base:process.env.TEST_AUDIT,tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({assertCurrent:async()=>{},stop:async()=>{}}),client});
  }`;
  const loader=path.join(root,'loader.mjs');await fs.writeFile(loader,`export async function resolve(specifier,context,next){if(specifier==='./githubRun.js'&&context.parentURL?.endsWith('/src/index.js'))return {url:'data:text/javascript,'+encodeURIComponent(${JSON.stringify(wrapper)}),shortCircuit:true};return next(specifier,context);}`);
@@ -116,9 +122,11 @@ it('keeps full context, sorting and private cache usage through the actual CLI',
  const f=await setup(10),context=Array.from({length:300},(_,i)=>`Record ${i}: amber bridge cedar delta field.\n`).join('');
  const result=await f.run({context,curators:['Base']});expect(result.code,result.stderr).toBe(0);
  expect(result.stdout+result.stderr).toContain('github cache: probe');
+ expect(result.stdout+result.stderr).toContain('Flex at Batch rates');
+ const sent=(await fs.readFile(f.calls,'utf8')).trim().split('\n').map(JSON.parse);expect(sent.every(r=>r.serviceTier==='flex')).toBe(true);
  expect(await jpgs(path.join(f.source,'_keep'))).toHaveLength(10);expect(await jpgs(path.join(f.source,'_aside'))).toHaveLength(10);
  const audit=path.join(f.audit,(await fs.readdir(f.audit))[0]),records=await Promise.all((await fs.readdir(audit)).filter(n=>/^curation-/.test(n)).sort().map(async n=>JSON.parse(await fs.readFile(path.join(audit,n),'utf8'))));
  expect(records).toHaveLength(3);expect(records.map(r=>r.attempts[0].response._photoSelectCache.role)).toEqual(['seed','probe','reader']);
- for(const record of records){expect(JSON.parse(record.request.input[0].content[0].text).brief).toBe(context);expect(record.status).toBe('completed');}
+ for(const record of records){expect(JSON.parse(record.request.input[0].content[0].text).brief).toBe(context);expect(record.status).toBe('completed');expect(record.request.service_tier).toBe('flex');expect(record.attempts[0].request_sha256).toBe(record.model_sha256);}
  expect(new Set(records.map(r=>r.request.prompt_cache_key)).size).toBe(1);
 },30000);

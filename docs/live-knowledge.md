@@ -62,7 +62,8 @@ external volume at `/Volumes/<volume>/.photo-select/runs/`, or under
 - `curation-*.json`: requests with each batch roster and photo tags, tool traces, validated replies, source references,
   token usage and repair history.
 - `field-notes.md`: the attributed curatorial discussion and decisions.
-- `batch-*.json`: Batch/file identifiers, diagnostics and cleanup receipts.
+- `flex-*.json`: submitted request hashes, attempts, actual service tier and usage.
+- `batch-*.json`: identifiers, diagnostics and cleanup for requests using Batch files.
 - `runtime.log`: operational output.
 
 Audit files use private filesystem permissions. Each response and updated audit
@@ -92,7 +93,26 @@ a process already running; a restart is not needed to read its log.
 
 ## Batch and interruption
 
-Keep this Mac awake, online and attached to the drive until the command finishes. The application keeps the tunnel running while Batch waits and executes, then stops it. Batch may queue work for up to its 24-hour completion window; reads happen when the model runs. `--provider openai` also supports the same tools for synchronous Responses calls. The application never silently changes provider, model or tool availability.
+Keep this Mac awake, online and attached to the drive until the command finishes.
+The application keeps the private tunnel running until work completes. With
+`--provider openai-batch`, cache-eligible GPT-5.6+ requests use Responses with
+`service_tier: "flex"`, matching Photo Select's existing cache-aware path.
+[OpenAI prices Flex tokens at Batch rates, including prompt-cache discounts](https://developers.openai.com/api/docs/guides/flex-processing).
+The terminal announces this choice and private receipts record the requested and
+returned tier. There is no automatic fallback to standard pricing.
+
+Short briefs and unsupported models retain actual Batch-file submission, which may
+queue for its 24-hour completion window. `--provider openai` retains synchronous
+Responses calls at that provider's normal tier. Model, reasoning effort, full brief,
+images and GitHub tool access are preserved in every path.
+
+Flex allows fifteen minutes per request. Only a rejected HTTP 429 with
+`resource_unavailable` or `rate_limit_exceeded` is retried, up to three attempts,
+with increasing delays and `Retry-After` when provided. Billing/authentication
+failures and uncertain network timeouts hold work without automatic resubmission.
+A completed cache miss is never retried just to seek a discount. Ctrl-C aborts local
+waiting and closes the tunnel; it cannot undo a request already accepted by the API.
+Inspect private receipts before retrying after an uncertain interruption.
 
 Batch requests are uploaded from memory. Both output and error files are read and matched to their submitted requests. Error diagnostics are saved privately before remote cleanup; terminal messages show error codes and fixed guidance rather than raw API prose. Successful rows survive a different row failing. If result retrieval or diagnostic persistence fails, remote files are retained for recovery. Otherwise the temporary remote input, output and error files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation resumes the selected image directory with a fresh private API audit; it does not replay the previous model conversation.
 
@@ -107,7 +127,7 @@ source evidence. Credential-like content, disallowed operations and transport or
 protocol failures still hold the request.
 
 Credential-filter holds now retain a redacted response, the original response hash,
-Batch locator and safe trigger metadata (field location, token family, match length
+transport locator and safe trigger metadata (field location, token family, match length
 and whether it occurred inside a word). Entire matching strings are omitted,
 including private-key bodies. No suspected credential value or excerpt is saved in
 those diagnostics. The filter remains enabled. Earlier holds that discarded the
@@ -142,8 +162,8 @@ truncates it. Changing filenames, photo tags, added curators and repair directio
 come after that boundary. The output schema before it is stable; local validation
 still enforces each batch's exact roster, filenames and minutes bounds.
 
-`--provider openai-batch` keeps using Batch. The first real curation request can
-write the shared prefix. The next checks reuse before the remaining work is
+For eligible `--provider openai-batch` requests, Flex receives the first real
+curation request as a cache seed. The next checks reuse before remaining work is
 released in waves of at most eight requests. An already-warm first request can
 establish reuse immediately. After twenty minutes without a confirmed hit, another
 single request checks again. These are useful curation jobs, not extra warmups.
@@ -161,24 +181,33 @@ reporting `cached=`, `write=` and `input=`. Full usage and the seed/probe/reader
 are retained under `attempts[].response._photoSelectCache` in private curation
 records. The cache key contains a versioned hash, never the brief or credential.
 
-Cache reuse is not guaranteed by Batch scheduling: its 24-hour execution window can
-outlast a cache entry. A miss in a submitted wave cannot undo its charges; it stops
-the next wave. Small briefs and older models retain their existing request path.
-Synchronous `--provider openai` uses the same stable boundary on eligible models;
-the seed/probe scheduling guard described here applies to Batch.
+Cache entries can still expire or become unavailable. A miss in a submitted wave
+cannot undo its charges; it stops the next wave. Small briefs and older models
+retain their existing request path. Synchronous `--provider openai` uses the same
+stable boundary on eligible models; the seed/probe guard described here applies
+to `openai-batch` mode.
 
-To run a small paid acceptance test, use `npm run evals:github-prompt-cache -- --live`
-from the development checkout. It uses three synthetic photographs, a synthetic
-brief, the existing OpenAI credential and the actual private GitHub tunnel. It
-records request hashes and usage privately. Offline mocks and cache-write counts
-alone cannot establish live cache savings. See the current [OpenAI prompt caching
-guide](https://developers.openai.com/api/docs/guides/prompt-caching) for supported
-breakpoints, retention and token accounting.
+To run a paid acceptance test, use `npm run evals:github-prompt-cache -- --live`
+from the development checkout. It uses four synthetic photographs, a synthetic
+brief, the existing OpenAI credential and the actual private GitHub tunnel. Add
+`--context /absolute/path/to/brief.txt` to test an unchanged full brief instead.
+The test records actual tier, full-brief preservation, request hashes, cache usage
+and measured request overlap. Queuing two jobs together does not necessarily make
+their API calls overlap. This test does not sort the user's photographs.
 
-Current acceptance: small actual Batch tests produced cache hits and subsequent
-misses even with unchanged pre-boundary content. The miss guard operated correctly;
-consistent live reuse remains held in the acceptance record. The diagnostic test
-returned `comparison_response_not_found`, which provides no cause. Do not repeatedly
-restart a held large-brief run to force a hit: each new seed/probe can incur charges.
-A command started before this change keeps its loaded code; the configured launcher
-uses the correction on the next invocation.
+Offline mocks and cache-write counts alone cannot establish live savings. See the
+[OpenAI prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+for supported breakpoints, retention and token accounting.
+
+On 2026-09-11, the full 573,984-token brief passed a four-curation live Flex test:
+one prefix write of 577,895 tokens, then three reads of 577,895 cached tokens with
+zero new writes. Each response completed with the requested tier and a GitHub tool
+call. This cache test checks the connection using `get_me`; private repository
+source reading and editorial quality have separate acceptance gates. See the
+[acceptance record](../evals/github-inference-readiness.json) for the current
+implementation-bound receipt. Earlier actual Batch misses remain recorded; their
+server-side cause is unresolved.
+
+The configured launcher uses this correction on the next invocation of the same
+command. Already-running processes retain their loaded code. Completed decisions
+remain in the selected directory and are skipped at that level when resuming.

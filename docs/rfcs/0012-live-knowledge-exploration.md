@@ -6,7 +6,7 @@
 | Decision owner | Jamie Burkart |
 | Author | Jamie Burkart with Codex |
 | Created | 2026-09-09 |
-| Revised | 2026-09-10 |
+| Revised | 2026-09-11 |
 | Branch | `work/2026-09-09-knowledge` |
 | Companion | [RFC 0011: private context and source policy](0011-private-knowledge-context.md) |
 
@@ -52,7 +52,21 @@ Read README, AGENTS, source policies, and graph records as evidence of local con
 
 The Batch API accepts `/v1/responses` request bodies, according to its [guide](https://developers.openai.com/api/docs/guides/batch). That general contract alone is insufficient proof of authenticated MCP execution for the exact model and image request. Verify a completed response containing successful MCP calls before declaring support. Batch may wait in a queue; "real time" here means reads at inference time, not immediate execution when the command starts.
 
-Do not silently change provider, model, reasoning effort, or tool availability. A tool-enabled request must never fall back to a Chat Completions or image-only request that loses tools. If Batch cannot support the request, hold with an accurate reason. A synchronous alternative requires an explicit user choice.
+Jamie subsequently requested repair of repeated cache misses. For eligible
+GPT-5.6+ briefs, preserve the `openai-batch` CLI interface while restoring the
+application's existing cache-aware Flex path, at Batch token rates. Set
+`service_tier: "flex"` explicitly, announce it, audit the returned tier and hold if
+it differs. Short/unsupported requests still use Batch files. This is the selected
+transport policy, not a fallback after a paid miss. Do not switch to standard
+pricing automatically. Preserve model, reasoning effort, tools and full context;
+never fall back to an image-only request or a separate research pass.
+
+Flex requests have a fifteen-minute timeout and up to three attempts only for
+explicit rejected capacity/rate-limit 429s. Do not retry billing, authentication or
+uncertain connection failures automatically. Save private Flex receipts with
+request hash, attempt count, actual tier and usage. These requests do not create
+Batch input/output files. The following remote-file lifecycle applies only to
+actual Batch submissions.
 
 Construct Batch uploads in memory. They contain images, the brief and a tunnel ID, but no GitHub credential. `store:false` does not remove Files API uploads. Save input and Batch IDs privately before polling, delete temporary input/output/error files after use, handle interruption and submission failure, and hold on failed cleanup. A forced machine/process shutdown may require cleanup using the retained Batch receipt.
 
@@ -69,7 +83,7 @@ The [readiness record](../../evals/github-inference-readiness.json) is separate 
 1. Implement the corrected request path.
 2. Exercise the exact installed launcher and one-flag command.
 3. Observe private GitHub reads inside a completed image-curation response.
-4. Verify Batch with images and tools on the requested model.
+4. Verify the selected batch-mode transport with images and tools on the requested model.
 5. Verify every credential sink, including remote input cleanup.
 6. Exercise twenty concurrent workers and atomic private output.
 7. Verify CI on the implementation candidate.
@@ -128,13 +142,24 @@ response schema before a user-role block containing the entire brief, with an
 explicit breakpoint. Put all batch-specific directions, exact filename/curator
 lists, image metadata and images afterward. Repairs change only the later
 instructions. Maintain strict local validation against the original per-batch
-schema and roster before accepting output. Use a separate `github-v1` cache-key
-namespace covering the prefix and its model, effort, verbosity, schema and tools.
+schema and roster before accepting output. Use a separate `github-v2` cache-key
+namespace covering the prefix and its model, effort, verbosity, schema, tools and
+selected service tier. The tier change invalidates earlier keys.
 
-For Batch, use actual curation jobs as seed and probe before bounded reader waves;
-hold unsent work if substantial reuse is not observed. Retain completed decisions
-on a later cache miss. No provider substitution, credential forwarding, research
-precollection or reduction of the brief is introduced. Cache entries may expire
-before a delayed Batch executes; usage receipts and the live acceptance test
-remain necessary. [The operating guide](../live-knowledge.md#prompt-caching-with-github-batch-curation)
-describes the guard and its limits.
+For `openai-batch`, use actual curation jobs as seed and probe before bounded reader
+waves; hold unsent work if substantial reuse is not observed. Retain completed
+decisions on a later cache miss. The full-size actual Batch run wrote its unchanged
+prefix twice with zero cached reads; shorter tests also hit and later missed. A
+comparison using the same GitHub request layout through Flex read the prefix on
+all three follow-ups. OpenAI documents [Flex at Batch token rates, including cache
+discounts](https://developers.openai.com/api/docs/guides/flex-processing).
+
+The repair therefore restores explicit Flex for eligible requests without an
+extra user flag. The full 573,984-token brief subsequently produced one 577,895-token
+cache write and three 577,895-token reads with zero rewrites. These bounded tests
+establish observed cache reuse, not the cause of earlier Batch misses or a promise
+against future eviction. Cache misses, wrong tiers and missing usage still hold
+queued work. No GitHub credential forwarding, preparatory research or brief
+reduction is introduced. [The operating guide](../live-knowledge.md#prompt-caching-with-github-batch-curation)
+describes the guard and limits; [the acceptance record](../../evals/github-inference-readiness.json)
+separates current cache evidence from historical private-source acceptance.

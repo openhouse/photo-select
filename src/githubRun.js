@@ -43,13 +43,14 @@ export async function startGithubRun({source,brief='',curators=[],provider='open
     progress(`github: image directory ${run.images}`);progress(`github: private audit ${run.root}`);
     const save=await createGithubAudit(run.root);
     const client=dependencies.client||new OpenAI({apiKey:process.env.OPENAI_API_KEY,baseURL:'https://api.openai.com/v1',maxRetries:0,timeout:120000});
-    const batch=provider==='openai-batch'?new GithubBatchTransport({client,signal,progress,saveReceipt:record=>atomic(path.join(run.root,'batch-'+record.runId+'.json'),record)}):null;
-    const driver=new GithubCurationProvider({tunnelId,curators,brief,briefSize,save,
+    const batch=provider==='openai-batch'?new GithubBatchTransport({client,signal,progress,saveReceipt:record=>atomic(path.join(run.root,(record.transport||'batch')+'-'+record.runId+'.json'),record)}):null;
+    if(batch&&briefSize.textTokens>=1024)progress('github: cacheable batch-mode requests use Flex at Batch rates; no standard-tier fallback');
+    const driver=new GithubCurationProvider({tunnelId,curators,brief,briefSize,cacheServiceTier:batch?'flex':undefined,save,
       respond:batch?body=>batch.respond(body):body=>client.responses.create(body,{signal}),
       assertCurrent:tunnel.assertCurrent,
       assertDirectory:async dir=>{const actual=await fs.realpath(dir);if(actual!==run.images&&!actual.startsWith(run.images+path.sep))throw knowledgeError('Curation escaped the selected image directory.');},
       encodeImage:file=>sharp(file).rotate().resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:75}).toBuffer()});
-    await atomic(path.join(run.root,'session.json'),{mode:'github-during-curation',imageDirectory:run.images,outputMode:'in-place',provider,tunnelId,briefSize,curators:driver.curators,curatorMode:'base-plus-repeated-photo-tags',scope:'credential-readable-repositories',localResearchCalls:0,sourceBodiesPrecollected:false,githubCredentialDestination:'github-only'});
+    await atomic(path.join(run.root,'session.json'),{mode:'github-during-curation',imageDirectory:run.images,outputMode:'in-place',provider,cacheTransport:batch?'flex-at-batch-rates':'responses',tunnelId,briefSize,curators:driver.curators,curatorMode:'base-plus-repeated-photo-tags',scope:'credential-readable-repositories',localResearchCalls:0,sourceBodiesPrecollected:false,githubCredentialDestination:'github-only'});
     return {...run,provider:driver,stop:tunnel.stop};
   }catch(error){await tunnel.stop();throw error;}
 }

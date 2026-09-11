@@ -13,7 +13,7 @@ async function requests(){
 it('caches the entire unchanged user brief before filenames, voices, metadata and images',async()=>{
  const [a,b]=await requests();
  expect(a.prompt_cache_options).toEqual({mode:'explicit',ttl:'30m'});
- expect(a.prompt_cache_key).toMatch(/^photo-select:github-v1:/);expect(a.prompt_cache_key).toBe(b.prompt_cache_key);
+ expect(a.prompt_cache_key).toMatch(/^photo-select:github-v2:/);expect(a.prompt_cache_key).toBe(b.prompt_cache_key);
  expect(a.instructions).toBe(b.instructions);expect(a.text).toEqual(b.text);expect(a.tools).toEqual(b.tools);
  expect(a.input[0]).toEqual(b.input[0]);expect(a.input[0].role).toBe('user');
  expect(JSON.parse(a.input[0].content[0].text).brief).toBe(brief);
@@ -106,4 +106,14 @@ it('states dynamic minutes bounds when a direct caller supplies no rendered prom
  let request;const p=new GithubCurationProvider({tunnelId,curators:base,brief,encodeImage:async()=>Buffer.from('image'),respond:async r=>{request=r;return reply('a.jpg');}});
  await p.chat({model:'gpt-5.6-terra',images:['a.jpg'],minutesMin:1,minutesMax:7});
  expect(request.input[1].content[0].text).toContain('Produce between 1 and 7 minutes items.');
+});
+
+it('accepts four complete Flex curations and rejects a miss in either reader',async()=>{
+ const {evaluateGithubCacheCanary}=await import('../evals/evaluate-github-cache.mjs');
+ const hash='a'.repeat(64),receipt={schemaVersion:2,transport:'flex',context:{textTokens:3600},status:'passed',requested:4,completed:4,implementationSha256:{'src/fixture.js':hash},usages:['seed','probe','reader','reader'].map(role=>({role,key:'shared',serviceTier:'flex',requestedTier:'flex',fullBriefPreserved:true,curationStatus:'completed',githubToolCalled:true,inputTokens:4500,cachedTokens:role==='seed'?0:4000,writeTokens:role==='seed'?4000:0,requiredCachedTokens:3500,verified:role!=='seed'}))};
+ expect(evaluateGithubCacheCanary(receipt,receipt.implementationSha256)).toEqual([]);
+ for(const mutate of [r=>{r.usages[3].cachedTokens=0;r.usages[3].writeTokens=4000;},r=>{r.usages[2].cachedTokens=128;},r=>{r.usages[3].serviceTier='default';},r=>{r.usages[1].requestedTier='default';},r=>{r.usages[1].fullBriefPreserved=false;},r=>{r.usages[3].githubToolCalled=false;},r=>{r.transport='batch';},r=>{r.context.textTokens=10;},r=>{r.usages[3].key='changed';},r=>{r.usages.pop();},r=>{r.status='held';}]){const changed=structuredClone(receipt);mutate(changed);expect(evaluateGithubCacheCanary(changed,receipt.implementationSha256).length).toBeGreaterThan(0);}
+ expect(evaluateGithubCacheCanary(receipt,{'src/fixture.js':'b'.repeat(64)})).toContain('implementation-changed');
+ const warm=structuredClone(receipt);Object.assign(warm.usages[0],{cachedTokens:4000,writeTokens:0,verified:true});warm.usages[1].role='reader';
+ expect(evaluateGithubCacheCanary(warm,receipt.implementationSha256)).toEqual([]);
 });

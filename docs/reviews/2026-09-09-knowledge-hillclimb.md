@@ -375,3 +375,74 @@ The focused report is regenerated after recording these results. Live cache
 reliability remains held; green CI does not change that outcome. All temporary
 remote files from the eight live curations were confirmed deleted after private
 receipt persistence.
+
+
+## 2026-09-11: repair cache reuse through explicit Flex
+
+Jamie's subsequent full-brief run stopped after its second completed curation:
+both requests wrote 577,895 tokens and reported zero cached reads. The application
+retained their twenty decisions (ten keep, ten aside); twenty queued jobs were
+held. Source-directory image and explanation files were verified in place. The
+static prompt and imported tool definitions matched, and the requests ran within
+cache retention. The underlying service-side cause of the Batch misses is still
+unknown; this is not evidence of a billing or GitHub-credential failure.
+
+Comparison with the older non-GitHub implementation found that its cache-aware
+batch mode already used Flex. A bounded test changed the GitHub transport to Flex
+while preserving the request structure and private tools. It wrote 17,341 tokens
+once, then all three follow-ups read 17,341 cached tokens with zero writes. The API
+returned the requested Flex tier and cache-hit diagnostics on the follow-ups.
+
+The repair makes that path automatic for eligible `--github-all --provider
+openai-batch` requests. It preserves the command, full brief, images, metadata,
+curators and private GitHub tools. Flex is explicit in the request, verbose output
+and private receipts; OpenAI documents its token pricing at Batch rates. There is
+no standard-tier fallback. Short/unsupported requests retain actual Batch files.
+The key advances to `github-v2` and includes the selected tier. A mismatched
+returned tier holds the response and queued work for inspection.
+
+Flex gets a fifteen-minute request timeout. Only explicitly rejected capacity or
+rate-limit 429s receive at most three attempts with backoff. Billing, authentication
+and uncertain timeouts are not automatically retried. Existing cache-miss guards,
+strict output validation and completed-result preservation remain enabled.
+
+Seven transport regressions cover the actual provider/transport boundary, exact
+request hashes, twenty pending jobs, measured eight-reader peak concurrency,
+rejected-resource backoff, billing/authentication holds, wrong service tiers,
+uncertain timeouts and cache misses. The real CLI fixture checks Flex selection,
+full-brief preservation, saved usage, source-directory sorting and existing
+metadata behavior. A further evaluator case rejects a late miss in either reader,
+missing tools/brief evidence, tier changes and stale code hashes. It also accepts a
+warm first request without requiring an unnecessary probe. External IO in these
+regressions is synthetic.
+
+Two full-brief live tests used the unchanged 573,984-token context and four synthetic
+images each. The first wrote 577,895 tokens once, then reused 577,895 on all three
+follow-ups without rewriting. The second reused the still-warm prefix on all four
+requests, with zero writes. Each completed with the actual Flex tier, exact full
+brief, valid output and a live GitHub `get_me` call. Across these eight full-brief
+calls there was one prefix write and seven reads. No user photos were moved or
+full-corpus curation restarted.
+
+The first test requested two reader jobs together, but the scheduler dispatched
+them serially. Its initial description of concurrent readers was too strong. The
+final eval now measures actual Responses-call overlap, reporting a peak of one.
+Twenty-worker fanout is proved by the deterministic transport regression, not
+this small live sample. The [final live receipt](../../evals/probes/2026-09-11-github-cache-flex.json)
+is copied byte-for-byte from the sanitized private report and binds all source
+JavaScript, the prompt, bridge, lockfile and evaluator scripts by hash. No private
+brief text, source bodies, credential values or actual API resource IDs appear in
+that receipt. Previous Batch failures remain intact and are not rebound to this
+implementation.
+
+Full hill climb: **430 tests across 47 suites and 245 focused evals**, zero failures
+or skips. The current cache acceptance gate passes; fresh private-repository source
+reading, full-corpus completion and editorial usefulness remain separate. Hosted
+CI is checked after committing this candidate. The PR keeps its `--mechanical`
+large-change marker and is not auto-merged.
+
+Yehuda Katz (fictionalized lens): use the established cache-aware transport and
+verify the actual tier and token reads. Vivian Gornick (fictionalized lens): keep
+the source brief intact and let the curatorial encounter use it during inference.
+Deborah Treisman (fictionalized lens): retain the failed trials and distinguish
+queued work, observed overlap, cached tokens and completed decisions.

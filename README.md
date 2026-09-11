@@ -568,12 +568,13 @@ no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
 continues.
 
 With `--github-all`, each curation can discover current GitHub sources. Eligible
-GPT-5.6+ requests instead reuse the full brief through API prompt caching. Batch
-uses a seed/probe check before releasing reader waves; `--verbose` reports actual
+GPT-5.6+ requests instead reuse the full brief through API prompt caching. With
+`--provider openai-batch`, eligible requests use explicit Flex at Batch token rates,
+with no fallback to standard pricing. A seed/probe check precedes reader waves; `--verbose` reports actual
 cached, written and total input tokens. A cache miss holds further submissions.
 The brief, per-photo tags and automatic additional curators are preserved. See
 [GitHub prompt caching](docs/live-knowledge.md#prompt-caching-with-github-batch-curation)
-for operation, the small opt-in live eval and limits.
+for operation, the full-brief live evidence, opt-in eval and limits.
 
 ## Testing
 
