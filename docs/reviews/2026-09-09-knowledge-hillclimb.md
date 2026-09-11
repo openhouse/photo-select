@@ -214,3 +214,21 @@ Yehuda Katz (fictionalized lens): add repository access without replacing the
 application's directory contract. Vivian Gornick (fictionalized lens): the edit
 should remain where the photographer is working. Deborah Treisman (fictionalized
 lens): verify an interrupted edit can continue without repeating settled decisions.
+
+All 392 tests across 45 suites and 207 focused evals passed, with no failed or
+skipped cases. Implementation commit `7e2a4febcf44dd1d50397e4d27a85e99857f3013`
+passed [push CI](https://github.com/openhouse/photo-select/actions/runs/34553393867)
+and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34553396596).
+The focused report is regenerated after recording these results.
+
+The existing partial edit was recovered separately into its original source tree:
+198 keep decisions and 122 aside decisions, with unchanged explanation sidecars and
+32 minutes files. A normal 3,809-image level-one snapshot was created before moving
+any original; every affected image and sidecar matched its saved hash or decision.
+The remaining 3,489 source images and the old private selections were preserved.
+A private recovery receipt records this verified reconciliation. No model calls
+were made for the recovery, and no full-corpus restart was performed.
+
+A fresh same-inference OpenAI canary remains pending for this implementation.
+Offline workflow verification and recovery do not revalidate the historical live
+canary or establish full-corpus completion.

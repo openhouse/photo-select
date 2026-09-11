@@ -9,20 +9,20 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The selected-directory workflow is restored for GitHub mode: sorting, snapshots and resume use the source image tree; only API audits remain private and separate. Current local workflow regressions and CI must validate this candidate. Previous live canary evidence is historical; a fresh OpenAI canary and full-corpus completion are not claimed. Existing hidden-copy selections are reconciled separately by source hashes.",
+  "note": "The selected-directory workflow is restored for GitHub mode: sorting, snapshots and resume use the source image tree; only API audits remain private and separate. All 392 local tests and 207 focused evals passed, including real-CLI workflow regressions. Implementation CI passed. Previous live canary evidence is historical; a fresh OpenAI canary and full-corpus completion are not claimed. Existing hidden-copy selections were reconciled separately by source hashes, with a complete pre-selection snapshot and the old run retained.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "ciEvidence": {
-    "implementationCommit": "90776553f4a50dc83fd025ebbda827535f0f9bc1",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34551676773",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34551679364",
+    "implementationCommit": "7e2a4febcf44dd1d50397e4d27a85e99857f3013",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34553393867",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34553396596",
     "conclusion": "success"
   }
 }
