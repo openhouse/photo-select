@@ -62,6 +62,11 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 For `--github-all`, use the ordinary prompt renderer and preserve the selected
 original or custom prompt text. The flag attaches authenticated read-only tools;
 it must not inject research, role-play, consent, citation or editorial directions.
+Jamie explicitly authorized one default-template addition on 2026-09-11: when
+the supplied context contains a GitHub web link, render exactly “To understand
+the situation more fully, explore our team’s knowledge wiki graph on GitHub.”
+This context-based condition applies independently of the flag. Preserve custom
+templates unless they explicitly use `hasGithubLinks`; do not force tool calls.
 Use the ordinary free-text speaker schema; do not reject a prompt-defined
 facilitator with a GitHub-only speaker allowlist.
 Context and people metadata follow the ordinary prompt workflow. Cache splitting
@@ -74,6 +79,7 @@ supersedes the separate GitHub prompt introduced earlier in this PR.
 | `{{curators}}`   | CLI `--curators`  | ✓                         |
 | `{{images}}`     | runtime file scan | ✓                         |
 | `{{context}}`    | `--context` file  | optional                  |
+| `{{hasGithubLinks}}` | GitHub web link in supplied context | derived boolean |
 | `{{fieldNotes}}` | prior notebook    | when `--field-notes` flag |
 
 ---

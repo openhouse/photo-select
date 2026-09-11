@@ -40,6 +40,28 @@ Record actual successful tool reads separately from model text. Preserve the
 ordinary free-text speaker schema so a prompt-defined facilitator may speak;
 the input batch roster remains unchanged.
 
+### User-authorized conditional invitation — 2026-09-11
+
+Jamie subsequently requested one explicit default-template change:
+
+> To understand the situation more fully, explore our team’s knowledge wiki graph on GitHub.
+
+Compute `hasGithubLinks` from the supplied context in a pure core function, and
+use a Handlebars conditional to include the sentence once before the background.
+Recognize HTTP(S) links on `github.com` and `www.github.com`, including Markdown
+links; reject lookalike hosts and mentions in another site's URL. The condition
+uses the same context for file and inline callers, independent of `--github-all`.
+Without those links, historical rendered bytes remain identical. Custom templates
+opt in only by using the new boolean. All other curation instructions remain.
+
+This invitation does not require tool use, add credentials, change the roster or
+schema, or hold a response with no repository reads. Authentication still comes
+from the existing flag and bridge. Put the invitation before the cache boundary
+so its bytes change the stable-prefix hash without changing the cache structure.
+Preserve the pre-PR fixture and independently test only this authorized delta at
+the renderer, API and cached CLI boundaries. Live exploration usefulness remains
+unmeasured until observed in a user-started run; this change starts no curation.
+
 For cached requests, reuse the existing renderer's context boundary, concatenate
 instruction blocks back to exactly the original prompt bytes, and keep dynamic
 rosters and image metadata after that boundary. The `github-v3` key covers the

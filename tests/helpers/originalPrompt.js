@@ -19,3 +19,10 @@ export async function renderOriginalPrompt({curators = [], images = [], context 
   });
   return {prompt, minutesMin, minutesMax};
 }
+
+// The sole prompt addition authorized by Jamie on 2026-09-11. Keep the
+// historical fixture untouched; callers explicitly select the expected delta.
+export function withGithubExploration(prompt) {
+  return prompt.replace('####################\nBackground',
+    'To understand the situation more fully, explore our team’s knowledge wiki graph on GitHub.\n\n####################\nBackground');
+}

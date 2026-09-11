@@ -1,4 +1,4 @@
-import {originalPromptSource, renderOriginalPrompt} from './helpers/originalPrompt.js';
+import {originalPromptSource, renderOriginalPrompt, withGithubExploration} from './helpers/originalPrompt.js';
 import {requestInstructions} from './helpers/githubRequest.js';
 import {buildPrompt,DEFAULT_PROMPT_PATH} from '../src/templates.js';
 import {afterEach,expect,it} from 'vitest';
@@ -163,11 +163,11 @@ it.each(['default','custom','inline'])('sends the ordinary rendered prompt throu
  expect(call.instructions).toContain("Read Jamie's notes");
 },30000);
 
-it.each(['default', 'custom', 'inline'])('preserves the historical prompt through cached CLI batches (%s)', async kind => {
+it.each(['default', 'custom', 'inline'].flatMap(kind => [false, true].map(hasGithubLinks => ({kind, hasGithubLinks}))))('preserves the prompt through cached CLI batches ($kind, GitHub links: $hasGithubLinks)', async ({kind, hasGithubLinks}) => {
  const people = Object.fromEntries(Array.from({length: 10}, (_, i) =>
   ['keep', 'aside'].map(type => [`${type}-${i}.jpg`, ['Tagged Guest']])).flat());
  const f = await setup(10, {people});
- const context = Array.from({length: 300}, (_, i) => `Record ${i}: amber bridge cedar delta field.\n`).join('');
+ const context = Array.from({length: 300}, (_, i) => `Record ${i}: amber bridge cedar delta field.\n`).join('') + (hasGithubLinks ? 'https://github.com/fixture/private' : '');
  const source = await originalPromptSource();
  const custom = kind === 'custom' ? source.replace('You are moderating', 'Use the artist-selected custom format. You are moderating') : undefined;
  const result = await f.run({context: kind === 'inline' ? undefined : context,
@@ -185,6 +185,7 @@ it.each(['default', 'custom', 'inline'])('preserves the historical prompt throug
   const labels = user.content.filter(part => part.type === 'input_text').slice(1).map(part => JSON.parse(part.text));
   const expected = await renderOriginalPrompt({images: labels.map(label => label.filename),
    curators: ['Base A', 'Base B', 'Tagged Guest'], context, source: custom});
+  if (hasGithubLinks && kind !== 'custom') expected.prompt = withGithubExploration(expected.prompt);
   const prompt = requestInstructions(request);
   expect(prompt).toBe(expected.prompt);
   expect(request.service_tier).toBe('flex');

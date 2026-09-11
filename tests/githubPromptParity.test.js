@@ -50,7 +50,7 @@ it('keeps original field-note and revision substitutions in a custom rendered re
  for(const text of ['Current notes','Previous notes','Earlier notes','Saved revision'])expect(instructions(f.calls[0])).toContain(text);
 });
 it('keeps the original cached instructions intact when a repair is required',async()=>{
- const brief='Long project brief.\n'.repeat(1500),original=await render(brief),f=fixture(brief);
+ const brief='https://github.com/team/wiki\n'+'Long project brief.\n'.repeat(1500),original=await render(brief),f=fixture(brief);
  await f.provider.chat({model:'gpt-5.6-terra',images:['a.jpg'],...original});
  const request=f.calls[0],repaired=repairGithubRequest(request);
  expect(repaired.prompt_cache_key).toBe(request.prompt_cache_key);
@@ -71,4 +71,18 @@ it('does not replace an explicitly empty custom prompt with a default prompt',as
  const f=fixture('A brief intentionally omitted by the custom template.');
  await f.provider.chat({model:'gpt-5.5',images:['a.jpg'],prompt:''});
  expect(f.calls[0].instructions).toBe('');expect(JSON.stringify(f.calls[0])).not.toContain('intentionally omitted');
+});
+
+it('changes the cache key for the authorized invitation and retains it across batches', async () => {
+ const {renderOriginalPrompt} = await import('./helpers/originalPrompt.js');
+ const brief = 'https://github.com/team/wiki\n' + 'Long project evidence.\n'.repeat(1500);
+ const legacy = await renderOriginalPrompt({curators, images: ['a.jpg'], context: brief});
+ const oldPrefix = legacy.prompt.slice(0, legacy.prompt.indexOf(brief) + brief.length);
+ const current = await render(brief), f = fixture(brief);
+ await f.provider.chat({model: 'gpt-5.6-terra', images: ['a.jpg'], ...legacy, promptCachePrefix: oldPrefix});
+ await f.provider.chat({model: 'gpt-5.6-terra', images: ['a.jpg'], ...current});
+ await f.provider.chat({model: 'gpt-5.6-terra', images: ['a.jpg'], ...current});
+ expect(f.calls[1].prompt_cache_key).not.toBe(f.calls[0].prompt_cache_key);
+ expect(f.calls[1].prompt_cache_key).toBe(f.calls[2].prompt_cache_key);
+ expect(instructions(f.calls[1])).toBe(current.prompt);
 });

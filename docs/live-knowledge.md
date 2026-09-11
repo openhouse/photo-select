@@ -34,9 +34,33 @@ remain part of that template; this correction does not add a new notebook pass.
 
 GitHub tool definitions and authentication are request capabilities, not extra
 curatorial prose. The previous `github_prompt.hbs` is retained only as a historical
-artifact and is no longer selected. No GitHub-specific instruction paragraph is
-appended. The credential filter, read-only bridge, tool-call audit, reply checks,
+artifact and is no longer selected. The flag adds no instruction paragraph.
+The credential filter, read-only bridge, tool-call audit, reply checks,
 transport retries, and normal image sorting remain enabled.
+
+Jamie authorized this conditional addition to the default template on 2026-09-11:
+
+> To understand the situation more fully, explore our team’s knowledge wiki graph on GitHub.
+
+It appears once, before the background, when the supplied context contains an
+HTTP or HTTPS URL whose host is `github.com` or `www.github.com`. Markdown links,
+autolinks and multiple links work; hostname matching ignores case. Other sites,
+lookalike hosts, email addresses and GitHub text nested inside another site's URL
+do not trigger it. Context without a GitHub link keeps the historical rendered
+prompt byte-for-byte. Inline context uses the same rule. Links only in field notes
+or curator names do not trigger it.
+
+This condition belongs to the template, independently of `--github-all` or the
+provider. It does not grant access; keep `--github-all` for authenticated tools.
+Custom templates remain as authored and may explicitly use
+`{{#if hasGithubLinks}}...{{/if}}`. The sentence invites exploration; tool use
+remains the model's choice, with no mandatory read or new reply requirement.
+It takes effect on the next process started from the updated checkout.
+
+The sentence is inside the stable cache prefix. Its changed bytes produce a new
+key through the existing prefix hash; seed/probe checks establish reuse for that
+key. Earlier live cache receipts describe the earlier prompt, not a live test of
+this addition. Do not restart a user's running curation to apply a prompt edit.
 
 Caching splits the original rendered instructions into adjacent developer content
 blocks without adding or removing text. The cache key is now `github-v3`, so the

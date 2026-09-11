@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import Handlebars from 'handlebars';
+import {contextHasGithubLinks} from './core/contextLinks.js';
 
 const fmin = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MIN || 1.5);
 const fmax = Number(process.env.PHOTO_SELECT_MINUTES_FACTOR_MAX || 2.5);
@@ -46,6 +47,7 @@ export async function buildPrompt(
     Boolean(context) && !context.includes(CACHE_BREAKPOINT_SENTINEL);
 
   const renderedPrompt = await renderTemplate(filePath, {
+    hasGithubLinks: contextHasGithubLinks(context),
     curators: curators.join(', '),
     images: images.map((f) => path.basename(f)),
     context: markCacheBoundary

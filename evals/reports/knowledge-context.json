@@ -2,13 +2,15 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "da94dc2356e41649e2a2a7de73cd34a41071c4d596b6328c2d235c1083aeec51",
-    "files": 178
+    "sha256": "80599005afdb2045e8a1d31021d5f50524d1b22e0cb2a108b90f2f5f01791d64",
+    "files": 180
   },
   "behaviorPreservation": {
     "status": "passed",
     "referenceCommit": "f7a5a01dfc7badddbec9841df91a24d88d11d27c",
+    "authorizedPromptChange": "2026-09-11: one conditional GitHub exploration invitation; all other historical instructions preserved",
     "suites": [
+      "tests/githubContextPrompt.test.js",
       "tests/githubOriginalContract.test.js",
       "tests/githubPromptParity.test.js",
       "tests/cliGithubWorkflow.test.js"
@@ -23,10 +25,10 @@
     ]
   },
   "promptCache": {
-    "status": "passed",
+    "status": "pending",
     "evidence": "evals/probes/2026-09-11-github-minutes-cache.json"
   },
-  "passed": 296,
+  "passed": 321,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,

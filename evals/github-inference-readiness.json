@@ -13,7 +13,7 @@
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Minute-count targets now produce visible warnings while preserving all valid minutes and decisions. Hard reply and credential checks remain. Full-corpus completion is not inferred from deterministic tests or a bounded live canary.",
+  "note": "The default prompt now includes the user-authorized GitHub exploration invitation only for context with GitHub web links. Deterministic prompt, cache and CLI contracts are tested; actual exploration and new-prompt live cache behavior await a user-started Terminal run. Minute-count warnings and hard reply checks remain.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -27,7 +27,7 @@
     "scope": "Real CLI, metadata HTTP bulk/fallback, custom base roster, repeated-tag additions, per-photo labels, opt-out, repair and twenty concurrent request rosters; OpenAI and tunnel IO are synthetic."
   },
   "cacheEvidence": {
-    "status": "passed",
+    "status": "pending",
     "path": "evals/probes/2026-09-11-github-minutes-cache.json",
     "priorEvidence": [
       "evals/probes/2026-09-11-github-cache-initial.json",
@@ -38,21 +38,23 @@
       "evals/probes/2026-09-11-github-original-prompt.json",
       "evals/probes/2026-09-11-github-rendered-prefix-cache.json"
     ],
-    "scope": "Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one."
+    "scope": "Historical passing evidence for the prior prompt and implementation: Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one. The 2026-09-11 conditional invitation changes the prompt and renderer; this receipt is retained unchanged and does not establish live cache reuse for the new candidate."
   },
   "ciEvidence": {
-    "implementationCommit": "77ef15c538defa2adccc61d4df4661609e807e6b",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34599299320",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34599303822",
-    "conclusion": "success"
+    "implementationCommit": "3f209dd97900bde2d9e8cb81bff163182a6a4068",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34610984321",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34610988779",
+    "conclusion": "success",
+    "scope": "Prior commit only; current candidate CI is verified on the PR after pushing."
   },
   "promptParityEvidence": {
     "tests": [
+      "tests/githubContextPrompt.test.js",
       "tests/githubOriginalContract.test.js",
       "tests/githubPromptParity.test.js",
       "tests/cliGithubWorkflow.test.js"
     ],
-    "scope": "Independent pre-PR template reference, exact default/custom/context/inline instruction equality across cached CLI batches, unchanged original template, and byte-preserving cache splitting."
+    "scope": "Frozen pre-PR template plus only the separately authorized conditional invitation. File and inline context, exact host matching, custom template opt-in, cache-key invalidation, repair preservation, and cached CLI seed/probe/readers are tested independently of production detection."
   },
   "completionRegression": {
     "test": "tests/cliGithubWorkflow.test.js",

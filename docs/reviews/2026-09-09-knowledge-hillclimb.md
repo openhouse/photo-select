@@ -678,3 +678,46 @@ full-corpus completion claim.
 The full regression suite passed **481 tests across 51 suites**, with zero
 failures or skips. The focused candidate report is regenerated after the final
 evidence updates; hosted checks are verified separately on the pushed commit.
+
+
+## Conditional GitHub invitation — 2026-09-11
+
+Jamie explicitly requested a default Handlebars section that says:
+
+> To understand the situation more fully, explore our team’s knowledge wiki graph on GitHub.
+
+The section appears once when the supplied context contains an HTTP(S) GitHub
+link. The flag still only attaches access; the template condition is independent
+of the provider. A pure core helper matches the actual GitHub hostname rather
+than a substring. File and inline callers share the condition; custom templates
+opt in explicitly. No other historical prompt bytes, credentials, tools, roster,
+reply validation, sorting or transport behavior change.
+
+The observed gap was available tools without an invitation in the original
+prompt. This change addresses invitation presence; it does not establish useful
+exploration or require a read. The frozen pre-PR fixture remains intact, with a
+separate literal reference for the sole authorized addition.
+
+Test-first evidence: **10 new cases failed and 10 passed** before implementation.
+After the change, all **57 targeted renderer, API and CLI cases passed**. They
+cover single/multiple/Markdown/autolink URLs, case, lookalike hosts, other sites'
+URL paths and queries, context overrides, late links in a large context, unrelated
+prompt fields, custom opt-in and exact historical preservation. Cached CLI cases
+exercise seed/probe/reader batches with and without links for default, custom and
+inline input. The invitation changes the existing prefix hash; repair and later
+batches retain the proper key and instruction bytes.
+
+`npm run hillclimb` passed **506 tests across 52 suites and 321 focused evals**,
+with zero failures or skips. The sustained 84-batch/840-image synthetic workflow
+continues to pass. A separate read-only local rendering of the user's actual
+context confirmed the complete context remained present, the invitation appeared
+once within the cache prefix, and it was the sole change from the historical
+prompt. No private source content is included in this review.
+
+The final focused report is regenerated after these documentation updates to
+bind all candidate files. No API calls, paid canaries or photographic curation
+were started. The earlier live cache receipt is unchanged and explicitly
+historical because its template/renderer hashes differ; live cache reuse and
+repository exploration for this prompt await a user-started Terminal run. The
+installed GitHub launcher already targets this worktree. Hosted CI is verified
+separately on the final pushed commit and recorded on the PR.
