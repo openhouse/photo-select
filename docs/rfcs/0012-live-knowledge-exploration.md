@@ -56,7 +56,7 @@ Construct Batch uploads in memory. They contain images, the brief and a tunnel I
 
 Record returned MCP call inputs/results and source URLs with each curatorial response. This is an audit record produced by exploration, not input research packaging. Preserve branch/commit information actually returned; do not manufacture source hashes or completeness claims. Cite successful reads, and distinguish citations to moving branches from commit permalinks. Retain tool failures and access limits. Capturing concise minutes and tool traces does not require storing private chain of thought.
 
-A format repair must retain the same tools, images, context and roster. It is a new inference attempt and can perform fresh reads; preserve both traces rather than asserting identical frozen evidence. Do not retry a valid result merely because private persistence failed. Workers may curate concurrently, but private Git writes must be serialized so response JSON and updated field notes are committed together without duplicate filenames or lock races. Keep private working copies and audit output outside the source repository, with no outgoing Git remote.
+A format repair must retain the same tools, images, context and roster. It is a new inference attempt and can perform fresh reads; preserve both traces rather than asserting identical frozen evidence. Do not retry a valid result merely because private persistence failed. Workers may curate concurrently, but private Git writes must be serialized so response JSON and updated field notes are committed together without duplicate filenames or lock races. Keep API audit output outside the image directory and source repositories, with no outgoing Git remote. Preserve the normal image-directory workflow: sort the selected images into its `_keep` and `_aside`, retain its level snapshots and resume through the existing orchestrator. Do not redirect the image workload into private copies merely because GitHub tools are enabled.
 
 ## Acceptance and evaluation
 
@@ -93,6 +93,23 @@ These are fictionalized analytical lenses, not quotations, participation, or end
 
 The first full-corpus attempt returned twenty failed requests in six completed Batch jobs, all with error files and no successful output files. The original transport did not read those error files and deleted them, then mislabeled the failure as a possible tunnel/access problem. Those deleted row errors cannot be recovered from Batch metadata, so their exact original codes are unknown.
 
-Local tokenization independently found over 2.53 million text tokens in a representative request, beyond the requested model's documented window. This is a confirmed input-size blocker, not evidence that GitHub credentials failed. GitHub-mode startup now counts the brief locally and holds briefs over 950,000 tokens before tunnel startup, image copying or paid requests. It leaves the original context intact and asks for a shorter question-and-links brief; no research pass or automatic summary is introduced.
+Local tokenization independently found over 2.53 million text tokens in a representative request, beyond the requested model's documented window. This is a confirmed input-size blocker, not evidence that GitHub credentials failed. GitHub-mode startup now counts the brief locally and holds briefs over 950,000 tokens before tunnel startup, run preparation or paid requests. It leaves the original context intact and asks for a shorter question-and-links brief; no research pass or automatic summary is introduced.
 
 The Batch transport now reads both result files, preserves per-row API diagnostics privately before cleanup, redacts credential-like error text, and maps successful and failed rows independently. Receipt persistence/retrieval failures retain remote evidence for recovery. Held curation records and field notes retain the actionable reason. Regressions cover these failures; the renewed live acceptance receipt applies only to its bounded canary, not completion of the full photographic corpus.
+
+
+## 2026-09-10 workflow correction
+
+Jamie clarified that adding GitHub access must preserve where results appear.
+The original hidden-working-copy implementation changed that established contract.
+GitHub mode now uses the caller's selected image directory for sorting, snapshots,
+minutes, explanations and recursive `_keep` processing. Private API transcripts and
+Git provenance remain in a separate audit directory. New invocations resume the
+existing image tree with a fresh audit instead of recopying the source corpus.
+
+The directory boundary is canonicalized before use. Corpus hashing includes an
+existing `_keep` chain so resumed image inputs retain provenance, while excluding
+`_aside` and archived snapshots from new input enumeration. The older research-first
+mode retains its separate copying behavior. Real-CLI workflow evals cover output
+placement, interruption without repeating completed decisions, and recursion after
+the source level has no unclassified images.

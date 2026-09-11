@@ -191,3 +191,26 @@ passed after the corrections. Additional cases cover errors containing credentia
 failed lookups excluded from citations, whole private-key redaction, immutable input
 and match locations inside words. Real OpenAI acceptance remains separate from these
 local and direct-GitHub checks; no full-corpus restart is part of this correction.
+
+
+## 2026-09-10: restore the selected-directory workflow
+
+The user expected `_keep` and `_aside` under the directory passed to the launcher.
+The hidden-image-copy implementation violated that normal workflow and repeated
+image preparation on each invocation. Three real-CLI regression cases reproduced
+misplaced outputs, loss of same-level resume continuity and failure to continue the
+source `_keep` chain. These tests use actual orchestration, image staging, provider,
+Batch aggregation and audit persistence with synthetic images and external API IO.
+
+GitHub-mode setup now binds the provider to the canonical selected source directory
+and leaves the caller's working directory alone. Private API audits stay separate;
+images are not copied into the audit. Input hashing covers the source and existing
+`_keep` chain. The old research-first mode remains isolated. The corrected cases
+verify output and snapshot placement, explainable image decisions, preservation of
+completed classifications across interruption, and normal recursive continuation.
+The one-worker fixture uses eight-image batches, matching the existing CLI setting.
+
+Yehuda Katz (fictionalized lens): add repository access without replacing the
+application's directory contract. Vivian Gornick (fictionalized lens): the edit
+should remain where the photographer is working. Deborah Treisman (fictionalized
+lens): verify an interrupted edit can continue without repeating settled decisions.

@@ -9,11 +9,11 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Current corrections pass 389 local tests, 204 focused evals and CI on the recorded implementation commit. A direct production-bridge retry confirmed the previously missing file returns explicit unavailable data and zero accepted source records. Fresh same-inference OpenAI acceptance remains pending; prior live canary evidence is historical. The stopped full-corpus run retains its completed private selections. Three historical credential holds lack original response bodies and cannot be declared false positives. No automatic full-corpus restart or completion is claimed.",
+  "note": "The selected-directory workflow is restored for GitHub mode: sorting, snapshots and resume use the source image tree; only API audits remain private and separate. Current local workflow regressions and CI must validate this candidate. Previous live canary evidence is historical; a fresh OpenAI canary and full-corpus completion are not claimed. Existing hidden-copy selections are reconciled separately by source hashes.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",

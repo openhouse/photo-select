@@ -50,22 +50,34 @@ async function atomic(file,value) {
   await fs.rename(temporary,file);
 }
 async function hashFile(file) { const h=createHash('sha256');for await(const chunk of createReadStream(file))h.update(chunk);return h.digest('hex'); }
-export async function preparePrivateRun({source,base,researchOnly=false}) {
+export async function preparePrivateRun({source,base,researchOnly=false,copyImages=true}) {
   const volume=path.resolve(source).match(/^\/Volumes\/[^/]+/);
   base=base||path.join(volume?volume[0]:os.homedir(),'.photo-select','runs');
   await outsideGit(base);
   await fs.mkdir(base,{recursive:true,mode:0o700});
   const root=await fs.mkdtemp(path.join(base,'run-'));await fs.chmod(root,0o700);
-  const images=path.join(root,'images');await fs.mkdir(images,{mode:0o700});
+  source=await fs.realpath(source);
+  const images=copyImages?path.join(root,'images'):source;
+  if(copyImages)await fs.mkdir(images,{mode:0o700});
   const corpus=[];
-  if(!researchOnly) for(const item of await fs.readdir(source,{withFileTypes:true})) {
-    if(!item.isFile() || !/\.(?:jpe?g|png|tiff?|heic|heif|webp)$/i.test(item.name)) continue;
-    const from=path.join(source,item.name),to=path.join(images,item.name);
-    await fs.copyFile(from,to,constants.COPYFILE_FICLONE);await fs.chmod(to,0o600);
-    corpus.push({filename:item.name,filename_sha256:sha256(item.name),sha256:await hashFile(to)});
+  if(!researchOnly){
+    // Normal curation resumes down the _keep chain; hash those existing inputs
+    // as well without importing _aside or archived _level snapshots.
+    let directory=source;
+    while(directory){
+      const entries=await fs.readdir(directory,{withFileTypes:true});
+      for(const item of entries){
+        if(!item.isFile() || !/\.(?:jpe?g|png|tiff?|heic|heif|webp)$/i.test(item.name))continue;
+        const from=path.join(directory,item.name),filename=path.relative(source,from);
+        const to=copyImages?path.join(images,item.name):from;
+        if(copyImages){await fs.copyFile(from,to,constants.COPYFILE_FICLONE);await fs.chmod(to,0o600);}
+        corpus.push({filename,filename_sha256:sha256(filename),sha256:await hashFile(to)});
+      }
+      directory=!copyImages&&entries.some(x=>x.name==='_keep'&&x.isDirectory())?path.join(directory,'_keep'):null;
+    }
   }
-  if(!researchOnly&&!corpus.length) throw knowledgeError('No supported image files were found in the source directory.');
-  await atomic(path.join(root,'corpus.json'),{source,copiedAt:new Date().toISOString(),images:corpus});
+  if(!researchOnly&&copyImages&&!corpus.length)throw knowledgeError('No supported image files were found in the source directory.');
+  await atomic(path.join(root,'corpus.json'),{source,...(copyImages?{copiedAt:new Date().toISOString()}:{recordedAt:new Date().toISOString(),inputMode:'in-place'}),images:corpus});
   return {root,images,save:record=>atomic(path.join(root,'research.json'),record)};
 }
 export async function startLiveKnowledge({profile={},source,brief,model,discoverOnly=false,researchOnly=false,signal,progress=()=>{}}, dependencies={}) {

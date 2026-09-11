@@ -23,7 +23,7 @@ Run it from the image directory as before. Put relevant GitHub URLs and the phot
 
 Use a project question and useful repository links in `--context`, or supply them with `--knowledge-brief`. The file is included in every curation request. A complete multi-megabyte archive export can exceed the model window even though private GitHub access is working.
 
-Before starting the tunnel or copying images, `--github-all` counts the JSON-encoded brief locally with the bundled `o200k_base` tokenizer and enforces a 950,000-token brief budget. No counting request sends your text to another API. This leaves 100,000 tokens in [Terra's documented 1,050,000-token window](https://developers.openai.com/api/docs/models/gpt-5.6-terra) for other input, tools and output. It is an application brief limit, not a guarantee that every later response fits; other models can have smaller windows, and tool results also consume context. The application never silently truncates or summarizes your file. A rejected file must be replaced by an explicitly shorter brief or links.
+Before starting the tunnel or preparing the run, `--github-all` counts the JSON-encoded brief locally with the bundled `o200k_base` tokenizer and enforces a 950,000-token brief budget. No counting request sends your text to another API. This leaves 100,000 tokens in [Terra's documented 1,050,000-token window](https://developers.openai.com/api/docs/models/gpt-5.6-terra) for other input, tools and output. It is an application brief limit, not a guarantee that every later response fits; other models can have smaller windows, and tool results also consume context. The application never silently truncates or summarizes your file. A rejected file must be replaced by an explicitly shorter brief or links.
 
 ## What the flag does
 
@@ -37,18 +37,40 @@ The bridge exposes only selected read tools that GitHub also marks read-only. It
 
 ## Where the edit goes
 
-Photo Select copies supported top-level images to a new private run and performs the usual selection algorithm there. Originals remain in place. Existing keep/aside subdirectories are not imported into a fresh run.
+`--github-all` preserves Photo Select's normal directory workflow. It sorts images
+in the directory supplied by `--dir`, or the directory where you invoked
+`photo-select-here.sh`. `_keep`, `_aside`, image explanations, minutes and the
+`_level-001` snapshot appear there. Recursion continues into `_keep` and writes the
+next level's snapshot and result folders in that directory.
 
-The printed run path is on the source external volume at `/Volumes/<volume>/.photo-select/runs/`, or under `~/.photo-select/runs/` for other source directories. It contains:
+Rerun the same command from the same image directory after an interruption. The
+existing orchestrator finds the remaining unclassified images, preserves prior
+selections and follows the existing `_keep` chain when that level is complete.
+It does not repeat completed decisions at the same level. Each invocation gets a
+fresh API audit; it does not replay a previous model conversation.
 
-- `images/`: working copies and the resulting selections.
-- `session.json` and `corpus.json`: mode, roster, source-image hashes and settings.
-- `curation-*.json`: exact requests, returned tool traces, validated replies, source refs, token usage and repair history.
+The separate private audit directory is printed at startup. It is on the source
+external volume at `/Volumes/<volume>/.photo-select/runs/`, or under
+`~/.photo-select/runs/` for other source directories. It contains:
+
+- `session.json` and `corpus.json`: selected directory, roster, settings and input
+  hashes, including images already in the `_keep` chain when resuming.
+- `curation-*.json`: requests, tool traces, validated replies, source references,
+  token usage and repair history.
 - `field-notes.md`: the attributed curatorial discussion and decisions.
-- `batch-*.json`: remote Batch/file IDs, status, credential-screened API diagnostics and cleanup receipts.
-- `runtime.log`: private operational output.
+- `batch-*.json`: Batch/file identifiers, diagnostics and cleanup receipts.
+- `runtime.log`: operational output.
 
-The run uses private filesystem permissions. Each response and updated field notes are committed together in a local Git repository with no remote; concurrent workers serialize those commits. The application does not publish the output. Source access does not establish consent, identity or publication rights.
+Audit files use private filesystem permissions. Each response and updated audit
+field notes are committed together in a separate local Git repository with no
+remote. Photo Select does not initialize that audit repository in the image
+directory. Image sorting and sidecars follow the existing application workflow.
+Source access does not establish consent, identity or publication rights.
+
+Earlier GitHub-mode builds incorrectly sorted copies in a hidden private
+`images/` directory. Existing edits from those builds should be reconciled against
+the source-image hashes before restarting, so completed decisions are preserved
+without overwriting changed images or repeating their curation.
 
 ## Verbose output
 
@@ -68,7 +90,7 @@ a process already running; a restart is not needed to read its log.
 
 Keep this Mac awake, online and attached to the drive until the command finishes. The application keeps the tunnel running while Batch waits and executes, then stops it. Batch may queue work for up to its 24-hour completion window; reads happen when the model runs. `--provider openai` also supports the same tools for synchronous Responses calls. The application never silently changes provider, model or tool availability.
 
-Batch requests are uploaded from memory. Both output and error files are read and matched to their submitted requests. Error diagnostics are saved privately before remote cleanup; terminal messages show error codes and fixed guidance rather than raw API prose. Successful rows survive a different row failing. If result retrieval or diagnostic persistence fails, remote files are retained for recovery. Otherwise the temporary remote input, output and error files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation starts a fresh private edit rather than replaying a partial conversation.
+Batch requests are uploaded from memory. Both output and error files are read and matched to their submitted requests. Error diagnostics are saved privately before remote cleanup; terminal messages show error codes and fixed guidance rather than raw API prose. Successful rows survive a different row failing. If result retrieval or diagnostic persistence fails, remote files are retained for recovery. Otherwise the temporary remote input, output and error files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation resumes the selected image directory with a fresh private API audit; it does not replay the previous model conversation.
 
 A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing schema and citation checks does not establish editorial quality or citation entailment.
 
@@ -87,10 +109,7 @@ including private-key bodies. No suspected credential value or excerpt is saved 
 those diagnostics. The filter remains enabled. Earlier holds that discarded the
 response before auditing cannot be retrospectively diagnosed from that record.
 
-Private selections are under the printed run's `images/_keep` and `images/_aside`,
-with a text explanation alongside each selected image. The source directory is not
-where this mode places its selections. A new invocation starts a new private run;
-do not assume rerunning the original command resumes an interrupted edit.
+Selections are under `_keep` and `_aside` in the selected image directory, with a text explanation alongside each classified image. See "Where the edit goes" for resuming current runs and reconciling older hidden-copy edits.
 
 ## Setup on another machine
 

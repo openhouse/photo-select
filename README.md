@@ -484,7 +484,7 @@ labels lets you compute precision, recall, and F1‑score for each model. Repeat
 the process on multiple batches will highlight which model gives the most
 consistent choices.
 
-The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
+The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches. This also applies with `--github-all`: GitHub access preserves the selected image directory, snapshots and resume behavior. Only API audit files go into a separate private run directory.
 
 ### Example: A/B testing models
 
