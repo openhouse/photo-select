@@ -9,20 +9,20 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Current corrections cover visible verbose logging, explicit unavailable-file tool results, and redacted diagnostics for credential holds. Earlier live acceptance and CI remain historical for their recorded commits. Fresh current-candidate live acceptance is pending; the stopped full-corpus run retains its completed private selections. Three historical credential holds lack original response bodies and cannot be declared false positives. No automatic full-corpus restart or completion is claimed.",
+  "note": "Current corrections pass 389 local tests, 204 focused evals and CI on the recorded implementation commit. A direct production-bridge retry confirmed the previously missing file returns explicit unavailable data and zero accepted source records. Fresh same-inference OpenAI acceptance remains pending; prior live canary evidence is historical. The stopped full-corpus run retains its completed private selections. Three historical credential holds lack original response bodies and cannot be declared false positives. No automatic full-corpus restart or completion is claimed.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "ciEvidence": {
-    "implementationCommit": "b636ce4160c2fc6944061814e0c0e652d0e50482",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34550794462",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34550797463",
+    "implementationCommit": "90776553f4a50dc83fd025ebbda827535f0f9bc1",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34551676773",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34551679364",
     "conclusion": "success"
   }
 }
