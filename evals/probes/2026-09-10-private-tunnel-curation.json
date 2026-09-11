@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "status": "passed",
-  "recordedAt": "2026-09-10T18:53:01.566Z",
+  "recordedAt": "2026-09-11T00:01:38.969Z",
   "transport": "private-tunnel",
-  "implementationCommit": "94a862b4e3950351c77a3377b458a4f03a5f4dc4",
+  "implementationCommit": "314ed7a8e59ac54aba691a0f3b3977412ae9f09f",
   "implementationSha256": {
-    "package-lock.json": "93a4d7f0f52efaaf5eefe11c3ca909ca38693e797587b37b6ce63794c89db9bf",
-    "package.json": "6700926439ed612c4b3908c1945309fb53f1d57d2b6c7abcb8830f39c254a559",
+    "package-lock.json": "4593311e9f977a2aff4b1bca966deb2df199421ebcd912d978bc29dfc949e04d",
+    "package.json": "c705286cfb4b5fd4aaa41841948757f87fe6de074429aff2da02409090af12d2",
     "photo-select-here.sh": "ad85d9bba44249e99012ac23574c420ef73f57c6dacfedb8035cb75994108f41",
     "prompts/default_prompt.hbs": "23183bcd94e0d49b13b582e2b8bec7da26965d0cda3fe860e86711a9d2c55cc3",
     "prompts/default_prompt.txt": "6f0f19a16928c8297dc86edb6021cf5fabb6dd1c0a00b2b9c669bc46630b581b",
@@ -26,7 +26,9 @@
     "src/core/evaluateLevelOutcome.js": "8fbe15ac3fe8c4342381de01ce5111b3f3f8bcfff8d4ed856643495e47f29987",
     "src/core/finalizeCurators.js": "0aaca3d97bf479966d6c9c26574e80c74365c235e722b0a04366ceadfc345d07",
     "src/core/finalizeCurators.js.js": "1062b03ddf9484198e7b99d441d4b24bfdb4d349e189bd73287c45f96f408503",
+    "src/core/githubBatchErrors.js": "3da9e6a670e6aa9e599af38baab9877c061a2ed9ac81de7fd12d602f3556de84",
     "src/core/githubBridge.js": "6ae459608bf3c0f00fdc7c460732e57f321eb544def087e62cfe42363b238869",
+    "src/core/githubBrief.js": "6b500d23242e83db67068499a4a403a740bb4f00c74a999740c4cef538817d44",
     "src/core/githubCuration.js": "922468642524ffa1882b651045edcfb0e8349fd619256c3fa445ba734ec475a5",
     "src/core/knowledgeContext.js": "11128a72500f345d0004f3ae9e09c0fcb3ceb1508796ed6405d249ac9bbdb9a5",
     "src/core/knowledgeLive.js": "a2b8f8f442a5fdfcfa4e0ae0a47a2485bbb8887e9dd0f72a289b37799afd1775",
@@ -42,9 +44,9 @@
     "src/formatOverride.js": "945e299669c1e118f8ea015427df0a0305ced5436ae052d185e5dd6e46c85395",
     "src/fs-clone.js": "61b9d6145e7c2abbd81aabbe1916a1880c4aa2615f953eac7f450b262d4e2ccd",
     "src/fsx.js": "40cc483297f66d41deefb7c48c7b4634080737833ba32d9c25edfc71ae8b761c",
-    "src/githubBatch.js": "e692001d642a9f070840be43cf54d5a6b57e6ac7f907473bccb58d2fc54d8dad",
+    "src/githubBatch.js": "863943dd7685b52cf99dfe33507e36af7fb22291fbe34289e276f5cb3dfcfe88",
     "src/githubBridge.js": "d0dcc8b12d1e1bd23c1374cd57fc298240f29f203b5ed545ce2df5a754edb45c",
-    "src/githubRun.js": "d8353258b1546653a44540cb7368a731f9362dc4d9afa147b4530cde1264ced0",
+    "src/githubRun.js": "9ba1e34df61130503b838f51397b5739e1b6a5f20b828535fad7648b329f3833",
     "src/githubTunnel.js": "c9d139abef39e6b7a058b36dcbf00667d641ce88005f4d8579985a3c72533d6d",
     "src/imagePreprocessor.js": "875263fff936e3e93f8c8a624b028ca503520c7c2b87f9bc8956c0eb3006b8a4",
     "src/imageSelector.js": "6fe9aacefce0e1f6dd05025e7467cc622fb2d07981a15d2609b501656024303f",
@@ -58,7 +60,7 @@
     "src/net.js": "02c1ecb637f6506865fc767878fdaf7d0a5f6ea48cf52fd5b3c1d9b2ef49d021",
     "src/orchestrator.js": "6794623cc18195827cb1f314a387008cd6c1c795e43b17b9fd90adf78a25f83d",
     "src/peoplePrefetch.js": "babc17f4846179dfe18a073ac0f6ff668e863e785b0a250cd5cc16a03ebfd501",
-    "src/providers/github.js": "3825f7b9304e9aa435c4262efbabb4aadcceff998af9fb885b224fa62c922ea4",
+    "src/providers/github.js": "06c210b4c84fcdb04e6d024583a14b217240557c97644c91e9739e048ecee7cf",
     "src/providers/index.js": "7e894e0cb93fd43f07a273529d6d7df8fb9b5c321ba342e5becc3cb91c168f12",
     "src/providers/knowledge.js": "722e1b168229f42a2decc9757b89583ecbbf0de59a6028532d25460c1c628e45",
     "src/providers/ollama.js": "a912ccee141356710e9ea38328637a476f59ff3c0ef6a71520796a16f5d932a5",
@@ -108,9 +110,24 @@
       "outputBytes": 423
     },
     {
-      "name": "list_commits",
+      "name": "get_commit",
       "status": "completed",
-      "outputBytes": 2256
+      "outputBytes": 776
+    },
+    {
+      "name": "get_commit",
+      "status": "completed",
+      "outputBytes": 788
+    },
+    {
+      "name": "get_commit",
+      "status": "completed",
+      "outputBytes": 788
+    },
+    {
+      "name": "get_commit",
+      "status": "completed",
+      "outputBytes": 796
     },
     {
       "name": "get_file_contents",
@@ -118,14 +135,14 @@
       "outputBytes": 4055
     }
   ],
-  "responseId": "resp_082f62e865700476016aa2fc3c18f087d1af4da36c2dda037e",
-  "batchId": "batch_6aa2fbfaacd48190baa8a6203ca56ebc",
+  "responseId": "resp_02055728b1d9da7c016aa34470410087d2a435c0ceaaaf2081",
+  "batchId": "batch_6aa3442edf5c8190913918001f872abe",
   "temporaryFilesDeleted": true,
   "minutes": 20,
   "decisions": 1,
   "allRequestedVoicesPresent": true,
   "retries": 0,
-  "totalTokens": 9729,
+  "totalTokens": 9909,
   "privateAtomicCommitVerified": true,
   "originalImageUnchanged": true,
   "githubAuthorizationInRequest": false,

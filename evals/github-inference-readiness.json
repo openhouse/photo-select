@@ -1,28 +1,28 @@
 {
   "schemaVersion": 1,
   "feature": "github-tools-during-curation",
-  "ready": false,
+  "ready": true,
   "gates": {
     "implementation": "passed",
     "exactCommand": "passed",
-    "privateGithubDuringCuration": "pending",
+    "privateGithubDuringCuration": "passed",
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Readiness held while correcting error-only Batch handling and oversized context validation after the first full-corpus run. A fresh live canary and CI must bind the corrected production code.",
+  "note": "The corrected production implementation passes fresh private-source acceptance and CI. GitHub-mode briefs are limited to 950,000 locally counted text tokens. This technical readiness does not claim that the first full corpus completed; its oversized original brief was rejected and a compact replacement was prepared. Editorial usefulness and exhaustive coverage remain unmeasured.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "ciEvidence": {
-    "implementationCommit": "94a862b4e3950351c77a3377b458a4f03a5f4dc4",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34516979748",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34516984739",
+    "implementationCommit": "314ed7a8e59ac54aba691a0f3b3977412ae9f09f",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34544449337",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34544452775",
     "conclusion": "success"
   }
 }
