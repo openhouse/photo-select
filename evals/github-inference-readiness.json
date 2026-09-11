@@ -9,7 +9,7 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
@@ -39,9 +39,9 @@
     "scope": "Original default prompt, four synthetic images and a synthetic brief. Each response called GitHub get_me and read 56,423 bytes from the selected private README; returned text matched its Git blob hash. All three follow-ups reused 15,740 tokens without writes. This is bounded evidence, not a full-corpus run."
   },
   "ciEvidence": {
-    "implementationCommit": "8615c315f0e3b8d083169a2643f97b8d0d14ded9",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34590296074",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34590300235",
+    "implementationCommit": "77ef15c538defa2adccc61d4df4661609e807e6b",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34599299320",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34599303822",
     "conclusion": "success"
   },
   "promptParityEvidence": {

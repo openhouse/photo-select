@@ -563,3 +563,8 @@ Hosted CI exposed a 15 ms timing assumption in the existing Flex barrier test
 after template loading became asynchronous. The test now waits for explicit
 seed-start and image-preparation signals before asserting that the seed holds
 back readers; production code and live-evidence hashes are unchanged.
+
+Prompt-restoration implementation `77ef15c538defa2adccc61d4df4661609e807e6b`
+passed [push CI](https://github.com/openhouse/photo-select/actions/runs/34599299320)
+and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34599303822).
+The live receipt remains bound to unchanged source files.
