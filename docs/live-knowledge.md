@@ -106,11 +106,16 @@ queue for its 24-hour completion window. `--provider openai` retains synchronous
 Responses calls at that provider's normal tier. Model, reasoning effort, full brief,
 images and GitHub tool access are preserved in every path.
 
-Flex allows fifteen minutes per request. Only a rejected HTTP 429 with
-`resource_unavailable` or `rate_limit_exceeded` is retried, up to three attempts,
-with increasing delays and `Retry-After` when provided. Billing/authentication
+Flex allows fifteen minutes per request. A rejected HTTP 429 with
+`resource_unavailable` or `rate_limit_exceeded` is retried up to three attempts.
+A specifically identified HTTP 424 failure importing the `github` tool list is
+retried up to five attempts. Delays increase between attempts and honor
+`Retry-After` when provided; `--verbose` reports recovery progress. The request,
+images, model, tools, full brief and Flex tier stay the same during recovery.
+An unknown 424, another server's failure, or a later tool-execution failure is not
+assumed to be a safe discovery retry. Billing/authentication
 failures and uncertain network timeouts hold work without automatic resubmission.
-A completed cache miss is never retried just to seek a discount. Ctrl-C aborts local
+A completed cache miss is never retried just to seek a discount. Cancellation during backoff records a cancelled receipt and sends no further request. Ctrl-C aborts local
 waiting and closes the tunnel; it cannot undo a request already accepted by the API.
 Inspect private receipts before retrying after an uncertain interruption.
 
@@ -125,6 +130,14 @@ returns an explicit `github_read_unavailable` result to the model. It may try a
 verified ref or another path, or state the gap. That result is never accepted as
 source evidence. Credential-like content, disallowed operations and transport or
 protocol failures still hold the request.
+
+Stateless OpenAI Responses can include opaque `encrypted_content` in typed
+reasoning items. Photo Select does not replay those tokens, so it omits that field
+before scanning or saving a response. The attempt retains the original response
+hash plus each omitted field's path, byte count and hash. It does not decrypt the
+payload. Reasoning summaries, model text, tool arguments/results, and similarly
+named fields inside GitHub source data remain subject to the credential filter.
+This prevents random ciphertext substrings from stopping valid curation.
 
 Credential-filter holds now retain a redacted response, the original response hash,
 transport locator and safe trigger metadata (field location, token family, match length
@@ -191,8 +204,9 @@ To run a paid acceptance test, use `npm run evals:github-prompt-cache -- --live`
 from the development checkout. It uses four synthetic photographs, a synthetic
 brief, the existing OpenAI credential and the actual private GitHub tunnel. Add
 `--context /absolute/path/to/brief.txt` to test an unchanged full brief instead.
-The test records actual tier, full-brief preservation, request hashes, cache usage
-and measured request overlap. Queuing two jobs together does not necessarily make
+Add `--verbosity high` to match the ordinary CLI settings. The test records actual
+tier, full-brief preservation, request hashes, cache usage, encrypted-field
+omissions and measured request overlap. Queuing two jobs together does not necessarily make
 their API calls overlap. This test does not sort the user's photographs.
 
 Offline mocks and cache-write counts alone cannot establish live savings. See the

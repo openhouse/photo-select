@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {toFile} from 'openai';
 import {knowledgeError,sha256} from './core/knowledgeLive.js';
-import {batchDiagnostic,batchFailureMessage,failedBatchRow,batchRowDiagnostic} from './core/githubBatchErrors.js';
+import {batchDiagnostic,batchFailureMessage,failedBatchRow,batchRowDiagnostic,githubToolDiscoveryFailure} from './core/githubBatchErrors.js';
 // Small/legacy requests use Batch files. Cacheable requests explicitly select
 // Flex at Batch rates, matching the application's established cache-aware path.
 export class GithubBatchTransport {
@@ -12,7 +12,7 @@ export class GithubBatchTransport {
   async sendFlex(body) {
     const runId=randomUUID(),errors=[];
     const state=(status,extra={})=>({runId,transport:'flex',status,endpoint:'/v1/responses',serviceTier:'flex',request_sha256:sha256(body),errors:[...errors],...extra});
-    for(let attempt=0;attempt<3;attempt++) {
+    for(let attempt=0;attempt<5;attempt++) {
       this.signal?.throwIfAborted();
       await this.saveReceipt(state('submitted',{attempt:attempt+1}));
       let response;
@@ -20,13 +20,20 @@ export class GithubBatchTransport {
         response=await this.client.responses.create(body,{signal:this.signal,timeout:900000,maxRetries:0});
       }catch(error){
         const diagnostic=batchDiagnostic(error);errors.push(diagnostic);
-        const retry=error.status===429&&['resource_unavailable','rate_limit_exceeded'].includes(error.code)&&attempt<2;
+        const discovery=githubToolDiscoveryFailure(diagnostic),limit=discovery?5:3;
+        const retry=(discovery||error.status===429&&['resource_unavailable','rate_limit_exceeded'].includes(error.code))&&attempt<limit-1;
         const receipt=state(retry?'retrying':'held',{attempt:attempt+1});await this.saveReceipt(receipt);
         if(!retry){const held=knowledgeError(batchFailureMessage(diagnostic,'Flex'));held.receipt=receipt;throw held;}
         const header=error.headers?.get?.('retry-after')??error.headers?.['retry-after'];
         const ms=Math.max(this.retryDelayMs*2**attempt,Number(header)*1000||0);
-        this.progress(`github Flex: ${diagnostic.code}; retrying rejected request in ${Math.ceil(ms/1000)}s (${attempt+2}/3)`);
-        await delay(ms,undefined,{signal:this.signal});continue;
+        this.progress(`github Flex: ${discovery?'GitHub tool discovery unavailable':diagnostic.code}; retrying rejected request in ${Math.ceil(ms/1000)}s (${attempt+2}/${limit})`);
+        try{await delay(ms,undefined,{signal:this.signal});}
+        catch(error){
+          if(!this.signal?.aborted)throw error;
+          const receipt=state('cancelled',{attempt:attempt+1});await this.saveReceipt(receipt);
+          const cancelled=knowledgeError('Curation cancelled during recovery.');cancelled.receipt=receipt;throw cancelled;
+        }
+        continue;
       }
       const receipt=state(response.status==='completed'&&response.service_tier==='flex'?'completed':'held',{responseId:response.id,actualServiceTier:response.service_tier,usage:response.usage??null,attempt:attempt+1});
       await this.saveReceipt(receipt);

@@ -61,8 +61,9 @@ transport policy, not a fallback after a paid miss. Do not switch to standard
 pricing automatically. Preserve model, reasoning effort, tools and full context;
 never fall back to an image-only request or a separate research pass.
 
-Flex requests have a fifteen-minute timeout and up to three attempts only for
-explicit rejected capacity/rate-limit 429s. Do not retry billing, authentication or
+Flex requests have a fifteen-minute timeout, up to three attempts for explicit
+rejected capacity/rate-limit 429s, and up to five for the API's specifically
+identified HTTP 424 failure importing the `github` tool list. Do not retry billing, authentication or
 uncertain connection failures automatically. Save private Flex receipts with
 request hash, attempt count, actual tier and usage. These requests do not create
 Batch input/output files. The following remote-file lifecycle applies only to
@@ -163,3 +164,35 @@ queued work. No GitHub credential forwarding, preparatory research or brief
 reduction is introduced. [The operating guide](../live-knowledge.md#prompt-caching-with-github-batch-curation)
 describes the guard and limits; [the acceptance record](../../evals/github-inference-readiness.json)
 separates current cache evidence from historical private-source acceptance.
+
+
+### Reliability correction: opaque reasoning and transient tool discovery
+
+A full photo run completed 23 batches and reported 24 cache hits after its seed,
+but two application behaviors prevented continuation. The generic credential
+scanner matched an `sk-` substring inside a typed encrypted reasoning field. A
+separate HTTP 424 during GitHub tool-list import was treated as permanently fatal
+on its first occurrence. Other requests continued reading sources and completing
+curation, so a complete tunnel shutdown was not established as the cause.
+
+[OpenAI documents encrypted reasoning on stateless Responses](https://developers.openai.com/api/docs/guides/reasoning).
+Photo Select neither needs nor replays those tokens. Omit only the string-valued
+`encrypted_content` property of top-level Responses `reasoning` output items
+before credential screening and persistence. Retain the original response hash
+and each omitted field's path, bytes and hash. Keep readable reasoning summaries,
+messages, tools and nested source data under the existing filter. Do not exempt
+arbitrary fields merely because their name is `encrypted_content`.
+
+Recover only the classified GitHub tool-list import 424 with bounded backoff and
+the identical request. A later tool-call error, generic 424, authentication error,
+unknown timeout or cache miss does not become a discovery retry. Cancellation
+stops retries and leaves a final cancelled receipt. Successful recovery lets the
+existing queue continue; permanent failures preserve completed selections and
+stop with their original diagnostics. No model, source context or service tier is
+silently replaced to force completion.
+
+Regression coverage includes twenty queued curations with an injected discovery
+failure, credential-bearing readable fields beside opaque data, and a real CLI
+run that drains sixty synthetic images into the normal output folders despite
+both triggers. Live acceptance and recovery of earlier held decisions are
+recorded separately from these deterministic tests.

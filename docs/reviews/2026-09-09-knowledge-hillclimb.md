@@ -452,3 +452,59 @@ Implementation `2425fc2b7c8aab719dc6c10619a4bd2fc2bb550e` passed both
 [PR CI](https://github.com/openhouse/photo-select/actions/runs/34577018788).
 The focused report is regenerated after recording this evidence. Cache acceptance
 is passed; the pending private-source and full-corpus boundaries remain explicit.
+
+
+## 2026-09-11: complete batches through opaque payloads and transient discovery failures
+
+The subsequent real run completed 23 batches, with 24 cache hits after one seed
+write, before work was held. One otherwise valid response matched the credential
+pattern in `output[1].encrypted_content`; the diagnostic located the match entirely
+inside a typed reasoning item. A separate API HTTP 424 reported failure importing
+the GitHub tool list. Other requests continued returning source reads and valid
+curation afterward. The private-tunnel lifecycle already waits for all workers;
+premature shutdown was ruled out. The underlying external discovery interruption
+cannot be determined from the retained diagnostics.
+
+The repair omits only string-valued encrypted reasoning fields from typed API
+output before scanning or persistence. Original response hashes and omission
+path/bytes/hashes remain auditable; readable messages, summaries, source bodies
+and nested fields remain screened. Photo Select never replays or decrypts this
+opaque payload. The output contract and cache-sensitive request are unchanged.
+
+The exact GitHub tool-list import 424 receives up to five attempts with increasing
+delays. Other servers, generic 424s, authentication errors, later tool failures
+and uncertain timeouts are excluded. Capacity/rate-limit 429s retain their
+three-attempt limit. Backoff cancellation records a cancelled receipt and sends
+no additional request. The Flex tier, brief, images, tools and request hash remain
+stable. No successful curation or cache miss is retried merely to seek a discount.
+
+Seven new cases failed against the old implementation. After the opaque-field
+correction, only the two discovery-recovery cases remained failing; the bounded
+retry correction resolved them. A cancellation regression additionally caught a
+receipt left at `retrying` after cancellation. Twelve new provider/transport cases
+plus a real-CLI case cover readable credential holds, exact omission evidence,
+twenty queued jobs recovering from a reader-wave outage, bounded persistent
+failure, exclusions and cancellation. The CLI case drains sixty images with
+twenty workers and both injected triggers, with exactly one decision per image.
+External IO in deterministic tests is synthetic.
+
+The complete hill climb passed **443 tests across 48 suites and 258 focused evals**,
+with no failures or skips. The fresh [full-brief live receipt](../../evals/probes/2026-09-11-github-reliability-cache.json)
+uses the production verbosity setting, preserves the full 573,984-token brief,
+confirms 577,895-token cached reads and records encrypted-field omissions. It
+contains sanitized metadata and code hashes, not the private brief or source text.
+
+The ten decisions held solely by encrypted metadata were separately revalidated
+against their original roster, filenames, minutes bounds and source image hashes.
+Seven keep and three aside images were restored with matching explanations and
+minutes. All destination hashes were rechecked. The original held record remains
+unchanged; a separate private recovery audit retains original record/response
+hashes and the applied move receipt. Recovery made zero model requests. Another
+held response failed the reply contract and was not promoted.
+
+Yehuda Katz (fictionalized lens): distinguish an opaque transport field from
+readable source material, and let a temporary discovery outage recover before
+stopping queued work. Vivian Gornick (fictionalized lens): preserve existing
+decisions and the complete brief. Deborah Treisman (fictionalized lens): prove
+continuation through the actual command, preserve prior failures, and do not
+confuse bounded recovery with a guarantee against a prolonged service outage.

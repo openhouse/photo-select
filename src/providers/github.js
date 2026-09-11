@@ -1,4 +1,5 @@
 import path from 'node:path';
+import {omitEncryptedReasoning} from '../core/githubResponse.js';
 import {fileURLToPath} from 'node:url';
 import {sanitizePeople} from '../lib/people.js';
 import {cacheGithubRequest,repairGithubRequest} from '../core/githubPromptCache.js';
@@ -36,15 +37,17 @@ export class GithubCurationProvider {
       for(let attempt=0;attempt<2;attempt++) {
         await this.assertCurrent();
         const submitted=attempt?repairGithubRequest(request):request;
-        const response=await this.respond(submitted);
+        const received=await this.respond(submitted);
+        const {response,omittedEncryptedReasoning}=omitEncryptedReasoning(received);
+        const provenance={request_sha256:sha256(submitted),response_sha256:sha256(received),omittedEncryptedReasoning};
         if(credentialLike(response)){
           const redacted=redactCredentialContent(response);
           transport=redacted.value._photoSelectFlex??redacted.value._photoSelectBatch;
-          attempts.push({request_sha256:sha256(submitted),response_sha256:sha256(response),response:redacted.value,redacted:true,credentialFindings:redacted.findings});
+          attempts.push({...provenance,response:redacted.value,redacted:true,credentialFindings:redacted.findings});
           throw knowledgeError('Credential-like response held; see redacted diagnostics in the private curation record.');
         }
         transport=response._photoSelectFlex??response._photoSelectBatch;
-        attempts.push({request_sha256:sha256(submitted),response});
+        attempts.push({...provenance,response});
         if(submitted.service_tier==='flex'&&response.service_tier!=='flex')throw knowledgeError('GitHub curation returned an unexpected service tier; further work held.');
         if(response.status!=='completed'||response.output?.some(x=>x.type==='mcp_approval_request'||x.type==='mcp_call'&&x.error))throw knowledgeError('Curation or GitHub tool execution did not complete.');
         let json;

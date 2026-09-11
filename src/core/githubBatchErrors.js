@@ -22,3 +22,11 @@ export function failedBatchRow(row) {return Boolean(row?.error)||row?.response?.
 export function batchRowDiagnostic(row) {
   return batchDiagnostic(row?.error||row?.response?.body?.error||{}, {customId:row?.custom_id??null,status:row?.response?.status_code});
 }
+
+// Only the API's tool-catalog import failure is known to precede curation.
+// Generic 424s, authentication failures and later tool-call errors are excluded.
+export function githubToolDiscoveryFailure(diagnostic) {
+  return diagnostic?.status===424&&diagnostic.code==='http_error'&&
+    diagnostic.type==='external_connector_error'&&diagnostic.param==='tools'&&
+    /Error retrieving tool list from MCP server: ['"]github['"]\./.test(diagnostic.message||'');
+}
