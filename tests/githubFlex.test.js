@@ -17,9 +17,12 @@ it('routes cacheable GitHub curation through explicit Flex with matching private
  expect(f.progress.join('\n')).toContain('Flex');expect(requestInstructions(f.calls[1].body)).toContain(brief);
 });
 it('holds twenty pending jobs behind the Flex seed and confirms reuse before parallel readers',async()=>{
- let active=0,peak=0,release;const gate=new Promise(resolve=>release=resolve);const f=fixture(async(body,n)=>{active++;peak=Math.max(peak,active);if(n===1)await gate;await new Promise(r=>setTimeout(r,2));active--;return reply(body,n);});
+ let active=0,peak=0,release,seedStarted,allEncoded,encoded=0;
+ const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>seedStarted=resolve),prepared=new Promise(resolve=>allEncoded=resolve);
+ const f=fixture(async(body,n)=>{active++;peak=Math.max(peak,active);if(n===1){seedStarted();await gate;}await new Promise(r=>setTimeout(r,2));active--;return reply(body,n);});
+ f.provider.encodeImage=async()=>{if(++encoded===20)allEncoded();return Buffer.from('image');};
  const pending=Promise.allSettled(Array.from({length:20},(_,i)=>chat(f.provider,i+'.jpg')));
- await new Promise(r=>setTimeout(r,15));expect(f.calls).toHaveLength(1);release();expect((await pending).every(r=>r.status==='fulfilled')).toBe(true);
+ await Promise.all([started,prepared]);expect(f.calls).toHaveLength(1);release();expect((await pending).every(r=>r.status==='fulfilled')).toBe(true);
  expect(peak).toBe(8);expect(f.calls).toHaveLength(20);expect(f.saved).toHaveLength(20);expect(f.saved.every(r=>r.status==='completed')).toBe(true);
  expect(f.saved.slice(0,2).map(r=>r.attempts[0].response._photoSelectCache.role)).toEqual(['seed','probe']);
 });

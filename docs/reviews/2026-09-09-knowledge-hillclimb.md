@@ -558,3 +558,8 @@ Earlier large-brief and source canaries remain historical. The earlier full
 photograph run stopped on a reply-validation hold before this correction and has
 not been declared complete. This prompt-restoration change does not reclassify
 already-sorted photographs or establish full-corpus completion.
+
+Hosted CI exposed a 15 ms timing assumption in the existing Flex barrier test
+after template loading became asynchronous. The test now waits for explicit
+seed-start and image-preparation signals before asserting that the seed holds
+back readers; production code and live-evidence hashes are unchanged.
