@@ -13,7 +13,7 @@
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Original prompt preserved against a frozen pre-PR reference: 462 tests and 277 focused evals pass. Four deliberately injected regressions were detected in a disposable copy. The unchanged implementation retains its four-curation synthetic-image private-read/cache canary; full-corpus completion and installed-command acceptance remain separate.",
+  "note": "Cache coverage now counts decoded rendered prefix text rather than JSON transport escapes. A full-brief four-curation live test passed with 542,017 cached tokens and zero writes on every request. Private-source acceptance, installed-command acceptance and full-corpus completion remain separate.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -28,15 +28,16 @@
   },
   "cacheEvidence": {
     "status": "passed",
-    "path": "evals/probes/2026-09-11-github-original-prompt.json",
+    "path": "evals/probes/2026-09-11-github-rendered-prefix-cache.json",
     "priorEvidence": [
       "evals/probes/2026-09-11-github-cache-initial.json",
       "evals/probes/2026-09-11-github-cache-held.json",
       "evals/probes/2026-09-11-github-cache-diagnostic.json",
       "evals/probes/2026-09-11-github-cache-flex.json",
-      "evals/probes/2026-09-11-github-reliability-cache.json"
+      "evals/probes/2026-09-11-github-reliability-cache.json",
+      "evals/probes/2026-09-11-github-original-prompt.json"
     ],
-    "scope": "Original default prompt, four synthetic images and a synthetic brief. Each response called GitHub get_me and read 56,423 bytes from the selected private README; returned text matched its Git blob hash. All three follow-ups reused 15,740 tokens without writes. This is bounded evidence, not a full-corpus run."
+    "scope": "Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one."
   },
   "ciEvidence": {
     "implementationCommit": "77ef15c538defa2adccc61d4df4661609e807e6b",

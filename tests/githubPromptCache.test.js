@@ -118,3 +118,13 @@ it('accepts four complete Flex curations and rejects a miss in either reader',as
  const warm=structuredClone(receipt);Object.assign(warm.usages[0],{cachedTokens:4000,writeTokens:0,verified:true});warm.usages[1].role='reader';
  expect(evaluateGithubCacheCanary(warm,receipt.implementationSha256)).toEqual([]);
 });
+
+it('evaluates supplied-context cache reuse separately from discretionary GitHub tool execution',async()=>{
+ const {evaluateGithubCacheCanary}=await import('../evals/evaluate-github-cache.mjs');
+ const hash='a'.repeat(64),receipt={schemaVersion:2,transport:'flex',toolUseRequired:false,context:{textTokens:3600},status:'passed',requested:4,completed:4,implementationSha256:{'src/fixture.js':hash},usages:['seed','probe','reader','reader'].map(role=>({role,key:'shared',serviceTier:'flex',requestedTier:'flex',fullBriefPreserved:true,curationStatus:'completed',githubToolAvailable:true,githubToolCalled:false,inputTokens:4500,cachedTokens:role==='seed'?0:4000,writeTokens:role==='seed'?4000:0,requiredCachedTokens:3500,verified:role!=='seed'}))};
+ expect(evaluateGithubCacheCanary(receipt,receipt.implementationSha256)).toEqual([]);
+ for(const mutate of [r=>{delete r.toolUseRequired;},r=>{r.usages[2].githubToolAvailable=false;},r=>{r.usages[2].fullBriefPreserved=false;},r=>{r.usages[2].cachedTokens=0;r.usages[2].writeTokens=4000;}]){
+  const changed=structuredClone(receipt);mutate(changed);
+  expect(evaluateGithubCacheCanary(changed,receipt.implementationSha256).length).toBeGreaterThan(0);
+ }
+});

@@ -207,15 +207,18 @@ single request checks again. These are useful curation jobs, not extra warmups.
 `--workers 20` continues to prepare work; the cache guard controls API fanout.
 
 The guard requires reported cached tokens covering at least 95% of the locally
-counted cached prefix, allowing for differences in API tokenization. A tiny unrelated hit
+counted rendered prefix text, allowing for differences in API tokenization.
+It counts the decoded `input_text` value; JSON quote, newline and backslash
+escapes used to transport that value are not extra prompt tokens. The earlier
+conservative brief-budget estimate remains separate. A tiny unrelated hit
 is insufficient. Cache writes are reported separately and do not count as reads.
 Missing usage, a failed seed, or a probe/reader miss holds further submissions for
 that shared prefix. Completed, validated curation results remain usable and retain
 their normal audit and image sorting. No automatic paid cache retry loop runs.
 
 With `--verbose`, look for `github cache: seed submitted`, `probe`, and lines
-reporting `cached=`, `write=` and `input=`. Full usage and the seed/probe/reader role
-are retained under `attempts[].response._photoSelectCache` in private curation
+reporting `prefix=`, `required=`, `cached=`, `write=` and `input=`. Full usage and the seed/probe/reader role
+and measured `prefixTokens` are retained under `attempts[].response._photoSelectCache` in private curation
 records. The cache key contains a versioned hash, never the brief or credential.
 
 Cache entries can still expire or become unavailable. A miss in a submitted wave
@@ -229,8 +232,11 @@ from the development checkout. It uses four synthetic photographs, a synthetic
 brief, the existing OpenAI credential and the actual private GitHub tunnel. Add
 `--repository owner/repo` to verify a private README read as part of the synthetic
 brief. `--context /absolute/path/to/brief.txt` uses that file verbatim instead;
-reads are then discretionary, so a file that does not ask for a connection check
-may not satisfy the canary's tool-use criterion.
+reads are then discretionary. In supplied-context mode the cache evaluator
+requires attached GitHub tools, preserved context and verified token reuse;
+it records tool execution separately and does not claim a private read from tool
+availability. Synthetic connection-check mode still requires `get_me`, and
+`--repository` still requires the specified private source text.
 Add `--verbosity high` to match the ordinary CLI settings. The test records actual
 tier, full-brief preservation, request hashes, cache usage, encrypted-field
 omissions and measured request overlap. Queuing two jobs together does not necessarily make
@@ -240,7 +246,8 @@ Offline mocks and cache-write counts alone cannot establish live savings. See th
 [OpenAI prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
 for supported breakpoints, retention and token accounting.
 
-On 2026-09-11, the full 573,984-token brief passed a four-curation live Flex test:
+Before the original prompt was restored, the full 573,984-token brief passed a
+four-curation live Flex test:
 one prefix write of 577,895 tokens, then three reads of 577,895 cached tokens with
 zero new writes. Each response completed with the requested tier and a GitHub tool
 call. This cache test checks the connection using `get_me`; private repository
@@ -248,6 +255,14 @@ source reading and editorial quality have separate acceptance gates. See the
 [acceptance record](../evals/github-inference-readiness.json) for the current
 implementation-bound receipt. Earlier actual Batch misses remain recorded; their
 server-side cause is unresolved.
+
+With the restored original prompt and corrected text counter, a fresh full-brief
+four-curation test reused 542,017 tokens on every request with zero writes. Its
+prefix contained 538,616 local text tokens, so the unchanged 95% coverage floor
+was 511,686. The first request found a warm cache. Tools remained attached and
+were not called in this supplied-context cache test; this is not fresh private
+source-delivery evidence. The [live receipt](../evals/probes/2026-09-11-github-rendered-prefix-cache.json)
+binds these results to the implementation hashes.
 
 The configured launcher uses this correction on the next invocation of the same
 command. Already-running processes retain their loaded code. Completed decisions

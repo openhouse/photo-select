@@ -207,3 +207,27 @@ it.each(['default', 'custom', 'inline'])('preserves the historical prompt throug
  expect(await jpgs(path.join(f.source, '_keep'))).toHaveLength(10);
  expect(await jpgs(path.join(f.source, '_aside'))).toHaveLength(10);
 }, 30000);
+
+it('finishes quoted multiline context with twenty workers without counting JSON transport escapes', async () => {
+ const f = await setup(30), context = 'A "quoted" line.\n'.repeat(850);
+ const result = await f.run({context, curators: ['Base'], workers: 20});
+ expect(result.code, result.stderr).toBe(0);
+ expect(await jpgs(f.source)).toEqual([]);
+ expect(await jpgs(path.join(f.source, '_keep'))).toHaveLength(30);
+ expect(await jpgs(path.join(f.source, '_aside'))).toHaveLength(30);
+ const audit = path.join(f.audit, (await fs.readdir(f.audit))[0]);
+ const records = await Promise.all((await fs.readdir(audit)).filter(name => /^curation-/.test(name)).sort()
+  .map(async name => JSON.parse(await fs.readFile(path.join(audit, name), 'utf8'))));
+ expect(records).toHaveLength(6);
+ expect(records.every(record => record.status === 'completed')).toBe(true);
+ const roles = records.map(record => record.attempts[0].response._photoSelectCache.role);
+ expect(roles.slice(0, 2)).toEqual(['seed', 'probe']);
+ expect(roles.slice(2)).toEqual(['reader', 'reader', 'reader', 'reader']);
+ for (const record of records) {
+  expect(requestInstructions(record.request)).toContain(context);
+  expect(record.request.service_tier).toBe('flex');
+  expect(record.attempts[0].response._photoSelectCache.requiredCachedTokens).toBeLessThan(5000);
+ }
+ expect(new Set(records.flatMap(record => record.json.decisions.map(decision => decision.filename))).size).toBe(60);
+ expect(result.stdout + result.stderr).toContain('prefix=');
+}, 30000);

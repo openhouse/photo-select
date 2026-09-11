@@ -4,7 +4,7 @@ export function evaluateGithubCacheCanary(receipt,actualHashes={}) {
  if(flex&&(receipt.transport!=='flex'||!(receipt.context?.textTokens>=1024)))failures.push('flex-transport');
  if(receipt?.status!=='passed'||receipt.requested!==count||receipt.completed!==count)failures.push('live-completion');
  const usages=receipt?.usages||[];
- if(usages.length!==count||new Set(usages.map(u=>u.key)).size!==1||!usages.every(u=>u.githubToolCalled===true&&u.curationStatus==='completed'&&u.requiredCachedTokens>0&&u.inputTokens>=u.cachedTokens+u.writeTokens))failures.push('usage-evidence');
+ if(usages.length!==count||new Set(usages.map(u=>u.key)).size!==1||!usages.every(u=>(receipt.toolUseRequired===false?u.githubToolAvailable===true:u.githubToolCalled===true)&&u.curationStatus==='completed'&&u.requiredCachedTokens>0&&u.inputTokens>=u.cachedTokens+u.writeTokens))failures.push('usage-evidence');
  const hit=row=>row?.verified===true&&row.cachedTokens>=row.requiredCachedTokens;
  if(flex){
   const seed=usages[0],roles=usages.map(u=>u.role).join(',');

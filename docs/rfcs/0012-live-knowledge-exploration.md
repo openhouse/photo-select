@@ -222,3 +222,27 @@ failure, credential-bearing readable fields beside opaque data, and a real CLI
 run that drains sixty synthetic images into the normal output folders despite
 both triggers. Live acceptance and recovery of earlier held decisions are
 recorded separately from these deterministic tests.
+
+
+### Cache measurement correction: rendered text versus JSON transport
+
+The first full-brief run after prompt restoration completed one ten-image
+curation, then held the queue. Its API usage reported 542,017 written cache tokens,
+while the guard required 545,319. The guard reused the conservative brief-budget
+counter, which tokenized `JSON.stringify(prefix)`. That counted escape characters
+absent from the model's rendered text. The actual prefix contains 538,616 locally
+counted text tokens; the unchanged 95% coverage floor is therefore 511,686.
+
+Count decoded prefix text for cache coverage and retain the conservative input
+budget as a separate measurement. Preserve the prompt, request, cache key, model,
+tier and images. A seed write still needs a subsequent confirmed read before
+fanout; an already-warm seed can establish that read immediately. Real misses and
+missing usage still hold queued work. Print the measured prefix and required
+coverage in verbose output and retain them in the private usage record.
+
+[OpenAI's cache documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+distinguishes cached reads from cache writes. Regression checks reproduce the
+escape-heavy prefix, cold and warm seeds, partial/missing reads, the coverage
+boundary and twenty-worker CLI sorting. Supplied-context live cache acceptance
+keeps tool availability separate from discretionary tool execution; it never
+adds a research instruction to make the user's brief pass a connectivity check.

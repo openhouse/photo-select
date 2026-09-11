@@ -1,5 +1,5 @@
 import {knowledgeError} from './core/knowledgeLive.js';
-import {validateGithubBrief} from './core/githubBrief.js';
+import {countGithubTextTokens} from './core/githubBrief.js';
 import {githubCacheUsage} from './core/githubPromptCache.js';
 // Seed/probe are useful curation jobs. The selected transport and tier are
 // explicit in each request; queue release depends on reported reuse.
@@ -13,10 +13,11 @@ export class GithubCacheScheduler {
     if(!body.prompt_cache_key?.startsWith('photo-select:github-v3:'))return this.send(body);
     const key=body.prompt_cache_key;let group=this.groups.get(key);
     if(!group){
-      const prefix=body.input[0].content[0].text;
+      const prefix=body.input[0].content[0].text,prefixTokens=countGithubTextTokens(prefix);
       // Conservative coverage guard: a tiny unrelated hit must not release a
       // half-million-token brief. API tokenization can differ from local counts.
-      group={key,required:Math.ceil(validateGithubBrief(prefix).textTokens*.95),phase:'seed',queue:[],active:false,lastHit:0};this.groups.set(key,group);
+      group={key,prefixTokens,required:Math.ceil(prefixTokens*.95),phase:'seed',queue:[],active:false,lastHit:0};this.groups.set(key,group);
+      this.progress(`github cache: prefix=${prefixTokens} required=${group.required} tokens (rendered text)`);
     }
     if(group.error)return Promise.reject(group.error);
     return new Promise((resolve,reject)=>{group.queue.push({body,resolve,reject});if(!group.active)void this.pump(group);});
@@ -35,7 +36,7 @@ export class GithubCacheScheduler {
           const result=results[index],job=jobs[index];
           if(result.status==='rejected'){job.reject(result.reason);this.hold(group,result.reason);allHits=false;continue;}
           const response=result.value,usage=githubCacheUsage(response.usage,group.required);
-          const cache={role,key:group.key,...usage};
+          const cache={role,key:group.key,prefixTokens:group.prefixTokens,...usage};
           this.progress(`github cache: ${role} cached=${usage.cachedTokens??'unknown'} write=${usage.writeTokens??'unknown'} input=${usage.inputTokens??'unknown'}; ${usage.verified?'hit confirmed':'reuse not confirmed'}`);
           // A valid completed curation remains useful even when its cache misses.
           job.resolve({...response,_photoSelectCache:cache});

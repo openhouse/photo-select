@@ -601,3 +601,41 @@ The [development guide](../github-all-development.md) records the bounded audit,
 contract-to-evidence mapping and staged validation sequence. Future changes should
 preserve the existing behavior first, demonstrate failure sensitivity, and report
 installed-command acceptance, live reads/cache use and full completion separately.
+
+
+## 2026-09-11 — count rendered prefix text before enforcing cache coverage
+
+The real photo run completed one ten-image curation and held twenty unsent
+requests. The API wrote 542,017 cache tokens. The scheduler required 545,319
+because it tokenized a JSON-escaped copy of the prefix (574,019 local tokens),
+not the text value placed in `input_text` (538,616 local tokens). This inflated
+the required coverage even though the write covered the actual prefix.
+
+The repair counts decoded prefix text, preserving the 95% floor (511,686 for
+that request), conservative brief budget, prompt bytes, request bodies, cache
+key and selected transport. Verbose output and receipts expose the text-prefix
+count and required coverage. A write alone still does not establish a hit; real
+misses and absent usage still hold unsent work and retain completed results.
+
+Seven token-count regressions and one real-CLI case cover cold/warm seeds,
+quoted multiline text, missing/partial reads, the unchanged coverage boundary,
+late reader misses and sixty-image sorting with twenty workers. Seven of those
+eight cases failed before the repair; all passed afterward. Existing historical
+prompt and custom/inline CLI checks remain passing. One additional evaluator
+regression distinguishes supplied-context cache verification from discretionary
+tool execution: tools must remain attached, while actual source reads are a
+separate claim. Synthetic connectivity checks still require their tool calls.
+
+The full suite passed **471 tests across 51 suites**. The focused report is
+regenerated for the final candidate. The full unchanged 573,984-token
+budget-counted brief passed four live synthetic-image curations: all four read
+542,017 cached tokens with zero writes, including a warm first request. The
+receipt binds unchanged prompt bytes and all implementation hashes. Actual API
+concurrency was one. GitHub tools were attached but no get_me calls occurred;
+this is cache evidence, not fresh private-source delivery or full-corpus
+completion. No user photographs were moved by the acceptance test.
+
+The original run's five keep and five aside decisions remain in the selected
+photo directory. The next invocation of the same command uses the repaired
+scheduler and resumes remaining images. The current readiness and CI evidence
+must be read separately from this bounded acceptance result.
