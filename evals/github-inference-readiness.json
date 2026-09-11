@@ -9,20 +9,20 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The previous live canary and CI remain historical evidence for their recorded commits. The verbose-output correction has changed the CLI; its real-CLI synthetic regression is covered by the focused eval. A fresh live canary for this candidate is pending so the active user run and its tunnel are not interrupted. The full corpus is running on the preceding build; completion, editorial usefulness and exhaustive coverage are not claimed.",
+  "note": "The verbose-output correction passes 383 local tests, 198 focused evals and CI on its implementation commit. Its real-CLI synthetic regression reproduces the old failure and verifies the fix. The previous live canary remains historical evidence for its recorded production source; a fresh live canary is pending so the active user run and its tunnel are not interrupted. Full-corpus completion, editorial usefulness and exhaustive coverage are not claimed.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "ciEvidence": {
-    "implementationCommit": "314ed7a8e59ac54aba691a0f3b3977412ae9f09f",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34544449337",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34544452775",
+    "implementationCommit": "b636ce4160c2fc6944061814e0c0e652d0e50482",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34550794462",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34550797463",
     "conclusion": "success"
   }
 }
