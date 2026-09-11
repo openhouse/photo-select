@@ -9,11 +9,11 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The verbose-output correction passes 383 local tests, 198 focused evals and CI on its implementation commit. Its real-CLI synthetic regression reproduces the old failure and verifies the fix. The previous live canary remains historical evidence for its recorded production source; a fresh live canary is pending so the active user run and its tunnel are not interrupted. Full-corpus completion, editorial usefulness and exhaustive coverage are not claimed.",
+  "note": "Current corrections cover visible verbose logging, explicit unavailable-file tool results, and redacted diagnostics for credential holds. Earlier live acceptance and CI remain historical for their recorded commits. Fresh current-candidate live acceptance is pending; the stopped full-corpus run retains its completed private selections. Three historical credential holds lack original response bodies and cannot be declared false positives. No automatic full-corpus restart or completion is claimed.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",

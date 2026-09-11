@@ -2,7 +2,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {buildReplySchema} from '../replySchema.js';
 import {knowledgeError,sha256} from '../core/knowledgeLive.js';
-import {credentialLike} from '../core/githubBridge.js';
+import {credentialLike,redactCredentialContent} from '../core/githubBridge.js';
 import {githubTool,sessionCurators,responseText,githubSources,validateGithubReply,GITHUB_CURATION_INSTRUCTIONS} from '../core/githubCuration.js';
 export class GithubCurationProvider {
   name='openai';knowledge=true;supportsAsync=false;
@@ -15,7 +15,7 @@ export class GithubCurationProvider {
   async submit(options){return {promise:this.chat(options)};}
   async collect(handle){return handle.promise;}
   async chat({model,images=[],prompt='',minutesMin=1,minutesMax=32,verbosity,reasoningEffort}={}) {
-    const attempts=[];let request;
+    const attempts=[];let request,transport;
     try {
       await this.assertCurrent();
       const filenames=images.map(x=>path.basename(x));
@@ -30,7 +30,13 @@ export class GithubCurationProvider {
         await this.assertCurrent();
         const submitted={...request,instructions:request.instructions+(attempt?'\nRepair the previous invalid JSON/voice/filename/citation result. Return a complete reply under the same schema.':'')};
         const response=await this.respond(submitted);
-        if(credentialLike(response))throw knowledgeError('Credential-like response held.');
+        if(credentialLike(response)){
+          const redacted=redactCredentialContent(response);
+          transport=redacted.value._photoSelectBatch;
+          attempts.push({request_sha256:sha256(submitted),response_sha256:sha256(response),response:redacted.value,redacted:true,credentialFindings:redacted.findings});
+          throw knowledgeError('Credential-like response held; see redacted diagnostics in the private curation record.');
+        }
+        transport=response._photoSelectBatch;
         attempts.push({request_sha256:sha256(submitted),response});
         if(response.status!=='completed'||response.output?.some(x=>x.type==='mcp_approval_request'||x.type==='mcp_call'&&x.error))throw knowledgeError('Curation or GitHub tool execution did not complete.');
         let json;
@@ -42,7 +48,7 @@ export class GithubCurationProvider {
         return {raw:JSON.stringify(json),json};
       }
     }catch(error){
-      await this.save({status:'held',model,request,attempts,transport:error?.receipt??null,reason:error?.code==='KNOWLEDGE_HELD'?error.message:'Curation, GitHub access or reply validation failed.'});
+      await this.save({status:'held',model,request,attempts,transport:error?.receipt??transport??null,reason:error?.code==='KNOWLEDGE_HELD'?error.message:'Curation, GitHub access or reply validation failed.'});
       throw knowledgeError(error?.code==='KNOWLEDGE_HELD'?error.message:'GitHub curation held; see the private run receipt.');
     }
   }

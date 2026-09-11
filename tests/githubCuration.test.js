@@ -47,3 +47,43 @@ it('preserves an actionable Batch failure reason in the private curation record'
  await expect(p.chat({images:['one.jpg']})).rejects.toThrow(/shorter brief/);
  expect(saved[0].reason).toMatch(/shorter brief/);expect(saved[0].transport.errors[0].code).toBe('context_length_exceeded');expect(saved[0].attempts).toHaveLength(0);
 });
+
+it('preserves a redacted response and safe trigger location when the credential filter holds it',async()=>{
+ const saved=[],secret='sk-proj-'+ 'A'.repeat(40),r=response({...json,minutes:[{speaker:curators[0],text:'Example '+secret},{speaker:curators[1],text:'Next?'}]});
+ r._photoSelectBatch={status:'completed',batchId:'batch_synthetic'};
+ const respond=vi.fn(async()=>r),p=new GithubCurationProvider({tunnelId,curators,respond,save:async r=>saved.push(r),encodeImage:async()=>Buffer.from('x')});
+ await expect(p.chat({images:['one.jpg']})).rejects.toThrow(/Credential-like/);
+ expect(respond).toHaveBeenCalledTimes(1);expect(saved[0].status).toBe('held');
+ expect(saved[0].attempts).toHaveLength(1);
+ const attempt=saved[0].attempts[0];expect(attempt.redacted).toBe(true);
+ expect(attempt.credentialFindings[0]).toMatchObject({path:['output',0,'content',0,'text'],kind:'openai-token',length:48});
+ expect(attempt.response.output[0].content[0].text).toBe('[credential-like content redacted]');
+ expect(attempt.response_sha256).toMatch(/^[a-f0-9]{64}$/);
+ expect(saved[0].transport.batchId).toBe('batch_synthetic');
+ expect(JSON.stringify(saved)).not.toContain(secret);expect(r.output[0].content[0].text).toContain(secret);
+});
+it('lets curation recover from a missing-file tool result without citing the failed lookup',async()=>{
+ const {githubSources}=await import('../src/core/githubCuration.js');
+ const missing={type:'mcp_call',name:'get_file_contents',server_label:'github',status:'completed',arguments:JSON.stringify({owner:'fixture',repo:'wiki',path:'missing.md',ref:'a'.repeat(40)}),output:JSON.stringify({isError:true,code:'github_read_unavailable',message:'File missing.'})};
+ const value={...response(json),output:[missing,...response(json).output]},saved=[];
+ const p=new GithubCurationProvider({tunnelId,curators,respond:async()=>value,save:async r=>saved.push(r),encodeImage:async()=>Buffer.from('x')});
+ await expect(p.chat({images:['one.jpg']})).resolves.toMatchObject({json});expect(githubSources([missing])).toEqual([]);expect(saved[0].sources).toEqual([]);
+});
+
+it('redacts entire private-key strings and credential-bearing keys without changing the source object',async()=>{
+ const {redactCredentialContent,credentialLike}=await import('../src/core/githubBridge.js');
+ const key='ghp_'+'B'.repeat(36),body='PRIVATE-KEY-BODY-MUST-NOT-SURVIVE';
+ const original={output:[{[key]:'value',pem:'BEGIN PRIVATE KEY\n'+body+'\nEND PRIVATE KEY',safe:'retained'}]};
+ const before=JSON.stringify(original),result=redactCredentialContent(original);
+ expect(credentialLike(result.value)).toBe(false);
+ expect(JSON.stringify(result)).not.toContain(key);expect(JSON.stringify(result)).not.toContain(body);
+ expect(result.value.output[0].safe).toBe('retained');expect(result.findings).toHaveLength(2);
+ expect(JSON.stringify(original)).toBe(before);
+});
+it('records that a credential-like substring is embedded in a word without retaining the match',async()=>{
+ const {redactCredentialContent}=await import('../src/core/githubBridge.js');
+ const result=redactCredentialContent({path:'task-knowledge-context-projection.json'});
+ expect(result.findings).toHaveLength(1);expect(result.findings[0].embeddedInWord).toBe(true);
+ expect(result.value.path).toBe('[credential-like content redacted]');
+ expect(JSON.stringify(result)).not.toContain('task-knowledge-context-projection');
+});

@@ -72,6 +72,26 @@ Batch requests are uploaded from memory. Both output and error files are read an
 
 A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing schema and citation checks does not establish editorial quality or citation entailment.
 
+## Held responses and unavailable files
+
+An ordinary GitHub tool lookup error, such as a file absent at the requested commit,
+returns an explicit `github_read_unavailable` result to the model. It may try a
+verified ref or another path, or state the gap. That result is never accepted as
+source evidence. Credential-like content, disallowed operations and transport or
+protocol failures still hold the request.
+
+Credential-filter holds now retain a redacted response, the original response hash,
+Batch locator and safe trigger metadata (field location, token family, match length
+and whether it occurred inside a word). Entire matching strings are omitted,
+including private-key bodies. No suspected credential value or excerpt is saved in
+those diagnostics. The filter remains enabled. Earlier holds that discarded the
+response before auditing cannot be retrospectively diagnosed from that record.
+
+Private selections are under the printed run's `images/_keep` and `images/_aside`,
+with a text explanation alongside each selected image. The source directory is not
+where this mode places its selections. A new invocation starts a new private run;
+do not assume rerunning the original command resumes an interrupted edit.
+
 ## Setup on another machine
 
 This setup is already complete on Jamie's current Mac. For a new installation:

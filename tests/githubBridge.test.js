@@ -74,3 +74,21 @@ it.each(['%2eenv','dir/%2eenv.local','%252eenv','dir\\.env'])('holds encoded cre
 it('enforces a bound on streamed GitHub response bytes',async()=>{
  const request=createGithubTransport({getToken:async()=>secret,maxResponseBytes:3,fetch:async()=>new Response('too large')});await expect(request(list)).rejects.toThrow();
 });
+
+it('returns a missing-file lookup as explicit unavailable data so the model can try another path',async()=>{
+ const bridge=createGithubBridge({request:async m=>m.method==='tools/list'
+  ?{id:m.id,result:{tools:[tool('get_file_contents')]}}
+  :{id:m.id,result:{isError:true,content:[{type:'text',text:'The path does not point to a file or directory, or the file does not exist in the repository.'}]}}});
+ const result=await bridge(call('get_file_contents',{path:'missing.md'}));
+ expect(result.error).toBeUndefined();
+ const lookup=JSON.parse(result.result.content[0].text);
+ expect(lookup.isError).toBe(true);expect(lookup.code).toBe('github_read_unavailable');
+ expect(lookup.message).toContain('does not exist');
+});
+it('still blocks a credential-bearing GitHub error before any model sees it',async()=>{
+ const bridge=createGithubBridge({request:async m=>m.method==='tools/list'
+  ?{id:m.id,result:{tools:[tool('get_file_contents')]}}
+  :{id:m.id,result:{isError:true,content:[{type:'text',text:'denied ghp_'+'A'.repeat(36)}]}}});
+ const result=await bridge(call('get_file_contents',{path:'missing.md'}));
+ expect(result.error).toBeTruthy();expect(JSON.stringify(result)).not.toContain('A'.repeat(36));
+});

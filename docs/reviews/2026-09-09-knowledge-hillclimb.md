@@ -167,3 +167,27 @@ from another terminal without restarting it. A fresh production-source-bound liv
 canary remains pending; the previous receipt is preserved as historical evidence
 rather than rebound to changed code. No second tunnel client is started during the
 active user run.
+
+
+## 2026-09-10: retain hold diagnostics and recover unavailable lookups
+
+Inspection of the stopped full-corpus run confirmed completed private selections,
+three credential-pattern holds with no saved response, and one GitHub file-read
+failure. Repeating that pinned read against GitHub reproduced a normal missing-file
+result with successful HTTP authentication; the bridge had converted it into a
+fatal protocol error. This does not establish the cause of the three credential
+matches, whose bodies had already been discarded and remote outputs cleaned up.
+
+The bridge now returns ordinary upstream tool failures as explicitly unavailable
+lookup data, excluded from successful source evidence. Models can seek another path
+without disguising missing evidence. Transport/protocol, forbidden-operation and
+credential failures remain holds. A held credential-pattern response now saves a
+redacted audit, original response hash, Batch locator and bounded safe trigger
+metadata; full matching strings and credential-bearing keys are removed. The
+credential pattern itself has not been relaxed.
+
+New regressions failed on the old missing-file and discarded-audit behavior, then
+passed after the corrections. Additional cases cover errors containing credentials,
+failed lookups excluded from citations, whole private-key redaction, immutable input
+and match locations inside words. Real OpenAI acceptance remains separate from these
+local and direct-GitHub checks; no full-corpus restart is part of this correction.
