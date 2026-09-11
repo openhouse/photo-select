@@ -23,7 +23,7 @@ The contract protects:
 
 ---
 
-## 1  Voice Registry (immutable)
+## 1  Voice Registry (session contract)
 
 | ID          | Display Name      | Style Guide           |
 | ----------- | ----------------- | --------------------- |
@@ -33,7 +33,7 @@ The contract protects:
 | Curator‑D   | Warren Sack       | systems‑thinking      |
 | Facilitator | Jamie (off‑stage) | frames session only   |
 
-> **Rule:** `minutes[*].speaker` **must** equal one of the _Display Name_ values—no aliases.
+> **Rule:** Without `--curators`, use the four curator Display Names above. An explicit `--curators` list is the base registry for `--github-all`; preserve those exact names unless the user explicitly enables the existing canonicalization policy. Restore the existing additional-curator rule: names tagged in at least two photos in a batch are appended through `finalizeCurators`, with placeholders excluded and the configured identity policy preserved. Freeze that batch roster across its requests, repairs, validation and audit; concurrent batches must not share additions. Repository source speakers never become curators automatically. All voices, including tagged people, are fictionalized lenses, not actual participants, quotations or endorsements. This user-authorized contract change ships as version 2.0.0.
 
 ---
 
@@ -59,11 +59,27 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 
 ## 4  Prompt Placeholders
 
+For `--github-all`, use the ordinary prompt renderer and preserve the selected
+original or custom prompt text. The flag attaches authenticated read-only tools;
+it must not inject research, role-play, consent, citation or editorial directions.
+Jamie explicitly authorized one default-template addition on 2026-09-11: when
+the supplied context contains a GitHub web link, render exactly “To understand
+the situation more fully, explore our team’s knowledge wiki graph on GitHub.”
+This context-based condition applies independently of the flag. Preserve custom
+templates unless they explicitly use `hasGithubLinks`; do not force tool calls.
+Use the ordinary free-text speaker schema; do not reject a prompt-defined
+facilitator with a GitHub-only speaker allowlist.
+Context and people metadata follow the ordinary prompt workflow. Cache splitting
+must preserve the rendered instruction bytes. This explicit user correction
+supersedes the separate GitHub prompt introduced earlier in this PR.
+
+
 | Placeholder      | Source            | Required                  |
 | ---------------- | ----------------- | ------------------------- |
 | `{{curators}}`   | CLI `--curators`  | ✓                         |
 | `{{images}}`     | runtime file scan | ✓                         |
 | `{{context}}`    | `--context` file  | optional                  |
+| `{{hasGithubLinks}}` | GitHub web link in supplied context | derived boolean |
 | `{{fieldNotes}}` | prior notebook    | when `--field-notes` flag |
 
 ---
@@ -91,7 +107,7 @@ REQUEST: <specific remediating action>
 
 ## 6  Provenance Requirements (immutable)
 
-- Compute `sha256(filename)` for every image and `model_sha256` for each Codex run; store both with commit SHA + timestamp in SQLite.
+- Compute `sha256(filename)` for every image and `model_sha256` for each Codex run. For `--github-all` in version 2.0.0, store image hashes in `corpus.json` and request hashes plus timestamps in the private curation JSON, bound to the atomic Git commit. This mode uses JSON and Git provenance without introducing SQLite.
 - Commit the LLM response JSON **and** updated `field‑notes.md` atomically.
 - CI enforces a **30‑second merge delay** (mindfulness window).
 - Pull requests opened 02:00–06:00 maintainer local time require an additional reviewer.

@@ -1,13 +1,14 @@
 {
   "name": "photo-select",
-  "version": "0.1.1",
-  "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
+  "version": "2.0.0",
+  "description": "CLI tool to recursively triage fine\u2011art photos with vision-enabled LLMs",
   "type": "module",
   "bin": {
     "photo-select": "./src/index.js"
   },
   "scripts": {
     "start": "photo-select",
+    "knowledge": "node src/index.js --knowledge-live",
     "test": "vitest run",
     "evals:prompt-cache": "node scripts/eval-prompt-cache.mjs",
     "evals:batch-aggregation": "vitest run tests/batchAggregation.test.js tests/openaiBatchProvider.test.js tests/orchestratorBatchAggregation.test.js",
@@ -19,7 +20,10 @@
     "evals:stop-rule": "vitest run tests/evaluateLevelOutcome.test.js tests/orchestrator.test.js tests/cliTargetLevelSize.test.js",
     "evals:people-index": "vitest run tests/peoplePrefetch.test.js tests/cliPeopleIndex.test.js tests/integration/prompt-curators.int.test.js tests/orchestrator.test.js",
     "undici:smoke": "node scripts/undici-smoke.mjs",
-    "debug:batch": "node scripts/debug-batch.mjs"
+    "debug:batch": "node scripts/debug-batch.mjs",
+    "evals:knowledge": "node scripts/eval-knowledge-context.mjs",
+    "hillclimb": "npm test -- --maxWorkers=2 --minWorkers=2 && npm run evals:knowledge",
+    "evals:github-prompt-cache": "node scripts/eval-github-prompt-cache.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -33,6 +37,7 @@
     "diff": "^8.0.2",
     "dotenv": "^16.5.0",
     "handlebars": "^4.7.8",
+    "js-tiktoken": "1.0.21",
     "ollama": "^0.5.16",
     "openai": "^4.0.0",
     "sharp": "^0.34.2",

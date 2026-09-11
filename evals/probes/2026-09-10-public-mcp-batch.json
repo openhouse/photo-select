@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "kind": "observed-public-mcp-batch-canary",
+  "observedAt": "2026-09-10",
+  "scope": {
+    "model": "gpt-5.6-terra",
+    "reasoningEffort": "high",
+    "syntheticImages": 1,
+    "curators": 12,
+    "privateGithubAccess": false,
+    "applicationImplementation": false
+  },
+  "result": {
+    "batchId": "batch_6aa2e64ff0748190858f313ccd1d94ab",
+    "status": "completed",
+    "counts": {
+      "total": 1,
+      "completed": 1,
+      "failed": 0
+    },
+    "httpStatus": 200,
+    "responseStatus": "completed",
+    "responseId": "resp_042de377b9920a7b016aa2e6a3a84087d2819778d8de167b9a",
+    "error": null,
+    "usage": {
+      "input_tokens": 964,
+      "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      },
+      "output_tokens": 685,
+      "output_tokens_details": {
+        "reasoning_tokens": 254
+      },
+      "total_tokens": 1649
+    },
+    "calls": [
+      {
+        "name": "search_openai_docs",
+        "server": "openai_docs",
+        "error": null
+      }
+    ],
+    "minutes": 12,
+    "decisions": 1,
+    "exactRoster": true,
+    "lastQuestion": true,
+    "exactFilename": true,
+    "inputDeleted": true
+  },
+  "responseFileSha256": "62bb4ea9bdeda50226e51af5104e699216029ed436c2d2b4879d09504eb39293",
+  "requestScriptSha256": "91c53166615ed34f41b362a7a3c14f588e391b16963e4c85d5c68cdfd854e353",
+  "limitation": "Public documentation tools and one synthetic image; not authenticated GitHub, installed launcher, concurrency, or editorial acceptance."
+}

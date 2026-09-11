@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "scope": "offline-contract-and-implementation",
+  "candidate": {
+    "sha256": "45c38d5b877c59136880f7661d8658a1b8852f20ea295b3f8739ba0930f457a4",
+    "files": 182
+  },
+  "behaviorPreservation": {
+    "status": "passed",
+    "referenceCommit": "f7a5a01dfc7badddbec9841df91a24d88d11d27c",
+    "authorizedPromptChange": "2026-09-11: one conditional GitHub exploration invitation; all other historical instructions preserved",
+    "suites": [
+      "tests/githubContextPrompt.test.js",
+      "tests/githubOriginalContract.test.js",
+      "tests/githubPromptParity.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ]
+  },
+  "githubDuringCuration": {
+    "ready": false,
+    "unmetGates": [
+      "exactCommand",
+      "privateGithubDuringCuration",
+      "ci"
+    ]
+  },
+  "promptCache": {
+    "status": "pending",
+    "evidence": "evals/probes/2026-09-11-github-minutes-cache.json"
+  },
+  "passed": 346,
+  "failed": 0,
+  "skipped": 0,
+  "sourceAccess": false,
+  "modelRequests": 0,
+  "publicationAuthority": "none",
+  "json_validity_rate": null,
+  "retry_recovery_rate": null,
+  "usefulness": "unmeasured",
+  "limitation": "Offline reference and implementation tests mock network boundaries. Actual source access and model canaries are recorded separately; editorial usefulness and general model resistance remain unmeasured."
+}

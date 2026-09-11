@@ -1,0 +1,3 @@
+import {it,expect} from 'vitest';import {execFile} from 'node:child_process';import {promisify} from 'node:util';const exec=promisify(execFile);
+it('documents the new flag without requiring credentials',async()=>{const {stdout}=await exec(process.execPath,['src/index.js','--help'],{env:{...process.env,OPENAI_API_KEY:''}});expect(stdout).toContain('--github-all');});
+it.each([{args:['--provider','ollama']},{args:['--knowledge-live']}])('rejects incompatible GitHub mode before accessing sources: %j',async ({args})=>{try{await exec(process.execPath,['src/index.js','--github-all',...args],{env:{...process.env,OPENAI_API_KEY:'synthetic-test-key'}});throw Error('accepted');}catch(error){expect(error.code).toBe(1);expect(error.stderr).toMatch(/--github-all/);}});
