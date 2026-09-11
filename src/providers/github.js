@@ -7,15 +7,15 @@ import {validateGithubBrief} from '../core/githubBrief.js';
 import {buildReplySchema} from '../replySchema.js';
 import {knowledgeError,sha256} from '../core/knowledgeLive.js';
 import {credentialLike,redactCredentialContent} from '../core/githubBridge.js';
-import {githubTool,sessionCurators,curatorsForBatch,responseText,githubSources,validateGithubReply} from '../core/githubCuration.js';
+import {githubTool,sessionCurators,curatorsForBatch,responseText,githubSources,validateGithubReply,githubReplyWarnings} from '../core/githubCuration.js';
 export class GithubCurationProvider {
   name='openai';knowledge=true;preservePrompt=true;supportsPeopleMetadata=true;supportsAsync=false;
   promptPath=DEFAULT_PROMPT_PATH;
-  constructor({tunnelId,curators=[],brief='',briefSize,cacheServiceTier,respond,encodeImage,save=async()=>{},assertDirectory=async()=>{},assertCurrent=async()=>{}}) {
+  constructor({tunnelId,curators=[],brief='',briefSize,cacheServiceTier,respond,encodeImage,save=async()=>{},progress=()=>{},assertDirectory=async()=>{},assertCurrent=async()=>{}}) {
     this.tool=githubTool(tunnelId);this.curators=sessionCurators(curators);
     if(credentialLike(brief))throw knowledgeError('Credential-like content in the brief is held.');
     this.briefTokens=(briefSize||validateGithubBrief(brief)).textTokens;
-    Object.assign(this,{brief,cacheServiceTier,respond,encodeImage,save,assertDirectory,assertCurrent});
+    Object.assign(this,{brief,cacheServiceTier,respond,encodeImage,save,progress,assertDirectory,assertCurrent});
   }
   async submit(options){return {promise:this.chat(options)};}
   async collect(handle){return handle.promise;}
@@ -53,9 +53,10 @@ export class GithubCurationProvider {
         let json;
         try {
           json=JSON.parse(responseText(response));validateGithubReply(json,filenames);
-          if(json.minutes.length<schema.properties.minutes.minItems||json.minutes.length>schema.properties.minutes.maxItems)throw knowledgeError('Invalid minutes count.');
         }catch(error){if(attempt)throw error;continue;}
-        await this.save({status:'completed',model,model_sha256:sha256(submitted),request:submitted,attempts,json,sources:githubSources(response.output),retry_recovered:attempt===1,usage:response.usage||null});
+        const warnings=githubReplyWarnings(json,{minutesMin:schema.properties.minutes.minItems,minutesMax:schema.properties.minutes.maxItems});
+        await this.save({status:'completed',warnings,model,model_sha256:sha256(submitted),request:submitted,attempts,json,sources:githubSources(response.output),retry_recovered:attempt===1,usage:response.usage||null});
+        for(const warning of warnings)this.progress(`github: ${warning.message}`);
         return {raw:JSON.stringify(json),json};
       }
     }catch(error){

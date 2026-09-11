@@ -45,13 +45,16 @@ separate. No LLM judge or aggregate quality score decides these binary contracts
 | Existing curator additions and metadata survive | `cliGithubWorkflow.test.js`, `githubCuration.test.js` | Fictional output fixtures |
 | Results sort in the selected directory and resume | `cliGithubWorkflow.test.js` | Temporary synthetic photographs |
 | Credential and discovery failures are classified | `githubBridge.test.js`, `githubReliability.test.js`, `githubFlex.test.js` | Injected faults; no promise against all service outages |
+| Presentation targets do not discard valid work | `githubCuration.test.js`, 84-batch `cliGithubWorkflow.test.js` | Length warnings do not measure editorial usefulness |
 | Private source text reaches the model | Version-bound live receipts | Only the tested sources and requests |
 | The full photographic job completes | A completed run and reconciled output counts | Never inferred from a seed, cache hit or test count |
 
 ## Development sequence
 
 1. State the requested behavior and preservation requirements before editing.
-   Reuse the current rendering, roster, sorting and caching components.
+   Reuse the current rendering, roster, sorting and caching components. Distinguish
+   structural and credential requirements from presentation targets: a length
+   deviation should be reported without discarding valid work or buying a repair.
 2. Add an assertion at the affected boundary. Keep historical expected values
    independent of the code being changed. Deliberately reintroduce the fault in
    a disposable copy to demonstrate that the assertion fails.

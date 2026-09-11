@@ -9,11 +9,11 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Cache coverage now counts decoded rendered prefix text rather than JSON transport escapes. A full-brief four-curation live test passed with 542,017 cached tokens and zero writes on every request. Private-source acceptance, installed-command acceptance and full-corpus completion remain separate.",
+  "note": "Minute-count targets now produce visible warnings while preserving all valid minutes and decisions. Hard reply and credential checks remain. Full-corpus completion is not inferred from deterministic tests or a bounded live canary.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -28,14 +28,15 @@
   },
   "cacheEvidence": {
     "status": "passed",
-    "path": "evals/probes/2026-09-11-github-rendered-prefix-cache.json",
+    "path": "evals/probes/2026-09-11-github-minutes-cache.json",
     "priorEvidence": [
       "evals/probes/2026-09-11-github-cache-initial.json",
       "evals/probes/2026-09-11-github-cache-held.json",
       "evals/probes/2026-09-11-github-cache-diagnostic.json",
       "evals/probes/2026-09-11-github-cache-flex.json",
       "evals/probes/2026-09-11-github-reliability-cache.json",
-      "evals/probes/2026-09-11-github-original-prompt.json"
+      "evals/probes/2026-09-11-github-original-prompt.json",
+      "evals/probes/2026-09-11-github-rendered-prefix-cache.json"
     ],
     "scope": "Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one."
   },
@@ -52,5 +53,9 @@
       "tests/cliGithubWorkflow.test.js"
     ],
     "scope": "Independent pre-PR template reference, exact default/custom/context/inline instruction equality across cached CLI batches, unchanged original template, and byte-preserving cache splitting."
+  },
+  "completionRegression": {
+    "test": "tests/cliGithubWorkflow.test.js",
+    "scope": "84 batches, 840 synthetic images, twenty workers; long and short minutes injected at requests 64 and 65; all images sorted with 84 requests and no length-only repair. External API and tunnel operations mocked."
   }
 }

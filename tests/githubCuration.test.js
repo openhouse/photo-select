@@ -113,3 +113,37 @@ it.each([[],['Replacement'],[...curators].reverse(),[...curators,curators[0]]].m
  const p=new GithubCurationProvider({tunnelId,curators,respond,encodeImage:async()=>Buffer.from('image')});
  await expect(p.chat({images:['one.jpg'],curators:proposed})).rejects.toThrow();expect(respond).not.toHaveBeenCalled();
 });
+
+// Regression from the production hold: 28 entries, then a paid repair with 26,
+// for a 15–25 target. Length does not invalidate otherwise complete decisions.
+it.each([14,26,28])('preserves all %i minutes and decisions with one call and a visible warning',async count=>{
+ const value={...json,minutes:Array.from({length:count},(_,i)=>({speaker:'Curator '+i,text:'Reading '+i+'. What next?'}))};
+ const respond=vi.fn(async()=>response(value)),save=vi.fn(),progress=vi.fn();
+ const p=new GithubCurationProvider({tunnelId,curators,respond,save,progress,encodeImage:async()=>Buffer.from('image')});
+ const result=await p.chat({images:['one.jpg'],minutesMin:15,minutesMax:25});
+ expect(result.json).toEqual(value);expect(JSON.parse(result.raw)).toEqual(value);
+ expect(respond).toHaveBeenCalledTimes(1);expect(save).toHaveBeenCalledTimes(1);
+ expect(save.mock.calls[0][0]).toMatchObject({status:'completed',json:value,retry_recovered:false,
+  warnings:[{code:'MINUTES_COUNT_OUTSIDE_TARGET',actual:count,min:15,max:25}]});
+ expect(progress.mock.calls.flat().join(' ')).toContain(count+' minute entries; target 15–25');
+ expect(progress.mock.calls.flat().join(' ')).toContain('decisions accepted');
+});
+it('does not warn when minutes meet the requested range',async()=>{
+ const save=vi.fn(),progress=vi.fn();const p=new GithubCurationProvider({tunnelId,curators,save,progress,respond:async()=>response(json),encodeImage:async()=>Buffer.from('image')});
+ await p.chat({images:['one.jpg'],minutesMin:1,minutesMax:2});
+ expect(save.mock.calls[0][0].warnings).toEqual([]);expect(progress).not.toHaveBeenCalled();
+});
+it.each(['empty','no-question','wrong-file','duplicate','extra-key','credential'])('still holds invalid %s output regardless of the length target',async kind=>{
+ const value=structuredClone(json);
+ if(kind==='empty')value.minutes=[];
+ if(kind==='no-question')value.minutes.at(-1).text='No question.';
+ if(kind==='wrong-file')value.decisions[0].filename='invented.jpg';
+ if(kind==='duplicate')value.decisions.push({...value.decisions[0]});
+ if(kind==='extra-key')value.warning='extra';
+ if(kind==='credential')value.minutes[0].text='sk-proj-'+'A'.repeat(40);
+ const respond=vi.fn(async()=>response(value)),save=vi.fn(),progress=vi.fn();
+ const p=new GithubCurationProvider({tunnelId,curators,respond,save,progress,encodeImage:async()=>Buffer.from('image')});
+ await expect(p.chat({images:['one.jpg'],minutesMin:15,minutesMax:25})).rejects.toThrow();
+ expect(save.mock.calls.at(-1)[0].status).toBe('held');expect(progress).not.toHaveBeenCalled();
+ expect(respond).toHaveBeenCalledTimes(kind==='credential'?1:2);
+});

@@ -38,3 +38,13 @@ export function validateGithubReply(reply,filenames) {
   if(credentialLike(reply))throw knowledgeError('Credential-like curation output held.');
   return true;
 }
+
+// Prompt length is a presentation target. Never discard complete, valid decisions
+// or manufacture/truncate minutes solely to meet that target.
+export function githubReplyWarnings(reply,{minutesMin,minutesMax}) {
+  const actual=reply.minutes.length;
+  return actual<minutesMin||actual>minutesMax?[{
+    code:'MINUTES_COUNT_OUTSIDE_TARGET',actual,min:minutesMin,max:minutesMax,
+    message:`${actual} minute entries; target ${minutesMin}–${minutesMax}. All minutes preserved; decisions accepted.`
+  }]:[];
+}

@@ -639,3 +639,42 @@ The original run's five keep and five aside decisions remain in the selected
 photo directory. The next invocation of the same command uses the repaired
 scheduler and resumes remaining images. The current readiness and CI evidence
 must be read separately from this bounded acceptance result.
+
+
+## 2026-09-11 — retain valid decisions when minutes miss the length target
+
+The latest run committed 82 completed curation records and one held record. Its
+first response contained 28 minute entries and the retry 26 against a requested
+15–25. Both contained ten decisions. The provider imposed a numeric rejection
+that the ordinary parser did not impose, causing the entire remaining queue to
+stop for a presentation mismatch.
+
+The correction retains the original prompt, request schema, cache key and full
+context. Valid short or long minutes produce a visible warning in the terminal,
+private JSON and field notes. Every minute and decision is preserved, with no
+length-only retry, truncation or padding. Structural, filename, question,
+credential and transport requirements remain enforced.
+
+Before the fix, three count cases, the warning-free normal case and an 84-batch
+CLI case failed. Afterward, all 70 targeted checks passed. The CLI completed 840
+synthetic photographs with twenty workers, including 28-entry and 14-entry replies
+in requests 64 and 65, with exactly 84 requests and no length-only repairs. Tests
+also keep empty minutes, missing questions, wrong/duplicate filenames, extra keys
+and credentials as failures. Historical prompt comparisons remain in the suite.
+
+The last saved held response was recovered without a model call: ten source
+hashes and matching snapshot hashes were checked, destinations were absent, and
+five keep / five aside decisions plus all 26 minutes were written to the normal
+image directory. A separate local Git audit binds the recovery to the unchanged
+original record and corpus. No private response text is included in this review.
+
+A fresh four-image live check on the repaired implementation passed with the full
+unchanged 573,984-token budget-counted brief. All four requests reused 542,017
+cached tokens with zero writes and completed under Flex. Tools remained attached;
+no get_me calls occurred. The new receipt binds this candidate's source hashes.
+This is bounded cache/curation evidence, not a new private-source delivery test or
+full-corpus completion claim.
+
+The full regression suite passed **481 tests across 51 suites**, with zero
+failures or skips. The focused candidate report is regenerated after the final
+evidence updates; hosted checks are verified separately on the pushed commit.

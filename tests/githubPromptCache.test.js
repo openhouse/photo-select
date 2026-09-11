@@ -24,10 +24,10 @@ it('caches the entire unchanged user brief before filenames, voices, metadata an
  expect(githubRequestData(b).curators).toEqual(['Base','Guest']);
  expect(b.input.at(-1).content[1].text).toContain('Guest');
 });
-it.each(['voice','filename','count'])('retains local %s validation with a stable schema and repairs after the breakpoint',async kind=>{
+it.each(['voice','filename'])('retains local %s validation with a stable schema and repairs after the breakpoint',async kind=>{
  const calls=[],saved=[];const p=new GithubCurationProvider({tunnelId,curators:base,brief,encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r),respond:async r=>{
   calls.push(r);const result=reply(kind==='filename'?'invented.jpg':'a.jpg',kind==='voice'?123:'Base');
-  if(kind==='count'){const value=JSON.parse(result.output[0].content[0].text);value.minutes.push(...value.minutes);result.output[0].content[0].text=JSON.stringify(value);}return result;
+  return result;
  }});
  await expect(p.chat({model:'gpt-5.6-terra',images:['a.jpg'],minutesMin:1,minutesMax:1})).rejects.toThrow();
  expect(calls).toHaveLength(2);expect(calls[0].prompt_cache_key).toBeTruthy();expect(calls[1].prompt_cache_key).toBe(calls[0].prompt_cache_key);

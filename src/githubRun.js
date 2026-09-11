@@ -21,7 +21,7 @@ export async function createGithubAudit(root) {
     queue=queue.then(async()=>{
       const file=`curation-${String(saved.length+1).padStart(4,'0')}.json`;
       const stamped={...record,recordedAt:new Date().toISOString()};await atomic(path.join(root,file),stamped);saved.push({file,...stamped});
-      const notes='# Private photographic field notes\n\n'+saved.map(r=>`## ${r.file}\n\nStatus: ${r.status}\n\n`+(r.json?r.json.minutes.map(m=>`**${m.speaker}:** ${m.text}`).join('\n\n')+'\n\n'+r.json.decisions.map(d=>`- ${d.filename}: ${d.decision} — ${d.reason}`).join('\n'):r.reason)).join('\n\n');
+      const notes='# Private photographic field notes\n\n'+saved.map(r=>`## ${r.file}\n\nStatus: ${r.status}\n\n`+(r.warnings||[]).map(w=>`Warning: ${w.message}\n\n`).join('')+(r.json?r.json.minutes.map(m=>`**${m.speaker}:** ${m.text}`).join('\n\n')+'\n\n'+r.json.decisions.map(d=>`- ${d.filename}: ${d.decision} — ${d.reason}`).join('\n'):r.reason)).join('\n\n');
       await atomic(path.join(root,'field-notes.md'),notes+'\n');
       await exec('git',['-C',root,'add','--',file,'field-notes.md','.gitignore']);
       for(const name of ['corpus.json','session.json'])try{await fs.access(path.join(root,name));await exec('git',['-C',root,'add','--',name]);}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -45,7 +45,7 @@ export async function startGithubRun({source,brief='',curators=[],provider='open
     const client=dependencies.client||new OpenAI({apiKey:process.env.OPENAI_API_KEY,baseURL:'https://api.openai.com/v1',maxRetries:0,timeout:120000});
     const batch=provider==='openai-batch'?new GithubBatchTransport({client,signal,progress,saveReceipt:record=>atomic(path.join(run.root,(record.transport||'batch')+'-'+record.runId+'.json'),record)}):null;
     if(batch&&briefSize.textTokens>=1024)progress('github: cacheable batch-mode requests use Flex at Batch rates; no standard-tier fallback');
-    const driver=new GithubCurationProvider({tunnelId,curators,brief,briefSize,cacheServiceTier:batch?'flex':undefined,save,
+    const driver=new GithubCurationProvider({tunnelId,curators,brief,briefSize,cacheServiceTier:batch?'flex':undefined,save,progress,
       respond:batch?body=>batch.respond(body):body=>client.responses.create(body,{signal}),
       assertCurrent:tunnel.assertCurrent,
       assertDirectory:async dir=>{const actual=await fs.realpath(dir);if(actual!==run.images&&!actual.startsWith(run.images+path.sep))throw knowledgeError('Curation escaped the selected image directory.');},

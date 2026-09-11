@@ -142,6 +142,8 @@ Inspect private receipts before retrying after an uncertain interruption.
 
 Batch requests are uploaded from memory. Both output and error files are read and matched to their submitted requests. Error diagnostics are saved privately before remote cleanup; terminal messages show error codes and fixed guidance rather than raw API prose. Successful rows survive a different row failing. If result retrieval or diagnostic persistence fails, remote files are retained for recovery. Otherwise the temporary remote input, output and error files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation resumes the selected image directory with a fresh private API audit; it does not replay the previous model conversation.
 
+A minute-count mismatch is a visible warning, not a failed curation: if the prompt asks for 15–25 entries and the model returns 26, all 26 are retained and valid decisions are sorted normally. The original prompt still requests its range. The private JSON and field notes record `MINUTES_COUNT_OUTSIDE_TARGET` with the actual and target counts; terminal output reports that decisions were accepted. No length-only repair request, truncation or padding occurs. Empty minutes, malformed entries, a missing final question, invalid decisions or filenames, and credential-like output still fail validation.
+
 A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing reply validation does not establish editorial quality. GitHub links already in the brief may appear in the reply without a fresh tool read; actual fetched sources are recorded separately in the audit.
 
 ## Held responses and unavailable files
@@ -195,7 +197,7 @@ cache breakpoint after the complete context. The selected template must expose
 that context boundary; a custom template without it stays uncached. The application neither summarizes nor
 truncates it. Changing filenames, photo tags, added curators and repair directions
 come after that boundary. The output schema before it is stable; local validation
-still enforces each batch's filenames and minutes bounds. Speaker labels use the
+still enforces each batch's exact filenames and reply structure. Speaker labels use the
 ordinary free-text schema, so the facilitator named in the original template is
 not rejected by a GitHub-only roster restriction.
 

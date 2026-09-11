@@ -246,3 +246,22 @@ escape-heavy prefix, cold and warm seeds, partial/missing reads, the coverage
 boundary and twenty-worker CLI sorting. Supplied-context live cache acceptance
 keeps tool availability separate from discretionary tool execution; it never
 adds a research instruction to make the user's brief pass a connectivity check.
+
+
+### Minute-count mismatch: preserve completed curation
+
+The sustained photo run stopped after an otherwise valid reply returned 28
+minute entries for a 15–25 target and the repair returned 26. This was a GitHub-only
+local rejection; the ordinary parser does not make numeric length a prerequisite
+for sorting valid decisions. The original prompt continues to request its range.
+Treat the count as a visible quality warning, retaining every entry and decision
+without another paid call, truncation or invented padding. Persist the warning in
+the private record and field notes, and report it at the terminal. Keep reply keys,
+nonempty minutes, text fields, final question, exact filename coverage, allowed
+decisions, credential screening and transport checks as hard requirements.
+
+The regression recreates the original halt before the fix and completes 84
+batches / 840 synthetic images afterward with twenty workers and length deviations
+late in the run. Boundary cases preserve both short and long valid replies while
+malformed or unsafe output still fails. Full-corpus completion remains an observed
+run outcome, separate from passing these injected-fault tests.

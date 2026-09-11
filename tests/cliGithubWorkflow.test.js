@@ -49,19 +49,19 @@ async function setup(pairs=1,{people={},legacy=false}={}){
    const ordinal=++count;const user=request.input.at(-1),brief=githubRequestData(request);
    await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,serviceTier:request.service_tier,tools:request.tools})+'\\n');
    if(process.env.TEST_DISCOVERY_FAILURE==='1'&&ordinal===3)throw Object.assign(Error("424 Error retrieving tool list from MCP server: 'github'. Http status code: 424 (Failed Dependency)"),{status:424,code:'http_error',type:'external_connector_error',param:'tools'});
-   const minimum=brief.minutesMin;
+   const minimum=process.env.TEST_MINUTES_VARIATION==='1'&&ordinal===64?28:process.env.TEST_MINUTES_VARIATION==='1'&&ordinal===65?14:brief.minutesMin;
    return {id:'response-'+ordinal,status:'completed',service_tier:'flex',output:[{type:'reasoning',summary:[],encrypted_content:'gAAAAA'+'X'.repeat(50)+'sk-'+'A'.repeat(80)}],usage:{input_tokens:6000,input_tokens_details:{cached_tokens:ordinal===1?0:5000,cache_write_tokens:ordinal===1?5000:0}},output_text:JSON.stringify({minutes:Array.from({length:minimum},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'})),decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))})};
   }};
   return actual({...options,base:process.env.TEST_AUDIT,tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({assertCurrent:async()=>{},stop:async()=>{}}),client});
  }`;
  const loader=path.join(root,'loader.mjs');await fs.writeFile(loader,`export async function resolve(specifier,context,next){if(specifier==='./githubRun.js'&&context.parentURL?.endsWith('/src/index.js'))return {url:'data:text/javascript,'+encodeURIComponent(${JSON.stringify(wrapper)}),shortCircuit:true};return next(specifier,context);}`);
- async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,prompt,knowledgeBrief,workers=1,discoveryFailure=false}={}){
+ async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,prompt,knowledgeBrief,workers=1,discoveryFailure=false,minutesVariation=false}={}){
   const args=['--loader',loader,cli,'--github-all','--provider','openai-batch','--model','gpt-5.6-terra','--workers',String(workers),'--verbose','--dir',source];if(!recurse)args.push('--no-recurse');if(disablePeople)args.push('--disable-photo-filter');if(curators)args.push('--curators',curators.join(','));
   if(knowledgeBrief)args.push("--knowledge-brief",knowledgeBrief);
   if(prompt){const file=path.join(root,'custom.hbs');await fs.writeFile(file,prompt);args.push('--prompt',file);}
   if(context){const file=path.join(root,'context.txt');await fs.writeFile(file,context);args.push('--context',file);}
-  const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):'',TEST_DISCOVERY_FAILURE:discoveryFailure?'1':''};
-  try{return {...await exec(process.execPath,args,{cwd:root,env,timeout:25000,maxBuffer:1024*1024}),code:0};}catch(e){return {code:e.code,stdout:e.stdout,stderr:e.stderr};}
+  const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):'',TEST_DISCOVERY_FAILURE:discoveryFailure?'1':'',TEST_MINUTES_VARIATION:minutesVariation?'1':''};
+  try{return {...await exec(process.execPath,args,{cwd:root,env,timeout:minutesVariation?90000:25000,maxBuffer:4*1024*1024}),code:0};}catch(e){return {code:e.code,stdout:e.stdout,stderr:e.stderr};}
  }
  return {root,source,audit,calls,run,metadataRequests};
 }
@@ -231,3 +231,25 @@ it('finishes quoted multiline context with twenty workers without counting JSON 
  expect(new Set(records.flatMap(record => record.json.decisions.map(decision => decision.filename))).size).toBe(60);
  expect(result.stdout + result.stderr).toContain('prefix=');
 }, 30000);
+
+it('completes 84 batches with twenty workers despite late long and short minutes',async()=>{
+ const f=await setup(420),context='A "quoted" line.\n'.repeat(850);
+ const result=await f.run({context,curators:['Base'],workers:20,minutesVariation:true});
+ expect(result.code,result.stderr).toBe(0);
+ expect(await jpgs(f.source)).toEqual([]);
+ expect(await jpgs(path.join(f.source,'_keep'))).toHaveLength(420);
+ expect(await jpgs(path.join(f.source,'_aside'))).toHaveLength(420);
+ const calls=(await fs.readFile(f.calls,'utf8')).trim().split('\n').map(JSON.parse);
+ expect(calls).toHaveLength(84); // No paid length-only repairs.
+ const audit=path.join(f.audit,(await fs.readdir(f.audit))[0]);
+ const records=await Promise.all((await fs.readdir(audit)).filter(name=>/^curation-/.test(name))
+  .map(async name=>JSON.parse(await fs.readFile(path.join(audit,name),'utf8'))));
+ expect(records).toHaveLength(84);expect(records.every(r=>r.status==='completed')).toBe(true);
+ const varied=records.filter(r=>r.warnings.length);
+ expect(varied.map(r=>r.json.minutes.length).sort((a,b)=>a-b)).toEqual([14,28]);
+ expect(varied.every(r=>r.attempts.length===1&&r.retry_recovered===false)).toBe(true);
+ expect(new Set(records.flatMap(r=>r.json.decisions.map(d=>d.filename))).size).toBe(840);
+ for(const count of [14,28])expect(result.stdout+result.stderr).toContain(count+' minute entries; target');
+ const notes=await fs.readFile(path.join(audit,'field-notes.md'),'utf8');
+ expect(notes).toContain('28 minute entries');expect(notes).toContain('14 minute entries');
+},100000);
