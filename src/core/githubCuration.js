@@ -32,10 +32,36 @@ export function githubSources(output=[]) {
     return [{tool:call.name,arguments:args,urls:[...new Set(urls)],ref:ref??null,commitPinned:/^[a-f0-9]{40}$/.test(ref||'')}];
   });
 }
+// Structured diagnostics stay in the private audit/repair payload; terminal
+// errors contain only fixed codes, never model text or source filenames.
+export function githubReplyIssues(reply,filenames) {
+  const exact=(object,keys)=>object&&typeof object==='object'&&!Array.isArray(object)&&Object.keys(object).length===keys.length&&keys.every(k=>Object.hasOwn(object,k));
+  const issues=[];
+  if(!exact(reply,['minutes','decisions']))issues.push({code:'TOP_LEVEL_KEYS'});
+  if(!Array.isArray(reply?.minutes)||!reply.minutes.length)issues.push({code:'MINUTES_ARRAY'});
+  else {
+    reply.minutes.forEach((m,index)=>{
+      if(!exact(m,['speaker','text'])||typeof m.speaker!=='string'||!m.speaker.trim()||typeof m.text!=='string'||!m.text.trim())issues.push({code:'MINUTE_ENTRY',index});
+    });
+    if(typeof reply.minutes.at(-1)?.text==='string'&&!/\?\s*$/.test(reply.minutes.at(-1).text))issues.push({code:'FINAL_QUESTION'});
+  }
+  if(!Array.isArray(reply?.decisions))issues.push({code:'DECISIONS_ARRAY'});
+  else {
+    reply.decisions.forEach((d,index)=>{
+      if(!exact(d,['filename','decision','reason'])||typeof d.filename!=='string'||!['keep','aside'].includes(d.decision)||typeof d.reason!=='string')issues.push({code:'DECISION_ENTRY',index});
+    });
+    const names=reply.decisions.map(d=>d?.filename).filter(n=>typeof n==='string');
+    const missing=filenames.filter(n=>!names.includes(n)),unexpected=[...new Set(names.filter(n=>!filenames.includes(n)))];
+    const duplicates=[...new Set(names.filter((n,i)=>names.indexOf(n)!==i))];
+    if(reply.decisions.length!==filenames.length||missing.length||unexpected.length||duplicates.length)
+      issues.push({code:'DECISION_FILENAMES',missing,unexpected,duplicates,expectedCount:filenames.length,actualCount:reply.decisions.length});
+  }
+  return issues;
+}
 export function validateGithubReply(reply,filenames) {
-  const exact=(object,keys)=>object&&Object.keys(object).length===keys.length&&keys.every(k=>Object.hasOwn(object,k));
-  if(!exact(reply,['minutes','decisions'])||!Array.isArray(reply.minutes)||!reply.minutes.length||reply.minutes.some(m=>!exact(m,['speaker','text'])||typeof m.speaker!=='string'||!m.speaker.trim()||typeof m.text!=='string'||!m.text.trim())||!/\?\s*$/.test(reply.minutes.at(-1).text)||!Array.isArray(reply.decisions)||reply.decisions.length!==filenames.length||new Set(reply.decisions.map(x=>x.filename)).size!==filenames.length||reply.decisions.some(d=>!exact(d,['filename','decision','reason'])||!filenames.includes(d.filename)||!['keep','aside'].includes(d.decision)||typeof d.reason!=='string'))throw knowledgeError('Curation reply violated the session voice, filename or JSON contract.');
   if(credentialLike(reply))throw knowledgeError('Credential-like curation output held.');
+  const issues=githubReplyIssues(reply,filenames);
+  if(issues.length)throw Object.assign(knowledgeError(`Curation reply invalid (${[...new Set(issues.map(i=>i.code))].join(', ')}); see the private curation record.`),{issues});
   return true;
 }
 

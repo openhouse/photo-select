@@ -13,7 +13,7 @@
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "A user-started run with the conditional invitation delivered GitHub source text, but one reader cache miss stopped its queue. The scheduler now uses at most two new serial curation batches to recover established reuse. Deterministic recovery and full-workflow checks are separate from live recovery and full-corpus completion.",
+  "note": "The user-started run now shows a filename mismatch after 45 completed curation records. The bounded format retry now receives specific validation issues, exact filenames and its rejected answer without changing the initial prompt or cached prefix. Offline repair and cache recovery checks remain separate from live model recovery and full-corpus completion.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -41,9 +41,9 @@
     "scope": "Historical passing evidence for the prior prompt and implementation: Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one. The 2026-09-11 conditional invitation changes the prompt and renderer; this receipt is retained unchanged and does not establish live cache reuse for the new candidate."
   },
   "ciEvidence": {
-    "implementationCommit": "8f95eb76aece7aed7f63f8749a41378d4fa65d89",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34619340569",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34619344810",
+    "implementationCommit": "dcd8ce0b2cea7e5faa4068263538c7af95af9628",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34621403117",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34621401774",
     "conclusion": "success",
     "scope": "Prior commit only; current repair CI is verified on the PR after pushing."
   },
@@ -69,5 +69,13 @@
       "tests/cliGithubWorkflow.test.js"
     ],
     "scope": "Mixed wave, up to two new serial recovery batches, persistent misses, unchanged 95% threshold, idle recheck, cancellation, hard failures, and request preservation. Live recovery is pending a user-started Terminal run."
+  },
+  "replyRepairEvidence": {
+    "status": "offline-only",
+    "tests": [
+      "tests/githubReplyRepair.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Shortened multi-suffix filename, exact missing/unexpected/duplicate diagnostics, rejected reply as user data, one repair, cache and initial prompt preservation, malformed JSON and structural errors, concurrent feedback isolation, private audit and exact sorting. The API is mocked; live model repair success and full-job completion are not inferred."
   }
 }

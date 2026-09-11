@@ -34,9 +34,10 @@ export class GithubCurationProvider {
       if(/^gpt-[56]/i.test(model)&&verbosity)request.text.verbosity=verbosity;
       if(/^(?:gpt-[56]|o[1-9])/i.test(model)&&reasoningEffort&&reasoningEffort!=='auto')request.reasoning={effort:reasoningEffort};
       request=cacheGithubRequest(request,{promptCachePrefix,briefTokens:this.briefTokens,serviceTier:this.cacheServiceTier});
+      let repair;
       for(let attempt=0;attempt<2;attempt++) {
         await this.assertCurrent();
-        const submitted=attempt?repairGithubRequest(request):request;
+        const submitted=attempt?repairGithubRequest(request,repair):request;
         const received=await this.respond(submitted);
         const {response,omittedEncryptedReasoning}=omitEncryptedReasoning(received);
         const provenance={request_sha256:sha256(submitted),response_sha256:sha256(received),omittedEncryptedReasoning};
@@ -47,15 +48,25 @@ export class GithubCurationProvider {
           throw knowledgeError('Credential-like response held; see redacted diagnostics in the private curation record.');
         }
         transport=response._photoSelectFlex??response._photoSelectBatch;
-        attempts.push({...provenance,response});
+        attempts.push({...provenance,response,...(repair?{repair}:{})});
         if(submitted.service_tier==='flex'&&response.service_tier!=='flex')throw knowledgeError('GitHub curation returned an unexpected service tier; further work held.');
         if(response.status!=='completed'||response.output?.some(x=>x.type==='mcp_approval_request'||x.type==='mcp_call'&&x.error))throw knowledgeError('Curation or GitHub tool execution did not complete.');
         let json;
         try {
           json=JSON.parse(responseText(response));validateGithubReply(json,filenames);
-        }catch(error){if(attempt)throw error;continue;}
+        }catch(error){
+          if(!error.issues&&!(error instanceof SyntaxError))throw error;
+          const issues=error.issues??[{code:'JSON_PARSE'}];
+          attempts.at(-1).validationIssues=issues;
+          const codes=[...new Set(issues.map(i=>i.code))].join(', ');
+          if(attempt)throw knowledgeError(`Curation reply invalid (${codes}) after one repair; see the private curation record.`);
+          repair={issues,filenames,previousReply:responseText(response)};
+          this.progress(`github: reply validation ${codes}; repair 1/1 with specific feedback`);
+          continue;
+        }
         const warnings=githubReplyWarnings(json,{minutesMin:schema.properties.minutes.minItems,minutesMax:schema.properties.minutes.maxItems});
         await this.save({status:'completed',warnings,model,model_sha256:sha256(submitted),request:submitted,attempts,json,sources:githubSources(response.output),retry_recovered:attempt===1,usage:response.usage||null});
+        if(attempt)this.progress('github: reply retry recovered; exact filenames and reply contract verified');
         for(const warning of warnings)this.progress(`github: ${warning.message}`);
         return {raw:JSON.stringify(json),json};
       }

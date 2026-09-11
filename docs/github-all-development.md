@@ -40,6 +40,17 @@ Only confirmed reuse releases parallel work. Tests retain startup, missing-usage
 transport, tier and cancellation holds and require exactly one curation per
 image batch. An 84-batch CLI case includes both early and late cache misses.
 
+### Reliability: feedback that can actually repair a reply
+
+**Status: repaired in deterministic evals; live model recovery pending.** A real
+reply and its retry both abbreviated the same long filename. The validator's
+single generic error hid the mismatch, and the retry could not see its prior
+answer. Tests now require specific missing/unexpected filename feedback plus the
+rejected answer at the API boundary. They also reject a second invalid response,
+verify concurrent batch isolation and run the complete synthetic CLI sorting path.
+The initial prompt and cached prefix remain unchanged. This prevents a blind
+retry; it does not guarantee that a live model will correct every error.
+
 ### Human review and live evidence
 
 **Status: still bounded.** The suite checks implementation contracts, not whether
@@ -62,6 +73,7 @@ separate. No LLM judge or aggregate quality score decides these binary contracts
 | Credential and discovery failures are classified | `githubBridge.test.js`, `githubReliability.test.js`, `githubFlex.test.js` | Injected faults; no promise against all service outages |
 | Isolated cache misses use bounded serial recovery | `githubCacheRecovery.test.js`, `githubPromptCache.test.js`, 84-batch `cliGithubWorkflow.test.js` | Synthetic usage cannot guarantee provider cache availability |
 | Presentation targets do not discard valid work | `githubCuration.test.js`, 84-batch `cliGithubWorkflow.test.js` | Length warnings do not measure editorial usefulness |
+| A format retry receives actionable feedback | `githubReplyRepair.test.js`, `cliGithubWorkflow.test.js` | Mocked recovery tests do not estimate live model success |
 | Private source text reaches the model | Version-bound live receipts | Only the tested sources and requests |
 | The full photographic job completes | A completed run and reconciled output counts | Never inferred from a seed, cache hit or test count |
 

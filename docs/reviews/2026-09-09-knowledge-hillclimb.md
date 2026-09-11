@@ -758,3 +758,46 @@ checks pass. Live recovery and full-corpus completion remain unverified; all API
 and tunnel boundaries in these tests are synthetic. No paid canary, background
 curation or Terminal restart was performed. The installed GitHub launcher already
 points to this worktree; hosted CI is checked on the final pushed commit.
+
+
+## 2026-09-11: repair the actual filename mismatch
+
+Read-only inspection found 45 completed curation records and one held record.
+Both rejected responses dropped the second suffix of one long source filename;
+replaying both through the diagnostic validator returns only
+`DECISION_FILENAMES`, with one missing and one unexpected name. The prior retry
+received neither the rejected output nor the mismatch. No source photographs,
+private audit records or context files were changed during this repair.
+
+The new regression uses synthetic filenames with the same two-suffix shape.
+Before implementation all 12 cases failed: generic retry repeated the failure,
+validation had no structured diagnosis, and concurrent retries had no batch-local
+feedback. The implementation sends exact issue data and the rejected reply after
+the cache breakpoint. The model must return an exact valid reply; no local fuzzy
+matching, decision invention or additional retries are introduced. Parse errors
+and every hard structural invariant have specific codes. Credential screening,
+free-text speakers, minute-count warnings and the original curation prompt stay
+in place. A targeted pass also updated the test that explicitly expected the old
+generic repair instruction; the frozen original-template fixture was unchanged.
+
+The CLI regression runs twenty synthetic images with twenty workers, injects a
+shortened filename, and requires two completed curation records with exactly
+one repair, three API calls, twenty unique decisions, one unchanged cache key and
+byte-identical sorted/snapshot copies. The mock recovers only when repair data is
+present. This checks the application's feedback and sorting path; live model
+recovery and full-corpus completion are separate acceptance results. No paid
+canary or user curation was started or restarted.
+
+The first aggregate run passed 530 of 531 tests; an existing discovery-outage
+CLI case exceeded Vitest's default five-second test limit under the full-suite
+load. Its subprocess already had a 25-second deadline. Give that test the same
+30-second outer deadline as its neighboring CLI cases; production retry timing
+and assertions are unchanged. The new repair CLI case's first assertion also
+exposed a fixture expectation error: twenty workers use ten-image batches, so
+twenty photos produce two curation records and three calls including the repair.
+
+Validation: `npm run hillclimb` passed **531 tests across 54 suites** and
+**346 focused evals**, with zero failures or skips. The final focused receipt is
+regenerated after this documentation update to bind all candidate files.
+`git diff --check` passes. Exact-commit hosted CI is recorded on the PR after
+pushing; live model recovery remains pending a user-started Terminal run.

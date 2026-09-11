@@ -55,7 +55,7 @@ it('keeps the original cached instructions intact when a repair is required',asy
  const request=f.calls[0],repaired=repairGithubRequest(request);
  expect(repaired.prompt_cache_key).toBe(request.prompt_cache_key);
  expect(repaired.input[0].content[0]).toEqual(request.input[0].content[0]);
- expect(instructions(repaired)).toBe(original.prompt+'\nRepair the previous invalid JSON/voice/filename result. Return a complete reply under the same schema.');
+ expect(instructions(repaired).slice(0,original.prompt.length)).toBe(original.prompt);expect(instructions(repaired).slice(original.prompt.length)).toMatch(/^\nRepair the rejected reply/);
  expect(repaired.input.at(-1)).toEqual(request.input.at(-1));expect(repaired.tools).toEqual(request.tools);
 });
 it('does not hold an ordinary brief link merely because the model did not fetch it',async()=>{

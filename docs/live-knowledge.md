@@ -168,7 +168,24 @@ Batch requests are uploaded from memory. Both output and error files are read an
 
 A minute-count mismatch is a visible warning, not a failed curation: if the prompt asks for 15–25 entries and the model returns 26, all 26 are retained and valid decisions are sorted normally. The original prompt still requests its range. The private JSON and field notes record `MINUTES_COUNT_OUTSIDE_TARGET` with the actual and target counts; terminal output reports that decisions were accepted. No length-only repair request, truncation or padding occurs. Empty minutes, malformed entries, a missing final question, invalid decisions or filenames, and credential-like output still fail validation.
 
-A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing reply validation does not establish editorial quality. GitHub links already in the brief may appear in the reply without a fresh tool read; actual fetched sources are recorded separately in the audit.
+A malformed reply gets one repair with the same images, context, tools and roster.
+The retry receives the rejected reply as user data, specific validation issues,
+and the exact filename list. It asks for correction of the reported issues while
+preserving valid content. A shortened filename is never matched or renamed by
+approximation. The original prompt, cached prefix, schema and cache key stay
+unchanged; repair instructions and data follow the cache breakpoint.
+
+Verbose output reports `reply validation DECISION_FILENAMES; repair 1/1` and,
+if correction succeeds, `reply retry recovered`. Other validation codes identify
+JSON parsing, top-level keys, minute entries, the final question or decision
+structure. The private attempt records retain `validationIssues`, the second
+attempt's `repair` payload, both responses and their hashes. Terminal errors
+include codes, without quoting rejected content or private filenames. A second
+invalid reply holds that batch with its exact issue codes; completed selections
+remain saved. Resume with the same command from the same image directory after
+updating; only the Terminal invocation you start runs curation.
+
+The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing reply validation does not establish editorial quality. GitHub links already in the brief may appear in the reply without a fresh tool read; actual fetched sources are recorded separately in the audit.
 
 ## Held responses and unavailable files
 

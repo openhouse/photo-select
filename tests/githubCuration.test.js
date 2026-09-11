@@ -13,7 +13,7 @@ it('attaches a credential-free private tunnel to the image call with the exact c
 });
 it('repairs once with the same images, brief, tools and roster, saving both attempts',async()=>{
  const calls=[],saved=[];const p=new GithubCurationProvider({tunnelId,curators,respond:async r=>{calls.push(r);return calls.length===1?response({...json,minutes:[{speaker:123,text:'Hi?'}]}):response(json);},encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r)});
- await p.chat({model:'gpt-5.6-terra',images:['one.jpg']});expect(calls).toHaveLength(2);for(const key of ['input','tools','text'])expect(calls[1][key]).toEqual(calls[0][key]);expect(saved[0].retry_recovered).toBe(true);expect(saved[0].attempts).toHaveLength(2);
+ await p.chat({model:'gpt-5.6-terra',images:['one.jpg']});expect(calls).toHaveLength(2);expect(calls[1].input.at(-1)).toEqual(calls[0].input.at(-1));for(const key of ['tools','text'])expect(calls[1][key]).toEqual(calls[0][key]);expect(saved[0].retry_recovered).toBe(true);expect(saved[0].attempts).toHaveLength(2);
 });
 it('holds missing or duplicate image decisions and non-text speaker labels',()=>{
  for(const bad of [{...json,decisions:[]},{...json,decisions:[...json.decisions,...json.decisions]},{...json,minutes:[{speaker:123,text:'Next?'}]}])expect(()=>validateGithubReply(bad,['one.jpg'],curators,[])).toThrow();
@@ -144,6 +144,6 @@ it.each(['empty','no-question','wrong-file','duplicate','extra-key','credential'
  const respond=vi.fn(async()=>response(value)),save=vi.fn(),progress=vi.fn();
  const p=new GithubCurationProvider({tunnelId,curators,respond,save,progress,encodeImage:async()=>Buffer.from('image')});
  await expect(p.chat({images:['one.jpg'],minutesMin:15,minutesMax:25})).rejects.toThrow();
- expect(save.mock.calls.at(-1)[0].status).toBe('held');expect(progress).not.toHaveBeenCalled();
+ expect(save.mock.calls.at(-1)[0].status).toBe('held');expect(progress).toHaveBeenCalledTimes(kind==='credential'?0:1);
  expect(respond).toHaveBeenCalledTimes(kind==='credential'?1:2);
 });

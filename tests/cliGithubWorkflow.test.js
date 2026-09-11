@@ -46,21 +46,21 @@ async function setup(pairs=1,{people={},legacy=false}={}){
     files.set(output,rows.map(x=>JSON.stringify(x)).join('\\n'));batches.set(id,{id,status:'completed',output_file_id:output});return {id};
    },retrieve:async id=>batches.get(id),cancel:async()=>{}}};
   client.responses={create:async(request)=>{
-   const ordinal=++count;const user=request.input.at(-1),brief=githubRequestData(request);
-   await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,serviceTier:request.service_tier,tools:request.tools})+'\\n');
+   const ordinal=++count;const user=request.input.at(-1),brief=githubRequestData(request);const repair=request.input.find(m=>m.role==='user'&&m.content[0]?.text?.startsWith('{"replyRepair":'));
+   await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,serviceTier:request.service_tier,tools:request.tools,repair:!!repair})+'\\n');
    if(process.env.TEST_DISCOVERY_FAILURE==='1'&&ordinal===3)throw Object.assign(Error("424 Error retrieving tool list from MCP server: 'github'. Http status code: 424 (Failed Dependency)"),{status:424,code:'http_error',type:'external_connector_error',param:'tools'});
    const minimum=process.env.TEST_MINUTES_VARIATION==='1'&&ordinal===64?28:process.env.TEST_MINUTES_VARIATION==='1'&&ordinal===65?14:brief.minutesMin;
-   return {id:'response-'+ordinal,status:'completed',service_tier:'flex',output:[{type:'reasoning',summary:[],encrypted_content:'gAAAAA'+'X'.repeat(50)+'sk-'+'A'.repeat(80)}],usage:{input_tokens:6000,input_tokens_details:{cached_tokens:ordinal===1||JSON.parse(process.env.TEST_CACHE_MISSES||'[]').includes(ordinal)?0:5000,cache_write_tokens:ordinal===1?5000:0}},output_text:JSON.stringify({minutes:Array.from({length:minimum},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'})),decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))})};
+   return {id:'response-'+ordinal,status:'completed',service_tier:'flex',output:[{type:'reasoning',summary:[],encrypted_content:'gAAAAA'+'X'.repeat(50)+'sk-'+'A'.repeat(80)}],usage:{input_tokens:6000,input_tokens_details:{cached_tokens:ordinal===1||JSON.parse(process.env.TEST_CACHE_MISSES||'[]').includes(ordinal)?0:5000,cache_write_tokens:ordinal===1?5000:0}},output_text:JSON.stringify({minutes:Array.from({length:minimum},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'})),decisions:brief.filenames.map(filename=>({filename:process.env.TEST_FILENAME_FAILURE==='1'&&!repair?filename.replace('_22222222222_o',''):filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))})};
   }};
   return actual({...options,base:process.env.TEST_AUDIT,tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({assertCurrent:async()=>{},stop:async()=>{}}),client});
  }`;
  const loader=path.join(root,'loader.mjs');await fs.writeFile(loader,`export async function resolve(specifier,context,next){if(specifier==='./githubRun.js'&&context.parentURL?.endsWith('/src/index.js'))return {url:'data:text/javascript,'+encodeURIComponent(${JSON.stringify(wrapper)}),shortCircuit:true};return next(specifier,context);}`);
- async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,prompt,knowledgeBrief,workers=1,discoveryFailure=false,minutesVariation=false,cacheMisses=[]}={}){
+ async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,prompt,knowledgeBrief,workers=1,discoveryFailure=false,minutesVariation=false,cacheMisses=[],filenameFailure=false}={}){
   const args=['--loader',loader,cli,'--github-all','--provider','openai-batch','--model','gpt-5.6-terra','--workers',String(workers),'--verbose','--dir',source];if(!recurse)args.push('--no-recurse');if(disablePeople)args.push('--disable-photo-filter');if(curators)args.push('--curators',curators.join(','));
   if(knowledgeBrief)args.push("--knowledge-brief",knowledgeBrief);
   if(prompt){const file=path.join(root,'custom.hbs');await fs.writeFile(file,prompt);args.push('--prompt',file);}
   if(context){const file=path.join(root,'context.txt');await fs.writeFile(file,context);args.push('--context',file);}
-  const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):'',TEST_DISCOVERY_FAILURE:discoveryFailure?'1':'',TEST_MINUTES_VARIATION:minutesVariation?'1':'',TEST_CACHE_MISSES:JSON.stringify(cacheMisses)};
+  const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):'',TEST_DISCOVERY_FAILURE:discoveryFailure?'1':'',TEST_MINUTES_VARIATION:minutesVariation?'1':'',TEST_CACHE_MISSES:JSON.stringify(cacheMisses),TEST_FILENAME_FAILURE:filenameFailure?'1':''};
   try{return {...await exec(process.execPath,args,{cwd:root,env,timeout:minutesVariation?90000:25000,maxBuffer:4*1024*1024}),code:0};}catch(e){return {code:e.code,stdout:e.stdout,stderr:e.stderr};}
  }
  return {root,source,audit,calls,run,metadataRequests};
@@ -148,7 +148,7 @@ it('finishes the real CLI with twenty workers despite ciphertext matches and one
  expect(records.flatMap(r=>r.json.decisions)).toHaveLength(60);expect(new Set(records.flatMap(r=>r.json.decisions.map(d=>d.filename))).size).toBe(60);
  expect(records.every(r=>r.attempts[0].omittedEncryptedReasoning.length===1)).toBe(true);
  expect(records.some(r=>r.attempts[0].response._photoSelectFlex.attempt===2)).toBe(true);
-});
+},30000);
 
 it.each(['default','custom','inline'])('sends the ordinary rendered prompt through the actual CLI (%s)',async kind=>{
  const f=await setup(),context='Exhibition brief with a private GitHub link: https://github.com/fixture/private.';
@@ -259,3 +259,24 @@ it('completes 84 batches with twenty workers despite isolated cache misses and l
  const notes=await fs.readFile(path.join(audit,'field-notes.md'),'utf8');
  expect(notes).toContain('28 minute entries');expect(notes).toContain('14 minute entries');
 },100000);
+
+it('finishes a cached CLI run after a long filename is shortened, with exact sorting and one audited repair',async()=>{
+ const f=await setup(10),filename='keep-0_11111111111_o_22222222222_o.jpg';
+ await fs.rename(path.join(f.source,'keep-0.jpg'),path.join(f.source,filename));
+ const context='Synthetic cacheable exhibition context. '.repeat(500);
+ const result=await f.run({context,curators:['Base'],workers:20,filenameFailure:true});
+ expect(result.code,result.stderr).toBe(0);expect(result.stdout).toContain('DECISION_FILENAMES');expect(result.stdout).toContain('retry recovered');
+ const calls=(await fs.readFile(f.calls,'utf8')).trim().split('\n').map(JSON.parse);
+ expect(calls).toHaveLength(3);expect(calls.filter(r=>r.repair)).toHaveLength(1);
+ expect(await jpgs(f.source)).toEqual([]);expect(await jpgs(path.join(f.source,'_keep'))).toHaveLength(10);
+ expect(await jpgs(path.join(f.source,'_keep'))).toContain(filename);expect(await jpgs(path.join(f.source,'_aside'))).toHaveLength(10);
+ expect((await fs.readFile(path.join(f.source,'_keep',filename))).equals(await fs.readFile(path.join(f.source,'_level-001',filename)))).toBe(true);
+ const audit=path.join(f.audit,(await fs.readdir(f.audit))[0]);
+ const records=await Promise.all((await fs.readdir(audit)).filter(n=>/^curation-/.test(n)).map(async n=>JSON.parse(await fs.readFile(path.join(audit,n),'utf8'))));
+ expect(records).toHaveLength(2);expect(records.every(r=>r.status==='completed')).toBe(true);
+ const recovered=records.find(r=>r.retry_recovered);expect(recovered.attempts).toHaveLength(2);
+ expect(recovered.attempts[0].validationIssues).toContainEqual(expect.objectContaining({code:'DECISION_FILENAMES',missing:[filename]}));
+ expect(recovered.attempts[1].repair.filenames).toContain(filename);
+ expect(new Set(records.flatMap(r=>r.json.decisions.map(d=>d.filename))).size).toBe(20);
+ expect(new Set(records.map(r=>r.request.prompt_cache_key)).size).toBe(1);
+},30000);

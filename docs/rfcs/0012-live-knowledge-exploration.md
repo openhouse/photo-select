@@ -323,3 +323,29 @@ injects misses at requests 7 and 70 across 84 batches/840 synthetic images with
 twenty workers, retaining the existing late minute warnings. It must finish with
 exactly 84 requests and every image sorted once. Live recovery acceptance remains
 separate and must come from a user-started Terminal run.
+
+
+## 2026-09-11: targeted reply repair
+
+A user-started recursive run completed 45 curation records before one response
+shortened a long image filename by dropping its second numeric suffix. Both the
+initial answer and its retry had otherwise valid minutes and ten decisions; each
+omitted the exact source filename. The retry had received a generic instruction
+without the rejected answer or a validation diagnosis.
+
+Retain exact filename validation and the existing one-repair limit. Return
+structured validation issues from the validator. On repair, supply those issues,
+the authoritative filename list and the rejected reply as user data, with a
+separate developer instruction to correct only violations and preserve valid
+content. No rejected text becomes a developer instruction. Credential screening
+precedes this feedback path. Never infer a filename mapping locally. The repair
+retains the original images, prompt, tools, roster, schema, cache prefix and key;
+all additions follow the cache breakpoint.
+
+Store per-attempt issues and repair input in the existing private audit and print
+safe issue codes plus retry progress. A repeated error holds the batch; it does
+not silently sort an ambiguous filename. Synthetic regressions cover the observed
+failure, parser and shape errors, bounded retries, concurrent feedback isolation,
+cache preservation and exact source-directory sorting. They establish request
+construction and validation, not the live model's repair success rate. Current
+live acceptance remains a user-started Terminal run.
