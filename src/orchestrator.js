@@ -833,7 +833,7 @@ export async function triageDirectory(options) {
     }
 
     const peopleStart = Date.now();
-    const peopleResult = provider.knowledge ? { mode: "disabled" } : await prefetchPeople(images, {
+    const peopleResult = provider.knowledge && !provider.supportsPeopleMetadata ? { mode: "disabled" } : await prefetchPeople(images, {
       force: refreshPeopleIndex,
     });
     if (verbose && peopleResult.mode === "bulk") {
@@ -936,12 +936,13 @@ export async function triageDirectory(options) {
                 let attemptNum = 1;
                 let finalCurators = curators;
                 let added = [];
+                let photos = [];
                 const prepareFirstRequest = async () => {
                   const names = batch.map((file) => path.basename(file));
                   const peopleLists = await Promise.all(
-                    names.map((name) => provider.knowledge ? [] : getPeople(name))
+                    names.map((name) => provider.knowledge && !provider.supportsPeopleMetadata ? [] : getPeople(name))
                   );
-                  const photos = names.map((name, i) => ({
+                  photos = names.map((name, i) => ({
                     file: name,
                     people: sanitizePeople(peopleLists[i]),
                   }));
@@ -967,6 +968,7 @@ export async function triageDirectory(options) {
                     images: batch,
                     model,
                     curators: finalCurators,
+                    photoPeople: photos,
                     baseCuratorCount: curators.length,
                     dynamicCuratorCount: added.length,
                     verbosity,
@@ -1017,6 +1019,7 @@ export async function triageDirectory(options) {
                       images: batch,
                       model,
                       curators: finalCurators,
+                      photoPeople: photos,
                       baseCuratorCount: curators.length,
                       dynamicCuratorCount: added.length,
                       verbosity: "low",

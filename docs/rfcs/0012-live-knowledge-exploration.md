@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Implemented and technically verified through private MCP tunnel |
+| Status | Implemented; current acceptance gates tracked separately |
 | Decision owner | Jamie Burkart |
 | Author | Jamie Burkart with Codex |
 | Created | 2026-09-09 |
@@ -24,7 +24,9 @@ The intended interface is one additional flag, `--github-all`, on Jamie's existi
 
 Omitting the flag preserves the existing application path. Limit changes to request construction, authenticated read-only tool transport, private audit storage, the launcher, and the tests that exercise those boundaries. Retain the existing image-selection algorithm, filename whitelist, strict reply keys, and atomic response/field-note commits. No database, embeddings, index, materialized research packet, or separate research call is required.
 
-For this feature, the explicit CLI curator roster is the session's fixed voice registry. Use the existing default roster only when the user supplies none. Apply the same roster to prompts, schema validation, repair, recursive passes, and field notes. AGENTS and the major package version are updated to 1.0.0 for this session-registry change. Private JSON records and atomic Git history preserve provenance without adding a database.
+Jamie subsequently instructed that the existing automatic additional-curator feature be restored in GitHub mode. The explicit CLI names are the immutable base roster; use the existing default roster only when none are supplied. For each batch, use the existing Photo Filter bulk prefetch (or per-file fallback) and `finalizeCurators` to append names tagged in at least two photos. Preserve the existing placeholder filtering and configured identity policy. Keep per-photo tags in the request, and use the same expanded roster for that batch's prompt, schema, reply validation, repair and private audit. Concurrent batches must not mutate a shared roster; recursive levels compute their own additions. The existing metadata opt-out and refresh flags remain effective.
+
+Tagged people are fictionalized analytical lenses, not actual participants or quoted speakers. Repository contents cannot alter the roster. This correction changes the fixed-roster contract introduced in version 1.0.0, so AGENTS and the package advance together to 2.0.0. Private JSON records and atomic Git history preserve provenance without adding a database. This restoration uses existing photo metadata; it does not introduce a preparatory GitHub research pass.
 
 ## API mechanism
 
@@ -60,7 +62,7 @@ A format repair must retain the same tools, images, context and roster. It is a 
 
 ## Acceptance and evaluation
 
-The [offline trace checker](../../evals/evaluate-curation-exploration.mjs) and [tests](../../tests/curationExploration.test.js) express the corrected boundary. They reject separate research, sources prefetched into the image request, missing tools/images, provider/model changes, narrow ownership scope, write tools, credential leaks, missing cleanup, failed source reads, invented citations, changed curators, and incomplete responses. Useful-positive traces must pass alongside the negative mutations. These hand-authored traces do not execute the application, authenticate GitHub, or establish editorial usefulness.
+The [offline trace checker](../../evals/evaluate-curation-exploration.mjs) and [tests](../../tests/curationExploration.test.js) express the corrected boundary. They reject separate research, sources prefetched into the image request, missing tools/images, provider/model changes, narrow ownership scope, write tools, credential leaks, missing cleanup, failed source reads, invented citations, replaced base curators or unlisted speakers, and incomplete responses. Useful-positive traces must pass alongside the negative mutations. These hand-authored traces do not execute the application, authenticate GitHub, or establish editorial usefulness.
 
 The [readiness record](../../evals/github-inference-readiness.json) is separate from passing offline tests. All seven gates must be satisfied:
 

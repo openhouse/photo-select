@@ -87,3 +87,28 @@ it('records that a credential-like substring is embedded in a word without retai
  expect(result.value.path).toBe('[credential-like content redacted]');
  expect(JSON.stringify(result)).not.toContain('task-knowledge-context-projection');
 });
+
+it('keeps an expanded batch roster through repair without changing the base roster',async()=>{
+ const guest='Pat (artist + neighbor)',expanded=[...curators,guest],calls=[],saved=[];
+ const valid={...json,minutes:[{speaker:guest,text:'What does the image suggest?'}]};
+ const p=new GithubCurationProvider({tunnelId,curators,encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r),respond:async r=>{calls.push(r);return response(calls.length===1?{...json,minutes:[{speaker:'Uninvited',text:'Next?'}]}:valid);}});
+ expect((await p.chat({images:['one.jpg'],curators:expanded})).json).toEqual(valid);
+ expect(calls).toHaveLength(2);for(const r of calls){expect(JSON.parse(r.input[0].content[0].text).curators).toEqual(expanded);expect(r.text.format.schema.properties.minutes.items.properties.speaker.enum).toEqual(expanded);expect(r.instructions).toContain(guest);}
+ expect(saved[0].retry_recovered).toBe(true);expect(p.curators).toEqual(curators);
+});
+it('isolates additional voices across twenty concurrent batches',async()=>{
+ const saved=[];let started=0,release;const barrier=new Promise(resolve=>release=resolve);
+ const p=new GithubCurationProvider({tunnelId,curators,encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r),respond:async r=>{
+  const body=JSON.parse(r.input[0].content[0].text);if(++started===20)release();await barrier;
+  const speaker='Guest '+body.filenames[0].split('.')[0];
+  return response({minutes:[{speaker,text:'What next?'}],decisions:[{filename:body.filenames[0],decision:'keep',reason:'Form.'}]});
+ }});
+ const results=await Promise.all(Array.from({length:20},(_,i)=>p.chat({images:[i+'.jpg'],curators:[...curators,'Guest '+i]})));
+ expect(results).toHaveLength(20);expect(saved).toHaveLength(20);expect(p.curators).toEqual(curators);
+ for(const r of saved){const body=JSON.parse(r.request.input[0].content[0].text);expect(body.curators).toEqual([...curators,'Guest '+body.filenames[0].split('.')[0]]);expect(r.json.minutes[0].speaker).toBe(body.curators.at(-1));}
+});
+it.each([[],['Replacement'],[...curators].reverse(),[...curators,curators[0]]].map(proposed=>({proposed})))('rejects a batch roster that replaces or duplicates the base: %j',async({proposed})=>{
+ const respond=vi.fn(async()=>response(json));
+ const p=new GithubCurationProvider({tunnelId,curators,respond,encodeImage:async()=>Buffer.from('image')});
+ await expect(p.chat({images:['one.jpg'],curators:proposed})).rejects.toThrow();expect(respond).not.toHaveBeenCalled();
+});

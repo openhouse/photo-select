@@ -332,7 +332,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       if (knowledgeDiscover || knowledgeResearchOnly) { console.log(`knowledge: saved ${liveRun.root}`); return; }
       }
       absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = liveRun.provider.promptPath;
-      process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
+      if(!githubAll)process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
       process.umask(0o077);
       if(!githubAll)process.chdir(liveRun.root);
       const fd=openSync(path.join(liveRun.root,'runtime.log'),'a',0o600);

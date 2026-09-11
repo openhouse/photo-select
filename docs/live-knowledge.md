@@ -17,7 +17,11 @@ PHOTO_SELECT_MAX_OLD_SPACE_MB=32768 \
   --context "/Volumes/16TB_SSD/Photos/2026-04-09/merge-02/NYC Open Data Week 2026/project-overview.txt"
 ```
 
-Run it from the image directory as before. Put relevant GitHub URLs and the photographic question in your context file. An inline `--knowledge-brief "..."` can supplement or replace that file. Your explicit curator names remain fixed throughout the session and repairs. Without `--curators`, the four default curator names apply. All voices are fictionalized lenses.
+Run it from the image directory as before. Put relevant GitHub URLs and the photographic question in your context file. An inline `--knowledge-brief "..."` can supplement or replace that file. Your explicit curator names form the base roster. Without `--curators`, the four default curator names apply. The existing additional-curator feature also works with `--github-all`: Photo Filter tags found in at least two photos **within a batch** append names to that batch's roster. The default identity policy preserves punctuation and excludes placeholder names; the existing canonicalization setting remains available. Each request includes its per-photo tags, and the expanded roster stays the same through any repair. Concurrent batches and later recursive levels compute their own additions.
+
+No extra flag is needed. Keep the configured Photo Filter service available (normally `http://localhost:3000`, configurable with `PHOTO_FILTER_API_BASE`). With `--verbose`, `people-index:` reports metadata preparation and `additional curators from tags:` lists additions when there are any. `--refresh-people-index` refreshes the existing derived index; `--disable-photo-filter` or `PHOTO_SELECT_DISABLE_PEOPLE=1` opts out of people lookups. Missing or unavailable tags cannot add a curator; metadata failures are reported through the existing lookup path.
+
+All voices, including tagged people, are fictionalized lenses. Their generated dialogue is not a quotation or evidence of their actual views. Names encountered in GitHub source text do not automatically become curators. Version 2.0.0 records this user-authorized change to the earlier fixed-roster contract.
 
 ## Context size
 
@@ -53,9 +57,9 @@ The separate private audit directory is printed at startup. It is on the source
 external volume at `/Volumes/<volume>/.photo-select/runs/`, or under
 `~/.photo-select/runs/` for other source directories. It contains:
 
-- `session.json` and `corpus.json`: selected directory, roster, settings and input
+- `session.json` and `corpus.json`: selected directory, base roster, settings and input
   hashes, including images already in the `_keep` chain when resuming.
-- `curation-*.json`: requests, tool traces, validated replies, source references,
+- `curation-*.json`: requests with each batch roster and photo tags, tool traces, validated replies, source references,
   token usage and repair history.
 - `field-notes.md`: the attributed curatorial discussion and decisions.
 - `batch-*.json`: Batch/file identifiers, diagnostics and cleanup receipts.

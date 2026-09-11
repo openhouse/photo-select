@@ -174,7 +174,7 @@ through to the script unchanged.
 | `--batch-window` | `24h` | Completion window requested for batch jobs |
 | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
-People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+People tagged in two or more photos within a batch are automatically appended to its curator roster, ordered by their last appearance. This also applies with `--github-all`; the expanded roster and per-photo tags are retained in the private request audit, and `--verbose` lists additional curators. The configured Photo Filter metadata service must be available. All GitHub-mode voices, including tagged people, are fictionalized lenses.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
 
 Set `PHOTO_SELECT_IDENTITY_POLICY=canonicalize` to enable the older normalization/alias behaviour, though the default (`passthrough`) is recommended.

@@ -9,11 +9,11 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The selected-directory workflow is restored for GitHub mode: sorting, snapshots and resume use the source image tree; only API audits remain private and separate. All 392 local tests and 207 focused evals passed, including real-CLI workflow regressions. Implementation CI passed. Previous live canary evidence is historical; a fresh OpenAI canary and full-corpus completion are not claimed. Existing hidden-copy selections were reconciled separately by source hashes, with a complete pre-selection snapshot and the old run retained.",
+  "note": "GitHub mode restores the source-directory workflow and automatic additional curators from repeated photo tags. Batch rosters, per-photo labels, repairs, concurrent isolation and the explicit metadata opt-out are covered by production-path offline regressions. Current hill-climb and CI results must validate this candidate. Historical live canary evidence is retained; fresh OpenAI acceptance and full-corpus completion are not claimed.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -24,5 +24,12 @@
     "push": "https://github.com/openhouse/photo-select/actions/runs/34553393867",
     "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34553396596",
     "conclusion": "success"
+  },
+  "additionalCuratorsEvidence": {
+    "tests": [
+      "tests/cliGithubWorkflow.test.js",
+      "tests/githubCuration.test.js"
+    ],
+    "scope": "Real CLI, metadata HTTP bulk/fallback, custom base roster, repeated-tag additions, per-photo labels, opt-out, repair and twenty concurrent request rosters; OpenAI and tunnel IO are synthetic."
   }
 }

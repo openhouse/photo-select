@@ -33,7 +33,7 @@ The contract protects:
 | Curator‑D   | Warren Sack       | systems‑thinking      |
 | Facilitator | Jamie (off‑stage) | frames session only   |
 
-> **Rule:** Without `--curators`, use the four curator Display Names above. An explicit `--curators` list is the session registry for `--github-all`; preserve those exact names throughout requests, repairs and validation. Source speakers never become curators automatically. These are fictionalized lenses, not actual participants or endorsements. This user-authorized contract change ships as version 1.0.0.
+> **Rule:** Without `--curators`, use the four curator Display Names above. An explicit `--curators` list is the base registry for `--github-all`; preserve those exact names unless the user explicitly enables the existing canonicalization policy. Restore the existing additional-curator rule: names tagged in at least two photos in a batch are appended through `finalizeCurators`, with placeholders excluded and the configured identity policy preserved. Freeze that batch roster across its requests, repairs, validation and audit; concurrent batches must not share additions. Repository source speakers never become curators automatically. All voices, including tagged people, are fictionalized lenses, not actual participants, quotations or endorsements. This user-authorized contract change ships as version 2.0.0.
 
 ---
 
@@ -91,7 +91,7 @@ REQUEST: <specific remediating action>
 
 ## 6  Provenance Requirements (immutable)
 
-- Compute `sha256(filename)` for every image and `model_sha256` for each Codex run. For `--github-all` in version 1.0.0, store image hashes in `corpus.json` and request hashes plus timestamps in the private curation JSON, bound to the atomic Git commit. This mode uses JSON and Git provenance without introducing SQLite.
+- Compute `sha256(filename)` for every image and `model_sha256` for each Codex run. For `--github-all` in version 2.0.0, store image hashes in `corpus.json` and request hashes plus timestamps in the private curation JSON, bound to the atomic Git commit. This mode uses JSON and Git provenance without introducing SQLite.
 - Commit the LLM response JSON **and** updated `field‑notes.md` atomically.
 - CI enforces a **30‑second merge delay** (mindfulness window).
 - Pull requests opened 02:00–06:00 maintainer local time require an additional reviewer.

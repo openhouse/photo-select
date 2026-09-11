@@ -232,3 +232,51 @@ were made for the recovery, and no full-corpus restart was performed.
 A fresh same-inference OpenAI canary remains pending for this implementation.
 Offline workflow verification and recovery do not revalidate the historical live
 canary or establish full-corpus completion.
+
+
+## 2026-09-10: restore automatic additional curators with GitHub access
+
+The GitHub integration disabled people lookups and validated all responses against
+a fixed base roster. This removed the application's existing repeated-photo-tag
+curators. Eight new regressions failed on that implementation: real CLI bulk and
+legacy metadata paths, an expanded-roster repair, twenty concurrent batch rosters,
+and four attempts to replace or duplicate base names. The existing explicit
+metadata opt-out already passed and remains supported.
+
+GitHub mode now uses the existing people-prefetch and curator-finalization path.
+Every batch receives an immutable copy of its expanded roster for input, schema,
+validation and repair. The provider's base roster remains unchanged. A further
+red/green pass exposed and repaired missing per-photo tags in the GitHub request.
+The real CLI cases verify custom base names, repeated tagged additions, placeholder
+exclusion, a single appearance excluded from the roster, exact duplicate base
+names omitted, punctuation retained, saved minutes, normal image sorting, and
+GitHub tools in the same request. External OpenAI/tunnel IO is synthetic; metadata
+comes through a local HTTP fixture using the production prefetch/client code.
+
+Yehuda Katz (fictionalized lens): reuse the established metadata path while keeping
+concurrent batch state separate. Vivian Gornick (fictionalized lens): keep a named
+fictional voice distinct from a source person's recorded words. Deborah Treisman
+(fictionalized lens): verify both features together, including what happens when
+the first response needs repair.
+
+Jamie authorized restoring this behavior. The contract and package move to 2.0.0
+because the earlier GitHub implementation required a fixed roster. No new command
+flag is required. Live OpenAI acceptance remains separate from these deterministic
+checks, and no full-corpus curation is restarted by this correction.
+
+The first full pass completed 401 tests and 216 focused evals. Follow-up coverage
+also exercises the optional canonicalization policy for added and base names. It
+exposed a base-roster validation mismatch, corrected by comparing against the
+existing policy's finalized base while retaining the original configured registry.
+The default pass-through policy still preserves names verbatim. The canonical
+fixture retains the existing helper's whitespace output rather than changing that
+policy as part of this integration. Final-candidate results are in the regenerated
+focused report and PR checks.
+
+A direct local metadata check also succeeded: the loaded index resolved all 20
+sampled filenames exactly, 15 returned people tags, and five names repeated in
+that sample. Snapshot lookup took 54 ms. The preceding verification request
+exceeded the 45-second diagnostic timeout; the service subsequently reported its
+loaded index. Source freshness is reported as unknown by the service. These are
+metadata-access observations, not evidence of a new model run or current identity
+confirmation. No photos were moved and no model requests were made for this check.
