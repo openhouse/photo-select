@@ -337,8 +337,15 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       process.chdir(liveRun.root);
       const fd=openSync(path.join(liveRun.root,'runtime.log'),'a',0o600);
       const stdout=process.stdout.write, stderr=process.stderr.write;
-      const privateWrite=(chunk,encoding,callback)=>{writeSync(fd,chunk);if(typeof encoding==='function')encoding();else callback?.();return true;};
-      process.stdout.write=privateWrite;process.stderr.write=privateWrite;
+      const privateWrite=(stream,original)=>(chunk,encoding,callback)=>{
+        const bytes=typeof chunk==='string'?Buffer.from(chunk,typeof encoding==='string'?encoding:'utf8'):chunk;
+        writeSync(fd,bytes);
+        if(verbose)return original.call(stream,chunk,encoding,callback);
+        if(typeof encoding==='function')encoding();else callback?.();
+        return true;
+      };
+      process.stdout.write=privateWrite(process.stdout,stdout);
+      process.stderr.write=privateWrite(process.stderr,stderr);
       restoreOutput=()=>{process.stdout.write=stdout;process.stderr.write=stderr;closeSync(fd);};
     }
     try {

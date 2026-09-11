@@ -50,6 +50,20 @@ The printed run path is on the source external volume at `/Volumes/<volume>/.pho
 
 The run uses private filesystem permissions. Each response and updated field notes are committed together in a local Git repository with no remote; concurrent workers serialize those commits. The application does not publish the output. Source access does not establish consent, identity or publication rights.
 
+## Verbose output
+
+With `--verbose`, curatorial discussion, image decisions and operational logs appear
+in the terminal and are also retained in the private run's `runtime.log`. Without
+`--verbose`, detailed output stays in that file; startup and final status remain
+visible. Verbose output can include private source-derived discussion on your own
+terminal.
+
+Earlier builds redirected both stdout and stderr exclusively to `runtime.log`,
+even with `--verbose`. If an already-running job shows only the private run path,
+open a second terminal and follow its existing log with
+`tail -n 80 -f /path/to/run/runtime.log`. Updating the application does not change
+a process already running; a restart is not needed to read its log.
+
 ## Batch and interruption
 
 Keep this Mac awake, online and attached to the drive until the command finishes. The application keeps the tunnel running while Batch waits and executes, then stops it. Batch may queue work for up to its 24-hour completion window; reads happen when the model runs. `--provider openai` also supports the same tools for synchronous Responses calls. The application never silently changes provider, model or tool availability.

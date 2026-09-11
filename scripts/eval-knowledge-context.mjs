@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = 'evals/reports/knowledge-context.json';
-const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js', 'tests/githubCanary.test.js'];
+const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js', 'tests/cliPrivateOutput.test.js', 'tests/githubCanary.test.js'];
 function fingerprint() {
   const files = [...new Set(execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(p => p && p !== reportPath).sort();

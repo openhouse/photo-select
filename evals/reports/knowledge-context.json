@@ -2,14 +2,18 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "c75a0d2e2b8d6f756ccfb6d0505fea6107b1ee6d282afb1d135d795e89a32966",
-    "files": 153
+    "sha256": "52ed89c63d4934affebda8ed001cca82b63e3bd3d100265bb0b5c82744a083fb",
+    "files": 154
   },
   "githubDuringCuration": {
-    "ready": true,
-    "unmetGates": []
+    "ready": false,
+    "unmetGates": [
+      "exactCommand",
+      "privateGithubDuringCuration",
+      "ci"
+    ]
   },
-  "passed": 194,
+  "passed": 198,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,

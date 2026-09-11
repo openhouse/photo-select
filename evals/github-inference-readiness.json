@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "feature": "github-tools-during-curation",
-  "ready": true,
+  "ready": false,
   "gates": {
     "implementation": "passed",
-    "exactCommand": "passed",
-    "privateGithubDuringCuration": "passed",
+    "exactCommand": "pending",
+    "privateGithubDuringCuration": "pending",
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The corrected production implementation passes fresh private-source acceptance and CI. GitHub-mode briefs are limited to 950,000 locally counted text tokens. This technical readiness does not claim that the first full corpus completed; its oversized original brief was rejected and a compact replacement was prepared. Editorial usefulness and exhaustive coverage remain unmeasured.",
+  "note": "The previous live canary and CI remain historical evidence for their recorded commits. The verbose-output correction has changed the CLI; its real-CLI synthetic regression is covered by the focused eval. A fresh live canary for this candidate is pending so the active user run and its tunnel are not interrupted. The full corpus is running on the preceding build; completion, editorial usefulness and exhaustive coverage are not claimed.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",

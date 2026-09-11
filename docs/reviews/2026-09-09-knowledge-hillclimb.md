@@ -143,3 +143,27 @@ A local `o200k_base` count of one saved request found 2,532,225 text tokens befo
 Four Batch regressions failed before the fix: error-only results, mixed success/error files, preserving remote evidence when private diagnostics cannot be saved, and credential-safe actionable errors. A fifth regression demonstrated that oversized context reached tunnel startup and copying before failure; a sixth showed the provider discarding the actionable reason. The corrected implementation passes these regressions. The installed launcher rejects the actual oversized file before starting curation. The original overview is unchanged; a separate local question-and-links brief is prepared for the user's next run. No automatic full-corpus retry was launched.
 
 All 379 tests across 43 suites and 194 focused checks passed. The fixed production commit `314ed7a8e59ac54aba691a0f3b3977412ae9f09f` passed [push CI](https://github.com/openhouse/photo-select/actions/runs/34544449337) and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34544452775). The installed-launcher private-source canary passed again: 3,744 bytes of source text, 20 minutes covering twelve voices, one decision, no repair and 9,909 tokens. Its receipt binds all current production files; private provenance and temporary-file cleanup passed. The prepared replacement brief is 526 locally counted text tokens. This acceptance does not claim the 3,809-image corpus was successfully curated or restarted.
+
+## 2026-09-10: show verbose output during private curation
+
+A live run printed its private run path and then appeared silent while curation
+responses and field notes accumulated. The CLI replaced both stdout and stderr
+with a file-only writer after private-run startup, regardless of `--verbose`.
+
+The private writer now retains every chunk in `runtime.log` and, with `--verbose`,
+forwards it to its original terminal stream. This preserves stdout/stderr routing,
+write callbacks and private log permissions. Quiet runs still keep detailed output
+in the log, and completion/error reporting is restored after curation finishes.
+
+Four subprocess tests exercise the real CLI with synthetic curation output and
+stubbed tunnel startup; no model requests are made. The verbose case failed against
+the original implementation and passes with the correction. The cases cover verbose
+stdout/stderr, UTF-8 buffer writes and callbacks, quiet logging, file permissions,
+and stream restoration on success and failure. They are included in the focused
+knowledge eval as well as the full suite.
+
+The already-running user job retains its loaded code. Its existing log can be read
+from another terminal without restarting it. A fresh production-source-bound live
+canary remains pending; the previous receipt is preserved as historical evidence
+rather than rebound to changed code. No second tunnel client is started during the
+active user run.
