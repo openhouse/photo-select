@@ -9,7 +9,7 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
@@ -38,9 +38,9 @@
     "scope": "Current reliability correction: four live Flex curations with the unchanged 573,984-token brief and ordinary CLI verbosity high. Follow-ups reused 577,895 cached tokens without rewrites; encrypted reasoning was omitted with hashes and live GitHub get_me calls completed. Actual request overlap was one."
   },
   "ciEvidence": {
-    "implementationCommit": "2425fc2b7c8aab719dc6c10619a4bd2fc2bb550e",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34577015263",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34577018788",
+    "implementationCommit": "8615c315f0e3b8d083169a2643f97b8d0d14ded9",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34590296074",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34590300235",
     "conclusion": "success"
   }
 }

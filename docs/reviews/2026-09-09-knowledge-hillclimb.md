@@ -508,3 +508,11 @@ stopping queued work. Vivian Gornick (fictionalized lens): preserve existing
 decisions and the complete brief. Deborah Treisman (fictionalized lens): prove
 continuation through the actual command, preserve prior failures, and do not
 confuse bounded recovery with a guarantee against a prolonged service outage.
+
+Implementation `8615c315f0e3b8d083169a2643f97b8d0d14ded9` passed
+[push CI](https://github.com/openhouse/photo-select/actions/runs/34590296074) and
+[PR CI](https://github.com/openhouse/photo-select/actions/runs/34590300235). The
+resumed photo run uses that implementation, the saved nine-person base roster,
+high reasoning/verbosity, twenty workers and the unchanged full brief. A private
+launcher receipt records its command, process and eventual exit status. Idle sleep
+is inhibited for the command's lifetime. Launch is not a completion claim.
