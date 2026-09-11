@@ -9,7 +9,7 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "pending"
+    "ci": "passed"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
@@ -34,5 +34,11 @@
       "evals/probes/2026-09-11-github-cache-held.json"
     ],
     "scope": "Three bounded actual Batch tests: initial two reads hit; next test hit then missed; diagnostic test missed on probe and held its reader. Eight API curations total; no corpus restart. Cache miss cause remains unresolved."
+  },
+  "ciEvidence": {
+    "implementationCommit": "08a4af4b89342c34ebf50abbd424e63ac659a476",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34559465716",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34559467494",
+    "conclusion": "success"
   }
 }
