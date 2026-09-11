@@ -446,3 +446,9 @@ verify the actual tier and token reads. Vivian Gornick (fictionalized lens): kee
 the source brief intact and let the curatorial encounter use it during inference.
 Deborah Treisman (fictionalized lens): retain the failed trials and distinguish
 queued work, observed overlap, cached tokens and completed decisions.
+
+Implementation `2425fc2b7c8aab719dc6c10619a4bd2fc2bb550e` passed both
+[push CI](https://github.com/openhouse/photo-select/actions/runs/34577015263) and
+[PR CI](https://github.com/openhouse/photo-select/actions/runs/34577018788).
+The focused report is regenerated after recording this evidence. Cache acceptance
+is passed; the pending private-source and full-corpus boundaries remain explicit.
