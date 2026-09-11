@@ -62,10 +62,10 @@ it.each([{missAt:2},{failAt:1},{missAt:2,partial:true}])('holds unsent work on a
  expect(f.sizes).toEqual(options.failAt?[1]:[1,1]);expect(result.filter(r=>r.status==='fulfilled')).toHaveLength(options.failAt?0:2);
  await expect(t.respond(body)).rejects.toThrow(options.failAt?/billing/:/cache/i);expect(f.sizes).toHaveLength(options.failAt?1:2);
 });
-it('preserves completed reader results on a late miss but stops the next wave',async()=>{
+it('preserves completed reader results and recovers using the next unsent Batch row',async()=>{
  const [body]=await requests(),f=fixture({missAt:3}),t=new GithubBatchTransport({client:f.client,flushMs:1});
  const result=await Promise.allSettled(Array.from({length:20},()=>t.respond(body)));
- expect(f.sizes).toEqual([1,1,8]);expect(result.filter(r=>r.status==='fulfilled')).toHaveLength(10);expect(result.filter(r=>r.status==='rejected')).toHaveLength(10);
+ expect(f.sizes).toEqual([1,1,8,1,8,1]);expect(result.every(r=>r.status==='fulfilled')).toBe(true);expect(result[10].value._photoSelectCache).toMatchObject({role:'recovery',recoveryAttempt:1,verified:true});
 });
 it('invalidates the key for brief, model, effort, verbosity or tunnel changes',async()=>{
  const keys=[];

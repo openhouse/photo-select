@@ -238,18 +238,32 @@ It counts the decoded `input_text` value; JSON quote, newline and backslash
 escapes used to transport that value are not extra prompt tokens. The earlier
 conservative brief-budget estimate remains separate. A tiny unrelated hit
 is insufficient. Cache writes are reported separately and do not count as reads.
-Missing usage, a failed seed, or a probe/reader miss holds further submissions for
-that shared prefix. Completed, validated curation results remain usable and retain
-their normal audit and image sorting. No automatic paid cache retry loop runs.
+A failed seed or initial probe, missing/invalid usage, failed transport, an
+incomplete response or a wrong service tier still holds further submissions.
+Once reuse has been confirmed, a reader miss pauses parallel submissions after
+the current wave finishes. Up to **two next unprocessed batches** check reuse,
+one at a time. A confirmed hit resumes reader waves. A cache write or partial hit
+alone does not resume them; two unconfirmed recovery batches hold the remaining
+queue. The same recovery applies when an idle-time probe loses previously
+confirmed reuse. The two-batch budget resets only after a confirmed hit.
+
+Completed, validated decisions remain saved and sorted, including a batch that
+missed the cache. Recovery never repeats a completed batch, invents a warmup job,
+changes the prompt/model/tier, or disables the 95% coverage check. With no remaining
+work it sends nothing extra. Each recovery batch is ordinary paid curation of new
+photos and may be uncached; the two-batch limit bounds this exposure. It does not
+undo charges for a wave already submitted. Cancellation stops recovery.
 
 With `--verbose`, look for `github cache: seed submitted`, `probe`, and lines
-reporting `prefix=`, `required=`, `cached=`, `write=` and `input=`. Full usage and the seed/probe/reader role
+reporting `prefix=`, `required=`, `cached=`, `write=` and `input=`. Recovery prints
+`recovery 1/2`, `recovery 2/2` and `recovery confirmed` as applicable. Full usage,
+the seed/probe/reader/recovery role, the recovery attempt when applicable,
 and measured `prefixTokens` are retained under `attempts[].response._photoSelectCache` in private curation
 records. The cache key contains a versioned hash, never the brief or credential.
 
-Cache entries can still expire or become unavailable. A miss in a submitted wave
-cannot undo its charges; it stops the next wave. Small briefs and older models
-retain their existing request path. Synchronous `--provider openai` uses the same
+Cache entries can still expire or become unavailable. The recovery policy
+handles isolated misses without claiming every request will be discounted.
+Small briefs and older models retain their existing request path. Synchronous `--provider openai` uses the same
 stable boundary on eligible models; the seed/probe guard described here applies
 to `openai-batch` mode.
 

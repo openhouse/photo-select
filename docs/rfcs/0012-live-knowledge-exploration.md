@@ -207,7 +207,8 @@ The repair therefore restores explicit Flex for eligible requests without an
 extra user flag. The full 573,984-token brief subsequently produced one 577,895-token
 cache write and three 577,895-token reads with zero rewrites. These bounded tests
 establish observed cache reuse, not the cause of earlier Batch misses or a promise
-against future eviction. Cache misses, wrong tiers and missing usage still hold
+against future eviction. The later bounded-recovery correction below supersedes
+the immediate stop on a reader miss. Wrong tiers and missing usage still hold
 queued work. No GitHub credential forwarding, preparatory research or brief
 reduction is introduced. [The operating guide](../live-knowledge.md#prompt-caching-with-github-batch-curation)
 describes the guard and limits; [the acceptance record](../../evals/github-inference-readiness.json)
@@ -258,8 +259,8 @@ counted text tokens; the unchanged 95% coverage floor is therefore 511,686.
 Count decoded prefix text for cache coverage and retain the conservative input
 budget as a separate measurement. Preserve the prompt, request, cache key, model,
 tier and images. A seed write still needs a subsequent confirmed read before
-fanout; an already-warm seed can establish that read immediately. Real misses and
-missing usage still hold queued work. Print the measured prefix and required
+fanout; an already-warm seed can establish that read immediately. Missing usage
+still holds queued work; later misses use the bounded recovery described below. Print the measured prefix and required
 coverage in verbose output and retain them in the private usage record.
 
 [OpenAI's cache documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
@@ -287,3 +288,38 @@ batches / 840 synthetic images afterward with twenty workers and length deviatio
 late in the run. Boundary cases preserve both short and long valid replies while
 malformed or unsafe output still fails. Full-corpus completion remains an observed
 run outcome, separate from passing these injected-fault tests.
+
+
+## Bounded recovery after established-cache misses — 2026-09-11
+
+A user-started run confirmed reuse, then returned seven readers reporting 543,490
+cached tokens and one reporting zero in the same eight-request wave. The stable
+request prefix hashes were identical, and the required threshold was 513,085.
+All ten submitted curations completed, but the single miss rejected seventeen
+queued jobs. The provider-side cause of the zero report is unknown; the local
+stop was deterministic scheduler policy, not a mismatched prefix or threshold.
+
+After established reuse, finish and retain the active wave, pause parallel
+submissions and use at most two next unprocessed batches as serial recovery
+checks. The first confirmed hit restores normal reader waves and resets the
+recovery budget. Writes, zero hits and below-floor partial hits do not release
+parallel work. Two unsuccessful recovery checks hold the remaining queue. Apply
+this after a reader miss or a failed idle-time probe of an established cache.
+Startup seed/probe failure, missing or invalid usage, response/tier errors,
+transport failures and cancellation retain their holds.
+
+Never replay completed curations, start a dummy warmup, lower the threshold,
+change request bodies or switch service tier. Recovery can incur uncached charges
+for at most two additional normal curation batches per loss of confirmed reuse;
+it cannot undo charges for the already-submitted wave. With no queued work, send
+nothing extra. Persist recovery role, attempt and original usage in the private
+response record, and report progress in the terminal. Request/cache structure
+and key remain unchanged.
+
+The deterministic recovery suite checks the actual mixed-wave pattern, a second
+recovery, persistent zero/partial/write-only failures, idle expiry, cancellation,
+transport and tier failures, and no fabricated jobs. The real CLI regression
+injects misses at requests 7 and 70 across 84 batches/840 synthetic images with
+twenty workers, retaining the existing late minute warnings. It must finish with
+exactly 84 requests and every image sorted once. Live recovery acceptance remains
+separate and must come from a user-started Terminal run.

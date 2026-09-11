@@ -59,9 +59,10 @@ it('holds a seed that writes less than 95 percent of the actual prefix', async (
   expect(results[0].status).toBe('fulfilled');
   expect(results.slice(1).every(result => result.status === 'rejected')).toBe(true);
 });
-it('preserves a completed reader wave but stops the next wave below the unchanged coverage floor', async () => {
+it('retains a below-floor reader as a miss and requires a verified recovery before fanout', async () => {
   const f = fixture({missAt: 3, missTokens: 2279}), results = await f.run();
-  expect(f.sent).toHaveLength(10);
-  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(10);
-  expect(results.filter(result => result.status === 'rejected')).toHaveLength(10);
+  expect(f.sent).toHaveLength(20);
+  expect(results.every(result => result.status === 'fulfilled')).toBe(true);
+  expect(results[2].value._photoSelectCache.verified).toBe(false);
+  expect(results[10].value._photoSelectCache).toMatchObject({role: 'recovery', recoveryAttempt: 1, requiredCachedTokens: 2280, verified: true});
 });

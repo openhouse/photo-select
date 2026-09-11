@@ -29,6 +29,17 @@ of the brief, changing filenames after a stable cache prefix, tagged curators,
 image metadata, tool attachment, progress output and source-directory sorting.
 External API and tunnel boundaries are synthetic in these tests.
 
+### Reliability: isolated cache misses
+
+**Status: repaired in deterministic evals; live recovery pending.** An actual
+mixed reader wave had seven confirmed hits and one zero report with identical
+stable request hashes. The immediate-stop test encoded the old policy instead
+of testing continuity. The updated scheduler preserves completed work, then
+checks the next unprocessed batch serially, with at most two recovery batches.
+Only confirmed reuse releases parallel work. Tests retain startup, missing-usage,
+transport, tier and cancellation holds and require exactly one curation per
+image batch. An 84-batch CLI case includes both early and late cache misses.
+
 ### Human review and live evidence
 
 **Status: still bounded.** The suite checks implementation contracts, not whether
@@ -49,6 +60,7 @@ separate. No LLM judge or aggregate quality score decides these binary contracts
 | Existing curator additions and metadata survive | `cliGithubWorkflow.test.js`, `githubCuration.test.js` | Fictional output fixtures |
 | Results sort in the selected directory and resume | `cliGithubWorkflow.test.js` | Temporary synthetic photographs |
 | Credential and discovery failures are classified | `githubBridge.test.js`, `githubReliability.test.js`, `githubFlex.test.js` | Injected faults; no promise against all service outages |
+| Isolated cache misses use bounded serial recovery | `githubCacheRecovery.test.js`, `githubPromptCache.test.js`, 84-batch `cliGithubWorkflow.test.js` | Synthetic usage cannot guarantee provider cache availability |
 | Presentation targets do not discard valid work | `githubCuration.test.js`, 84-batch `cliGithubWorkflow.test.js` | Length warnings do not measure editorial usefulness |
 | Private source text reaches the model | Version-bound live receipts | Only the tested sources and requests |
 | The full photographic job completes | A completed run and reconciled output counts | Never inferred from a seed, cache hit or test count |

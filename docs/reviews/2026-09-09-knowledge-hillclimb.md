@@ -721,3 +721,40 @@ historical because its template/renderer hashes differ; live cache reuse and
 repository exploration for this prompt await a user-started Terminal run. The
 installed GitHub launcher already targets this worktree. Hosted CI is verified
 separately on the final pushed commit and recorded on the PR.
+
+
+## Recover isolated reader cache misses — 2026-09-11
+
+A user-started run completed its seed, probe and eight readers. Seven readers
+reported 543,490 cached tokens, while one reported zero; all stable request
+hashes matched and the coverage requirement was 513,085. Ten curations completed
+and were saved, but the immediate-stop policy rejected seventeen queued jobs.
+The cause of the provider's zero report remains unknown. The reproduced local
+failure is treating a single miss after established reuse as a terminal error.
+
+The scheduler now finishes the active wave and processes up to two next
+unprocessed batches serially to check reuse. A confirmed hit restores parallel
+readers and resets the recovery budget. Two misses hold remaining work. Cache
+writes and partial hits do not satisfy the unchanged 95% floor. An idle-time
+probe can recover established reuse; failed startup, missing/invalid usage,
+transport errors, wrong tiers, incomplete responses and cancellation still hold.
+Recovery adds no dummy jobs and never replays completed curation. Its ordinary
+new-photo requests can be uncached; at most two serial batches are allowed per
+loss of confirmed reuse, in addition to the already-submitted reader wave.
+
+Test-first: ten targeted cases failed on the former policy, and the real CLI
+regression stopped on its injected cache miss. After repair, all **78 targeted
+cases passed**. The **84-batch/840-image CLI case with twenty workers** includes
+cache misses at requests 7 and 70 and minutes warnings at 64 and 65. All 840 images
+are sorted once with exactly 84 API-boundary requests and two serial recoveries.
+The boundary and hard-failure cases cover partial/zero/write-only recovery,
+second-attempt success, exhausted recovery, idle expiry, delayed arrivals,
+cancellation, billing, missing usage and wrong tiers.
+
+`npm run hillclimb` passed **518 tests across 53 suites and 333 focused evals**,
+with zero failures or skips. The focused report is regenerated after this review
+update to bind the final candidate. Prompt, cache key and request-body preservation
+checks pass. Live recovery and full-corpus completion remain unverified; all API
+and tunnel boundaries in these tests are synthetic. No paid canary, background
+curation or Terminal restart was performed. The installed GitHub launcher already
+points to this worktree; hosted CI is checked on the final pushed commit.

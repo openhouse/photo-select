@@ -13,7 +13,7 @@
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "The default prompt now includes the user-authorized GitHub exploration invitation only for context with GitHub web links. Deterministic prompt, cache and CLI contracts are tested; actual exploration and new-prompt live cache behavior await a user-started Terminal run. Minute-count warnings and hard reply checks remain.",
+  "note": "A user-started run with the conditional invitation delivered GitHub source text, but one reader cache miss stopped its queue. The scheduler now uses at most two new serial curation batches to recover established reuse. Deterministic recovery and full-workflow checks are separate from live recovery and full-corpus completion.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -41,11 +41,11 @@
     "scope": "Historical passing evidence for the prior prompt and implementation: Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one. The 2026-09-11 conditional invitation changes the prompt and renderer; this receipt is retained unchanged and does not establish live cache reuse for the new candidate."
   },
   "ciEvidence": {
-    "implementationCommit": "3f209dd97900bde2d9e8cb81bff163182a6a4068",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34610984321",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34610988779",
+    "implementationCommit": "8f95eb76aece7aed7f63f8749a41378d4fa65d89",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34619340569",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34619344810",
     "conclusion": "success",
-    "scope": "Prior commit only; current candidate CI is verified on the PR after pushing."
+    "scope": "Prior commit only; current repair CI is verified on the PR after pushing."
   },
   "promptParityEvidence": {
     "tests": [
@@ -58,6 +58,16 @@
   },
   "completionRegression": {
     "test": "tests/cliGithubWorkflow.test.js",
-    "scope": "84 batches, 840 synthetic images, twenty workers; long and short minutes injected at requests 64 and 65; all images sorted with 84 requests and no length-only repair. External API and tunnel operations mocked."
+    "scope": "84 batches, 840 synthetic images, twenty workers; cache misses at requests 7 and 70 and minute-count warnings at 64 and 65. Require 84 requests, two serial recoveries, all images sorted once and no completed-work replay. External API and tunnel operations mocked."
+  },
+  "cacheRecoveryEvidence": {
+    "status": "offline-only",
+    "tests": [
+      "tests/githubCacheRecovery.test.js",
+      "tests/githubPromptCache.test.js",
+      "tests/githubCacheTokenCount.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Mixed wave, up to two new serial recovery batches, persistent misses, unchanged 95% threshold, idle recheck, cancellation, hard failures, and request preservation. Live recovery is pending a user-started Terminal run."
   }
 }
