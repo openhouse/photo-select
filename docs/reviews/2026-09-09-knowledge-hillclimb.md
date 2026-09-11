@@ -568,3 +568,36 @@ Prompt-restoration implementation `77ef15c538defa2adccc61d4df4661609e807e6b`
 passed [push CI](https://github.com/openhouse/photo-select/actions/runs/34599299320)
 and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34599303822).
 The live receipt remains bound to unchanged source files.
+
+
+## 2026-09-11 — protect the established workflow before extending it
+
+The retrospective found two remaining eval blind spots: prompt parity used the
+current renderer on both sides, and cached multi-batch CLI requests lacked an
+independent historical prompt comparison. The new original-contract suite pins
+the pre-PR template by SHA-256 and renders its expected output independently.
+Four request cases cover absent context, literal Unicode/template-like text,
+long cached context and field-note revisions. Three additional CLI cases cover
+default, custom and inline context through seed/probe/reader batches, metadata,
+tagged curators and source-directory sorting. The focused report now records
+behavior preservation separately from live readiness.
+
+The eight added cases pass on the candidate. Four deliberate faults were then
+introduced into a disposable copy: changing the ordinary selection instruction,
+dropping context in the renderer, injecting provider research instructions and
+duplicating cached instructions. Each was detected (7, 6, 7 and 5 failed
+assertions respectively). The unmodified focused suites passed all 21 tests.
+An initial new test compared raw newlines with JSON-escaped text; its assertion
+was corrected to count the decoded request content. No production correction was
+needed. Fault injection never edited the running application's source.
+
+Full hill climb: **462 tests across 50 suites and 277 focused evals**, with zero
+failures or skips. The existing sixty-image/twenty-worker outage and opaque-data
+regressions remain in the passing suite. Production source, launcher, prompts and
+live-canary implementation hashes are unchanged. This update makes no new model
+requests and does not establish completion of the current photographic run.
+
+The [development guide](../github-all-development.md) records the bounded audit,
+contract-to-evidence mapping and staged validation sequence. Future changes should
+preserve the existing behavior first, demonstrate failure sensitivity, and report
+installed-command acceptance, live reads/cache use and full completion separately.

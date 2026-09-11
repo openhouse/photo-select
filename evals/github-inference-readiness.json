@@ -13,7 +13,7 @@
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Original prompt restored: 454 tests and 269 focused evals pass. A fresh four-curation synthetic-image canary verifies private README text delivery and three 15,740-token cache reads with zero rewrites. Full-corpus completion and installed-command acceptance are separate.",
+  "note": "Original prompt preserved against a frozen pre-PR reference: 462 tests and 277 focused evals pass. Four deliberately injected regressions were detected in a disposable copy. The unchanged implementation retains its four-curation synthetic-image private-read/cache canary; full-corpus completion and installed-command acceptance remain separate.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -46,9 +46,10 @@
   },
   "promptParityEvidence": {
     "tests": [
+      "tests/githubOriginalContract.test.js",
       "tests/githubPromptParity.test.js",
       "tests/cliGithubWorkflow.test.js"
     ],
-    "scope": "Exact rendered instruction equality for default/custom/context/inline paths, unchanged original template, and byte-preserving cache splitting."
+    "scope": "Independent pre-PR template reference, exact default/custom/context/inline instruction equality across cached CLI batches, unchanged original template, and byte-preserving cache splitting."
   }
 }

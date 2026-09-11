@@ -1,3 +1,4 @@
+import {originalPromptSource, renderOriginalPrompt} from './helpers/originalPrompt.js';
 import {requestInstructions} from './helpers/githubRequest.js';
 import {buildPrompt,DEFAULT_PROMPT_PATH} from '../src/templates.js';
 import {afterEach,expect,it} from 'vitest';
@@ -161,3 +162,48 @@ it.each(['default','custom','inline'])('sends the ordinary rendered prompt throu
  expect(call.instructions).toContain('If uncertain, choose "aside"');
  expect(call.instructions).toContain("Read Jamie's notes");
 },30000);
+
+it.each(['default', 'custom', 'inline'])('preserves the historical prompt through cached CLI batches (%s)', async kind => {
+ const people = Object.fromEntries(Array.from({length: 10}, (_, i) =>
+  ['keep', 'aside'].map(type => [`${type}-${i}.jpg`, ['Tagged Guest']])).flat());
+ const f = await setup(10, {people});
+ const context = Array.from({length: 300}, (_, i) => `Record ${i}: amber bridge cedar delta field.\n`).join('');
+ const source = await originalPromptSource();
+ const custom = kind === 'custom' ? source.replace('You are moderating', 'Use the artist-selected custom format. You are moderating') : undefined;
+ const result = await f.run({context: kind === 'inline' ? undefined : context,
+  knowledgeBrief: kind === 'inline' ? context : undefined, prompt: custom, curators: ['Base A', 'Base B']});
+ expect(result.code, result.stderr).toBe(0);
+ const audit = path.join(f.audit, (await fs.readdir(f.audit))[0]);
+ const records = await Promise.all((await fs.readdir(audit)).filter(name => /^curation-/.test(name)).sort()
+  .map(async name => JSON.parse(await fs.readFile(path.join(audit, name), 'utf8'))));
+ expect(records).toHaveLength(3);
+ expect(records.map(record => record.attempts[0].response._photoSelectCache.role)).toEqual(['seed', 'probe', 'reader']);
+ const prompts = [], prefixes = [], keys = [];
+ for (const record of records) {
+  expect(record.status).toBe('completed');
+  const request = record.request, user = request.input.at(-1);
+  const labels = user.content.filter(part => part.type === 'input_text').slice(1).map(part => JSON.parse(part.text));
+  const expected = await renderOriginalPrompt({images: labels.map(label => label.filename),
+   curators: ['Base A', 'Base B', 'Tagged Guest'], context, source: custom});
+  const prompt = requestInstructions(request);
+  expect(prompt).toBe(expected.prompt);
+  expect(request.service_tier).toBe('flex');
+  expect(request.tools[0]).toMatchObject({type: 'mcp', server_label: 'github'});
+  expect(request.tools[0]).not.toHaveProperty('authorization');
+  expect(labels.every(label => label.people.includes('Tagged Guest'))).toBe(true);
+  expect(user.content[0].text).toBe('Here are the images:\nRespond in json format.');
+  expect(user.content.filter(part => part.type === 'input_image')).toHaveLength(labels.length);
+  const allText = (request.instructions ?? '') + request.input.flatMap(message => message.content.filter(part => part.type === 'input_text').map(part => part.text)).join('');
+  expect(allText.split(context)).toHaveLength(2);
+  prompts.push(prompt); prefixes.push(request.input[0].content[0].text); keys.push(request.prompt_cache_key);
+ }
+ expect(new Set(prompts).size).toBe(3); // Different filename lists must reach each request.
+ expect(new Set(prefixes).size).toBe(1); // Those lists must remain outside the shared prefix.
+ expect(new Set(keys).size).toBe(1);
+ expect(keys[0]).toMatch(/^photo-select:github-v3:/);
+ expect(result.stdout + result.stderr).toContain('github cache: probe');
+ expect(result.stdout + result.stderr).toContain('cached=');
+ expect(await jpgs(f.source)).toEqual([]);
+ expect(await jpgs(path.join(f.source, '_keep'))).toHaveLength(10);
+ expect(await jpgs(path.join(f.source, '_aside'))).toHaveLength(10);
+}, 30000);

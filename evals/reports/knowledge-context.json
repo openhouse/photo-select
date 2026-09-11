@@ -2,8 +2,17 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "6157562091a18ca7ac94a5f00c01dd8a39bbe7000b54dbd08c9d7994040682f1",
-    "files": 171
+    "sha256": "5e7b17975c5159dc7b2c8e54565dfb448b015414a3214870d64df51bbec05f5a",
+    "files": 175
+  },
+  "behaviorPreservation": {
+    "status": "passed",
+    "referenceCommit": "f7a5a01dfc7badddbec9841df91a24d88d11d27c",
+    "suites": [
+      "tests/githubOriginalContract.test.js",
+      "tests/githubPromptParity.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ]
   },
   "githubDuringCuration": {
     "ready": false,
@@ -16,7 +25,7 @@
     "status": "passed",
     "evidence": "evals/probes/2026-09-11-github-original-prompt.json"
   },
-  "passed": 269,
+  "passed": 277,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,
