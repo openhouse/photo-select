@@ -280,3 +280,9 @@ exceeded the 45-second diagnostic timeout; the service subsequently reported its
 loaded index. Source freshness is reported as unknown by the service. These are
 metadata-access observations, not evidence of a new model run or current identity
 confirmation. No photos were moved and no model requests were made for this check.
+
+Final implementation `c8f88670636d4c5ebb17e00967b69b154955b808` passed all 403 tests across 45 suites and
+218 focused evals, with no failures or skips. It passed [push CI](https://github.com/openhouse/photo-select/actions/runs/34556361826)
+and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34556365167). The focused report is regenerated after
+recording these outcomes. Fresh OpenAI acceptance remains pending; no historical
+canary hashes are rebound to the changed implementation.
