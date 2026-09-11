@@ -115,3 +115,26 @@ existing `_keep` chain so resumed image inputs retain provenance, while excludin
 mode retains its separate copying behavior. Real-CLI workflow evals cover output
 placement, interruption without repeating completed decisions, and recursion after
 the source level has no unclassified images.
+
+### Cache correction: shared context during inference
+
+The initial GitHub provider bypassed the application's cache preparation. Its
+changing instructions and strict per-batch schema preceded the shared brief.
+Observed production usage included 0 cache-hit responses across 40 completed
+curations. Repeated cache writes did not demonstrate reuse.
+
+For eligible GPT-5.6+ requests, keep static governance/tool definitions and a stable
+response schema before a user-role block containing the entire brief, with an
+explicit breakpoint. Put all batch-specific directions, exact filename/curator
+lists, image metadata and images afterward. Repairs change only the later
+instructions. Maintain strict local validation against the original per-batch
+schema and roster before accepting output. Use a separate `github-v1` cache-key
+namespace covering the prefix and its model, effort, verbosity, schema and tools.
+
+For Batch, use actual curation jobs as seed and probe before bounded reader waves;
+hold unsent work if substantial reuse is not observed. Retain completed decisions
+on a later cache miss. No provider substitution, credential forwarding, research
+precollection or reduction of the brief is introduced. Cache entries may expire
+before a delayed Batch executes; usage receipts and the live acceptance test
+remain necessary. [The operating guide](../live-knowledge.md#prompt-caching-with-github-batch-curation)
+describes the guard and its limits.

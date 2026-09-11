@@ -1,3 +1,4 @@
+import { evaluateGithubCacheCanary } from '../evals/evaluate-github-cache.mjs';
 import { evaluateGithubReadiness, evaluateGithubCanary } from '../evals/evaluate-curation-exploration.mjs';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const reportPath = 'evals/reports/knowledge-context.json';
-const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js', 'tests/cliPrivateOutput.test.js', 'tests/cliGithubWorkflow.test.js', 'tests/githubCanary.test.js'];
+const testFiles = ['tests/knowledgeContext.test.js', 'tests/liveExploration.test.js', 'tests/knowledgeLive.test.js', 'tests/knowledgeRun.test.js', 'tests/cliKnowledge.test.js', 'tests/knowledgeOrchestrator.test.js', 'tests/curationExploration.test.js', 'tests/githubBridge.test.js', 'tests/githubCuration.test.js', 'tests/githubBatch.test.js', 'tests/githubPromptCache.test.js', 'tests/githubRun.test.js', 'tests/knowledgeLauncher.test.js', 'tests/cliGithub.test.js', 'tests/cliPrivateOutput.test.js', 'tests/cliGithubWorkflow.test.js', 'tests/githubCanary.test.js'];
 function fingerprint() {
   const files = [...new Set(execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0'))]
     .filter(p => p && p !== reportPath).sort();
@@ -41,9 +42,20 @@ try {
     const failures = evaluateGithubCanary(receipt, actualHashes);
     if (failures.length && readiness.gates.privateGithubDuringCuration === 'passed') throw new Error('Live canary evidence is stale or incomplete: ' + failures.join(', '));
   } else if (readiness.gates.privateGithubDuringCuration === 'passed') throw new Error('Live GitHub acceptance evidence is missing.');
+  if (readiness.cacheEvidence?.status === 'passed') {
+    const receipt = JSON.parse(readFileSync(path.join(root, readiness.cacheEvidence.path), 'utf8'));
+    const actualHashes = {};
+    for (const file of Object.keys(receipt.implementationSha256 || {})) {
+      if (path.isAbsolute(file) || file.split('/').includes('..')) throw new Error('Invalid cache evidence path.');
+      actualHashes[file] = createHash('sha256').update(readFileSync(path.join(root, file))).digest('hex');
+    }
+    const failures = evaluateGithubCacheCanary(receipt, actualHashes);
+    if (failures.length) throw new Error('Live cache evidence is stale or incomplete: ' + failures.join(', '));
+  }
   if (readiness.ready !== (unmetGates.length === 0)) throw new Error('GitHub readiness disagrees with its acceptance gates.');
   const report = { schemaVersion: 1, scope: 'offline-contract-and-implementation', candidate: before,
     githubDuringCuration: { ready: readiness.ready, unmetGates },
+    promptCache: readiness.cacheEvidence ? { status: readiness.cacheEvidence.status, evidence: readiness.cacheEvidence.path } : null,
     passed: result.numPassedTests, failed: result.numFailedTests, skipped: result.numPendingTests,
     sourceAccess: false, modelRequests: 0, publicationAuthority: 'none',
     json_validity_rate: null, retry_recovery_rate: null, usefulness: 'unmeasured',

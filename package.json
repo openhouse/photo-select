@@ -1,7 +1,7 @@
 {
   "name": "photo-select",
   "version": "2.0.0",
-  "description": "CLI tool to recursively triage fine‑art photos with vision-enabled LLMs",
+  "description": "CLI tool to recursively triage fine\u2011art photos with vision-enabled LLMs",
   "type": "module",
   "bin": {
     "photo-select": "./src/index.js"
@@ -22,7 +22,8 @@
     "undici:smoke": "node scripts/undici-smoke.mjs",
     "debug:batch": "node scripts/debug-batch.mjs",
     "evals:knowledge": "node scripts/eval-knowledge-context.mjs",
-    "hillclimb": "npm test -- --maxWorkers=2 --minWorkers=2 && npm run evals:knowledge"
+    "hillclimb": "npm test -- --maxWorkers=2 --minWorkers=2 && npm run evals:knowledge",
+    "evals:github-prompt-cache": "node scripts/eval-github-prompt-cache.mjs"
   },
   "engines": {
     "node": ">=20"

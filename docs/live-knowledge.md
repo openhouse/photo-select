@@ -132,3 +132,53 @@ For a development worktree, point the launcher at it with `git config --local ph
 Run `npm run hillclimb`. The [readiness record](../evals/github-inference-readiness.json) separates live acceptance evidence from offline tests; [the review log](reviews/2026-09-09-knowledge-hillclimb.md) records observed failures and fixes. [RFC 0012](rfcs/0012-live-knowledge-exploration.md) defines the architecture.
 
 The older [`--knowledge-live` mode](research-first-knowledge.md) researches first and passes frozen evidence into a later curation call. It remains available separately and cannot be combined with `--github-all`.
+
+## Prompt caching with GitHub Batch curation
+
+No additional flag is needed. On GPT-5.6 and later, a context brief with at least
+1,024 locally counted tokens gets an explicit cache breakpoint after the complete
+brief. It stays user-supplied evidence. The application neither summarizes nor
+truncates it. Changing filenames, photo tags, added curators and repair directions
+come after that boundary. The output schema before it is stable; local validation
+still enforces each batch's exact roster, filenames and minutes bounds.
+
+`--provider openai-batch` keeps using Batch. The first real curation request can
+write the shared prefix. The next checks reuse before the remaining work is
+released in waves of at most eight requests. An already-warm first request can
+establish reuse immediately. After twenty minutes without a confirmed hit, another
+single request checks again. These are useful curation jobs, not extra warmups.
+`--workers 20` continues to prepare work; the cache guard controls API fanout.
+
+The guard requires reported cached tokens covering at least 95% of the locally
+counted brief, allowing for differences in API tokenization. A tiny unrelated hit
+is insufficient. Cache writes are reported separately and do not count as reads.
+Missing usage, a failed seed, or a probe/reader miss holds further submissions for
+that shared prefix. Completed, validated curation results remain usable and retain
+their normal audit and image sorting. No automatic paid cache retry loop runs.
+
+With `--verbose`, look for `github cache: seed submitted`, `probe`, and lines
+reporting `cached=`, `write=` and `input=`. Full usage and the seed/probe/reader role
+are retained under `attempts[].response._photoSelectCache` in private curation
+records. The cache key contains a versioned hash, never the brief or credential.
+
+Cache reuse is not guaranteed by Batch scheduling: its 24-hour execution window can
+outlast a cache entry. A miss in a submitted wave cannot undo its charges; it stops
+the next wave. Small briefs and older models retain their existing request path.
+Synchronous `--provider openai` uses the same stable boundary on eligible models;
+the seed/probe scheduling guard described here applies to Batch.
+
+To run a small paid acceptance test, use `npm run evals:github-prompt-cache -- --live`
+from the development checkout. It uses three synthetic photographs, a synthetic
+brief, the existing OpenAI credential and the actual private GitHub tunnel. It
+records request hashes and usage privately. Offline mocks and cache-write counts
+alone cannot establish live cache savings. See the current [OpenAI prompt caching
+guide](https://developers.openai.com/api/docs/guides/prompt-caching) for supported
+breakpoints, retention and token accounting.
+
+Current acceptance: small actual Batch tests produced cache hits and subsequent
+misses even with unchanged pre-boundary content. The miss guard operated correctly;
+consistent live reuse remains held in the acceptance record. The diagnostic test
+returned `comparison_response_not_found`, which provides no cause. Do not repeatedly
+restart a held large-brief run to force a hit: each new seed/probe can incur charges.
+A command started before this change keeps its loaded code; the configured launcher
+uses the correction on the next invocation.

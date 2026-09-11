@@ -9,27 +9,30 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "GitHub mode restores source-directory sorting/resume and automatic additional curators from repeated photo tags. The final implementation passed 403 local tests, 218 focused evals and push/PR CI. Real CLI checks cover metadata bulk/fallback, expanded rosters and per-photo labels, both identity policies, opt-out, repairs and twenty concurrent rosters. The configured local metadata index also returned tags for a real image sample. Historical OpenAI canary evidence is retained; fresh same-inference acceptance and full-corpus completion remain unverified.",
+  "note": "Full GitHub cache correction passed 422 tests and 237 focused evals. Live reads occurred, but repeated actual Batch checks also missed with an unchanged prefix. The guard held further submissions. Consistent live cache reuse, fresh private-source acceptance and full-corpus completion remain unverified.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
   "workers20Evidence": "tests/githubBatch.test.js and tests/githubRun.test.js exercise twenty concurrent requests and serialized atomic commits; the live canary uses --workers 20 with one synthetic image.",
   "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
-  "ciEvidence": {
-    "implementationCommit": "c8f88670636d4c5ebb17e00967b69b154955b808",
-    "push": "https://github.com/openhouse/photo-select/actions/runs/34556361826",
-    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34556365167",
-    "conclusion": "success"
-  },
   "additionalCuratorsEvidence": {
     "tests": [
       "tests/cliGithubWorkflow.test.js",
       "tests/githubCuration.test.js"
     ],
     "scope": "Real CLI, metadata HTTP bulk/fallback, custom base roster, repeated-tag additions, per-photo labels, opt-out, repair and twenty concurrent request rosters; OpenAI and tunnel IO are synthetic."
+  },
+  "cacheEvidence": {
+    "status": "held",
+    "path": "evals/probes/2026-09-11-github-cache-diagnostic.json",
+    "priorEvidence": [
+      "evals/probes/2026-09-11-github-cache-initial.json",
+      "evals/probes/2026-09-11-github-cache-held.json"
+    ],
+    "scope": "Three bounded actual Batch tests: initial two reads hit; next test hit then missed; diagnostic test missed on probe and held its reader. Eight API curations total; no corpus restart. Cache miss cause remains unresolved."
   }
 }

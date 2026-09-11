@@ -1,3 +1,4 @@
+import {GithubCacheScheduler} from './githubCacheScheduler.js';
 import {randomUUID} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {toFile} from 'openai';
@@ -5,8 +6,9 @@ import {knowledgeError} from './core/knowledgeLive.js';
 import {batchDiagnostic,batchFailureMessage,failedBatchRow,batchRowDiagnostic} from './core/githubBatchErrors.js';
 // Full Responses bodies and outputs survive this transport. No Chat fallback.
 export class GithubBatchTransport {
-  constructor({client,signal,flushMs=100,pollMs=10000,saveReceipt=async()=>{}}) {Object.assign(this,{client,signal,flushMs,pollMs,saveReceipt});this.queue=[];}
-  respond(body) {
+  constructor({client,signal,flushMs=100,pollMs=10000,saveReceipt=async()=>{},progress=()=>{},now}) {Object.assign(this,{client,signal,flushMs,pollMs,saveReceipt});this.queue=[];this.cache=new GithubCacheScheduler({send:body=>this.enqueue(body),signal,progress,now});}
+  respond(body) {return this.cache.respond(body);}
+  enqueue(body) {
     if(this.signal?.aborted)return Promise.reject(knowledgeError('Curation cancelled.'));
     return new Promise((resolve,reject)=>{
       this.queue.push({body,id:randomUUID(),resolve,reject});

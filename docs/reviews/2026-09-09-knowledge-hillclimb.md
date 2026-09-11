@@ -286,3 +286,84 @@ Final implementation `c8f88670636d4c5ebb17e00967b69b154955b808` passed all 403 t
 and [PR CI](https://github.com/openhouse/photo-select/actions/runs/34556365167). The focused report is regenerated after
 recording these outcomes. Fresh OpenAI acceptance remains pending; no historical
 canary hashes are rebound to the changed implementation.
+
+## 2026-09-11: restore verified prompt caching in GitHub Batch mode
+
+The previous GitHub provider put changing filenames, curators and schema bounds
+before the full brief and bypassed cache scheduling. One saved run had 0 cache-hit
+responses in 40 completed curations despite repeated cache writes. A newer run
+was stopped by billing; Jamie subsequently added API balance and authorized
+continuing the verification.
+
+Nine new regression cases failed against that implementation. The correction
+preserves the complete brief in a user-role block with an explicit breakpoint,
+uses a stable earlier schema and instructions, and moves changing batch material
+after the boundary. Local validators still enforce exact filenames, voices and
+minutes bounds. A second red/green pass caught missing dynamic minutes directions
+for callers without a rendered template; these now travel after the breakpoint.
+The separate cache-key namespace is versioned `github-v1`.
+
+The actual Batch transport uses a real curation request as seed, then a real probe,
+then waves of at most eight readers. It checks substantial reported cache reads,
+not cache writes, before releasing queued work. Missing usage, incomplete results,
+billing errors and cache misses hold further requests. Already completed valid
+curation remains available for normal sorting and audit. A fresh probe follows a
+long idle interval; Batch execution can still outlast cache retention after a wave
+has been submitted. There is no automatic paid reseeding loop or provider switch.
+
+The hill climb adds minimum-token, model/settings/tunnel invalidation, exact brief
+preservation, added-curator isolation, repair, local validation, expiration,
+cancellation, partial-hit rejection and live-evidence currentness cases. A real
+CLI fixture checks the full brief, three cache stages, terminal output, private
+usage records and the normal source `_keep`/`_aside` directories. Its external API
+and tunnel are synthetic. Full model-context/source behavior remains separately
+evaluated.
+
+Yehuda Katz (fictionalized lens): preserve one shared prefix and make concurrency
+wait for observed reuse. Vivian Gornick (fictionalized lens): keep the entire
+source brief as evidence, without silently reducing it or changing its authority.
+Deborah Treisman (fictionalized lens): distinguish writes, cache reads and useful
+completed curation, and bind live evidence to the implementation that produced it.
+
+The first live test completed three actual Batch curations with private GitHub
+`get_me` calls. It wrote 10,553 tokens once, then read 10,553 cached tokens in each
+follow-up with zero new cache writes. A second live test refreshes that evidence
+after the minutes-direction correction. Neither test reads repository sources or
+runs the user's photo corpus. Live cache receipts are separate from the historical
+private-source canary; source/tool availability alone is not editorial acceptance.
+
+The second live test is retained as a held result, not replaced by the first
+success. Its seed wrote 10,547 tokens and probe reused 10,547, but the reader
+reported zero cached tokens and wrote the prefix again. All three sent requests
+had identical static instructions, brief block, response schema and imported MCP
+tool definitions. The reader also combined two allowed names into one invalid
+speaker string. Local validation rejected that reply; the cache hold prevented a
+further paid repair. Two curations completed and the third remained held. Cache
+availability is therefore not assumed reliable merely because one probe hit.
+
+A local check with Jamie's actual compact overview counted 573,984 tokens and
+verified that its complete text survived both prepared requests. Different
+synthetic filenames produced identical cache keys, brief blocks and schemas.
+This check made no API calls and moved no images. It verifies preparation of the
+large brief, not its live cost or the editorial result.
+
+The final code passed 422 tests across 46 suites and 237 focused evals, with no
+failures or skipped cases. A third bounded live test adds OpenAI's diagnostic
+comparison to the seed; all live results remain distinct from the offline gate.
+
+The diagnostic test is also held: its seed wrote 10,549 tokens and probe wrote
+10,549 with zero cached reads. The third request was never submitted. Both valid
+curations were retained. OpenAI returned `comparison_response_not_found`, so no
+server-side cause is established. This test's hashes match the final production
+and diagnostic script. All three sanitized receipts are retained in `evals/probes/`;
+actual response IDs, Batch IDs, tool output and private records remain local.
+Eight API curations were submitted across the three tests. The full photo run was
+not restarted. Repeated misses cannot be called reliable caching, even though the
+prefix correction produced real hits and the spend guard operated correctly.
+
+The remaining live cache reliability gate stays held. This records an application
+correction and protective scheduling, not an assurance that the service will reuse
+every eligible prefix. A subsequent release should retain these failed observations
+when comparing new evidence. No cache gate or validator was weakened to obtain a
+passing result. The PR retains its required `--mechanical` large-change marker and
+is not auto-merged.

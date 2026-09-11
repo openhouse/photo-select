@@ -558,7 +558,7 @@ full.
 
 ## Caching
 
-Responses from OpenAI are cached under a `.cache` directory using a hash of the
+Outside `--github-all`, responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
 saved reply instead of hitting the API. The tool never caches model responses
 that contain zero decisions (0 keeps + 0 asides). Such entries are skipped on
@@ -566,6 +566,14 @@ write and evicted on read. If a batch still produces no decisions, the run is
 retried (finalize mode when 10 or fewer images remain). After two consecutive
 no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
 continues.
+
+With `--github-all`, each curation can discover current GitHub sources. Eligible
+GPT-5.6+ requests instead reuse the full brief through API prompt caching. Batch
+uses a seed/probe check before releasing reader waves; `--verbose` reports actual
+cached, written and total input tokens. A cache miss holds further submissions.
+The brief, per-photo tags and automatic additional curators are preserved. See
+[GitHub prompt caching](docs/live-knowledge.md#prompt-caching-with-github-batch-curation)
+for operation, the small opt-in live eval and limits.
 
 ## Testing
 
@@ -594,7 +602,7 @@ Now everything—random choice, conversation, and file moves—happens automatic
 
 Add `--github-all` to your existing command. The model can follow private GitHub links, discover accessible repositories and inspect recent branches during the same API call that curates your images. Your GitHub credential stays in a local read-only bridge; OpenAI's private tunnel carries the tool requests and source results.
 
-The flag supports `openai` and `openai-batch`, preserves your model and exact custom curator list, and automatically starts the configured tunnel. Jamie's current launcher is configured. Run from your image directory as before; results and tool traces go to a new private run whose path is printed.
+The flag supports `openai` and `openai-batch`, preserves your model and exact custom curator list, and automatically starts the configured tunnel. Jamie's current launcher is configured. Run from your image directory as before; selections go into its `_keep` and `_aside` directories, while API traces go to a separate private run whose path is printed.
 
 See [the command and setup guide](docs/live-knowledge.md), [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md), and the [acceptance record](evals/github-inference-readiness.json). Keep the Mac awake and online during Batch processing. Run `npm run hillclimb` for regression checks.
 

@@ -43,8 +43,8 @@ export async function startGithubRun({source,brief='',curators=[],provider='open
     progress(`github: image directory ${run.images}`);progress(`github: private audit ${run.root}`);
     const save=await createGithubAudit(run.root);
     const client=dependencies.client||new OpenAI({apiKey:process.env.OPENAI_API_KEY,baseURL:'https://api.openai.com/v1',maxRetries:0,timeout:120000});
-    const batch=provider==='openai-batch'?new GithubBatchTransport({client,signal,saveReceipt:record=>atomic(path.join(run.root,'batch-'+record.runId+'.json'),record)}):null;
-    const driver=new GithubCurationProvider({tunnelId,curators,brief,save,
+    const batch=provider==='openai-batch'?new GithubBatchTransport({client,signal,progress,saveReceipt:record=>atomic(path.join(run.root,'batch-'+record.runId+'.json'),record)}):null;
+    const driver=new GithubCurationProvider({tunnelId,curators,brief,briefSize,save,
       respond:batch?body=>batch.respond(body):body=>client.responses.create(body,{signal}),
       assertCurrent:tunnel.assertCurrent,
       assertDirectory:async dir=>{const actual=await fs.realpath(dir);if(actual!==run.images&&!actual.startsWith(run.images+path.sep))throw knowledgeError('Curation escaped the selected image directory.');},

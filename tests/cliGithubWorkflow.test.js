@@ -32,20 +32,21 @@ async function setup(pairs=1,{people={},legacy=false}={}){
   const files=new Map(),batches=new Map();let next=0,count=0;
   const client={files:{create:async({file})=>{const id='file-'+(++next);files.set(id,await file.text());return {id};},content:async id=>({text:async()=>files.get(id)}),del:async id=>{files.delete(id);return {deleted:true};}},batches:{
    create:async({input_file_id})=>{const id='batch-'+(++next),output='file-'+(++next),rows=[];
-    for(const line of files.get(input_file_id).trim().split('\\n')){const job=JSON.parse(line),request=job.body,brief=JSON.parse(request.input[0].content[0].text);count++;
-     await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,speakers:request.text.format.schema.properties.minutes.items.properties.speaker.enum,instructions:request.instructions,tools:request.tools,labels:request.input[0].content.filter(x=>x.type==='input_text').slice(1).map(x=>JSON.parse(x.text))})+'\\n');
+    for(const line of files.get(input_file_id).trim().split('\\n')){const job=JSON.parse(line),request=job.body,user=request.input.at(-1),brief=JSON.parse(user.content[0].text);count++;
+     await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,speakers:request.text.format.schema.properties.minutes.items.properties.speaker.enum,instructions:request.instructions,tools:request.tools,cacheKey:request.prompt_cache_key,labels:user.content.filter(x=>x.type==='input_text').slice(1).map(x=>JSON.parse(x.text))})+'\\n');
      if(process.env.TEST_FAIL_AFTER && count>Number(process.env.TEST_FAIL_AFTER)){rows.push({custom_id:job.custom_id,response:{status_code:503,body:{error:{code:'rate_limit_exceeded',message:'Synthetic interruption'}}}});continue;}
-     const minutes=Array.from({length:request.text.format.schema.properties.minutes.minItems},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'}));
+     const minutes=Array.from({length:request.text.format.schema.properties.minutes.minItems??Number(request.input[1].content[0].text.match(/between ([0-9]+) and/)[1])},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'}));
      const json={minutes,decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))};
-     rows.push({custom_id:job.custom_id,response:{status_code:200,body:{status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(json)}]}]}}});
+     rows.push({custom_id:job.custom_id,response:{status_code:200,body:{status:'completed',usage:{input_tokens:6000,input_tokens_details:{cached_tokens:count===1?0:5000,cache_write_tokens:count===1?5000:0}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(json)}]}]}}});
     }
     files.set(output,rows.map(x=>JSON.stringify(x)).join('\\n'));batches.set(id,{id,status:'completed',output_file_id:output});return {id};
    },retrieve:async id=>batches.get(id),cancel:async()=>{}}};
   return actual({...options,base:process.env.TEST_AUDIT,tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({assertCurrent:async()=>{},stop:async()=>{}}),client});
  }`;
  const loader=path.join(root,'loader.mjs');await fs.writeFile(loader,`export async function resolve(specifier,context,next){if(specifier==='./githubRun.js'&&context.parentURL?.endsWith('/src/index.js'))return {url:'data:text/javascript,'+encodeURIComponent(${JSON.stringify(wrapper)}),shortCircuit:true};return next(specifier,context);}`);
- async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough'}={}){
+ async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context}={}){
   const args=['--loader',loader,cli,'--github-all','--provider','openai-batch','--model','gpt-5.6-terra','--workers','1','--verbose','--dir',source];if(!recurse)args.push('--no-recurse');if(disablePeople)args.push('--disable-photo-filter');if(curators)args.push('--curators',curators.join(','));
+  if(context){const file=path.join(root,'context.txt');await fs.writeFile(file,context);args.push('--context',file);}
   const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):''};
   try{return {...await exec(process.execPath,args,{cwd:root,env,timeout:25000,maxBuffer:1024*1024}),code:0};}catch(e){return {code:e.code,stdout:e.stdout,stderr:e.stderr};}
  }
@@ -109,4 +110,15 @@ it('honors canonicalization of the base roster as well as additional names',asyn
  const f=await setup(),result=await f.run({curators:['Prof. Curator A'],identityPolicy:'canonicalize'});
  expect(result.code,result.stderr).toBe(0);
  const call=JSON.parse((await fs.readFile(f.calls,'utf8')).trim());expect(call.curators).toEqual(['Prof Curator A']);
+},30000);
+
+it('keeps full context, sorting and private cache usage through the actual CLI',async()=>{
+ const f=await setup(10),context=Array.from({length:300},(_,i)=>`Record ${i}: amber bridge cedar delta field.\n`).join('');
+ const result=await f.run({context,curators:['Base']});expect(result.code,result.stderr).toBe(0);
+ expect(result.stdout+result.stderr).toContain('github cache: probe');
+ expect(await jpgs(path.join(f.source,'_keep'))).toHaveLength(10);expect(await jpgs(path.join(f.source,'_aside'))).toHaveLength(10);
+ const audit=path.join(f.audit,(await fs.readdir(f.audit))[0]),records=await Promise.all((await fs.readdir(audit)).filter(n=>/^curation-/.test(n)).sort().map(async n=>JSON.parse(await fs.readFile(path.join(audit,n),'utf8'))));
+ expect(records).toHaveLength(3);expect(records.map(r=>r.attempts[0].response._photoSelectCache.role)).toEqual(['seed','probe','reader']);
+ for(const record of records){expect(JSON.parse(record.request.input[0].content[0].text).brief).toBe(context);expect(record.status).toBe('completed');}
+ expect(new Set(records.map(r=>r.request.prompt_cache_key)).size).toBe(1);
 },30000);
