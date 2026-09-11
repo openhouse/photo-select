@@ -28,6 +28,32 @@ Jamie subsequently instructed that the existing automatic additional-curator fea
 
 Tagged people are fictionalized analytical lenses, not actual participants or quoted speakers. Repository contents cannot alter the roster. This correction changes the fixed-roster contract introduced in version 1.0.0, so AGENTS and the package advance together to 2.0.0. Private JSON records and atomic Git history preserve provenance without adding a database. This restoration uses existing photo metadata; it does not introduce a preparatory GitHub research pass.
 
+## Prompt-preserving correction — 2026-09-11
+
+Jamie clarified that the flag must only enable authenticated GitHub access. The
+ordinary default or custom prompt is the authoritative curation instruction.
+Render it through the existing template system with the same context, names,
+filenames and placeholders; attach the private MCP tool separately. Do not append
+the earlier GitHub research, role-play, consent or citation paragraphs. Do not
+force reads or reject ordinary brief links solely because no tool fetched them.
+Record actual successful tool reads separately from model text. Preserve the
+ordinary free-text speaker schema so a prompt-defined facilitator may speak;
+the input batch roster remains unchanged.
+
+For cached requests, reuse the existing renderer's context boundary, concatenate
+instruction blocks back to exactly the original prompt bytes, and keep dynamic
+rosters and image metadata after that boundary. The `github-v3` key covers the
+restored stable prefix, schema, tools, model, effort, verbosity and selected tier.
+A custom prompt with no verified context boundary remains uncached. Credential
+screening, the read-only bridge, private audits, bounded transport recovery,
+strict reply structure, and existing image-directory behavior remain in place.
+
+This decision supersedes the earlier injected exploration instructions and the
+user-role brief layout described in the historical cache correction below. Branch
+exploration recommendations in this RFC are guidance for authors of project
+briefs, not mandatory prose injected by the flag. The older private and cache
+canaries remain historical until fresh evidence binds this implementation.
+
 ## API mechanism
 
 Use a remote MCP tool attached directly to the curatorial Responses request. OpenAI's [MCP and Connectors guide](https://developers.openai.com/api/docs/guides/tools-connectors-mcp) documents server-side tool discovery and invocation, `server_url`, `authorization`, `allowed_tools`, and approval configuration. A URL in a prompt alone does not grant browsing, GitHub authentication, or any other tool capability; the application must attach the tool.
@@ -40,7 +66,7 @@ GitHub source bodies are returned on demand. Embedded resource text is converted
 
 The previously considered hosted option would have forwarded GitHub authorization to OpenAI and placed it in a Batch input file. Automatic approval review rejected that transfer, including after Jamie approved a retry. It is not implemented. Jamie subsequently signed in to configure the private-tunnel alternative. The OHAI tunnel and local client are now configured; no public listener or ChatGPT workspace connector is required for the API path.
 
-## Scope and branch exploration
+## Scope and optional brief guidance
 
 `--github-all` means repositories the active credential can read, including public, private, collaborator, and organization repositories. Do not restrict discovery to owned repositories or names containing knowledge/wiki/graph. Newly created repositories and branch heads are queried at inference time. GitHub token permissions, organization restrictions, SSO, rate limits, and actual API access still apply; a token cannot guarantee every resource visible in a browser session.
 

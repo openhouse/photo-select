@@ -1,10 +1,11 @@
+import {requestInstructions,githubRequestData} from './helpers/githubRequest.js';
 import {expect,it,vi} from 'vitest';
 import {GithubCurationProvider} from '../src/providers/github.js';
 import {GithubBatchTransport} from '../src/githubBatch.js';
 import {sha256} from '../src/core/knowledgeLive.js';
 const brief=Array.from({length:300},(_,i)=>`Record ${i}: amber bridge cedar delta field.\n`).join('');
 const tunnelId='tunnel_'+'a'.repeat(32);
-const reply=(body,number=1)=>({id:'response-'+number,status:'completed',service_tier:'flex',usage:{input_tokens:4500,input_tokens_details:{cached_tokens:number===1?0:4000,cache_write_tokens:number===1?4000:0}},output_text:JSON.stringify({minutes:[{speaker:'Base',text:'What next?'}],decisions:JSON.parse(body.input.at(-1).content[0].text).filenames.map(filename=>({filename,decision:'keep',reason:'Visible form.'}))})});
+const reply=(body,number=1)=>({id:'response-'+number,status:'completed',service_tier:'flex',usage:{input_tokens:4500,input_tokens_details:{cached_tokens:number===1?0:4000,cache_write_tokens:number===1?4000:0}},output_text:JSON.stringify({minutes:[{speaker:'Base',text:'What next?'}],decisions:githubRequestData(body).filenames.map(filename=>({filename,decision:'keep',reason:'Visible form.'}))})});
 function fixture(create){const calls=[],receipts=[],saved=[],progress=[];const client={responses:{create:(body,options)=>{calls.push({body:structuredClone(body),options});return create?create(body,calls.length,options):Promise.resolve(reply(body,calls.length));}},files:{create:async()=>{throw Error('Cacheable requests must not upload Batch files.');}}};const transport=new GithubBatchTransport({client,flushMs:1,progress:line=>progress.push(line),saveReceipt:async r=>receipts.push(structuredClone(r)),retryDelayMs:1});const provider=new GithubCurationProvider({tunnelId,curators:['Base'],brief,cacheServiceTier:'flex',respond:body=>transport.respond(body),encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r)});return {provider,transport,calls,receipts,saved,progress};}
 const chat=(provider,file='a.jpg')=>provider.chat({model:'gpt-5.6-terra',reasoningEffort:'high',images:[file]});
 it('routes cacheable GitHub curation through explicit Flex with matching private request hashes',async()=>{
@@ -13,7 +14,7 @@ it('routes cacheable GitHub curation through explicit Flex with matching private
  expect(f.saved.map(r=>r.attempts[0].response._photoSelectCache.role)).toEqual(['seed','probe']);
  for(let i=0;i<2;i++){expect(f.saved[i].request).toEqual(f.calls[i].body);expect(f.saved[i].attempts[0].request_sha256).toBe(sha256(f.calls[i].body));}
  expect(f.receipts.filter(r=>r.status==='completed')).toHaveLength(2);expect(f.receipts.every(r=>r.transport==='flex')).toBe(true);
- expect(f.progress.join('\n')).toContain('Flex');expect(JSON.parse(f.calls[1].body.input[0].content[0].text).brief).toBe(brief);
+ expect(f.progress.join('\n')).toContain('Flex');expect(requestInstructions(f.calls[1].body)).toContain(brief);
 });
 it('holds twenty pending jobs behind the Flex seed and confirms reuse before parallel readers',async()=>{
  let active=0,peak=0,release;const gate=new Promise(resolve=>release=resolve);const f=fixture(async(body,n)=>{active++;peak=Math.max(peak,active);if(n===1)await gate;await new Promise(r=>setTimeout(r,2));active--;return reply(body,n);});
@@ -40,5 +41,5 @@ it('retains a response but holds curation and the queue if the API returns a dif
 });
 it('never retries an uncertain connection timeout or a successful cache miss',async()=>{
  const f=fixture(async()=>{throw Object.assign(Error('timeout'),{name:'APIConnectionTimeoutError'});});await expect(chat(f.provider)).rejects.toThrow();expect(f.calls).toHaveLength(1);
- const miss=fixture(async body=>reply(body,1));const r=await Promise.allSettled([chat(miss.provider),chat(miss.provider,'b.jpg'),chat(miss.provider,'c.jpg')]);expect(miss.calls).toHaveLength(2);expect(r.map(x=>x.status)).toEqual(['fulfilled','fulfilled','rejected']);
+ const miss=fixture(async body=>reply(body,1));const r=await Promise.allSettled([chat(miss.provider),chat(miss.provider,'b.jpg'),chat(miss.provider,'c.jpg')]);expect(miss.calls).toHaveLength(2);expect(r.filter(x=>x.status==='fulfilled')).toHaveLength(2);expect(r.filter(x=>x.status==='rejected')).toHaveLength(1);expect(r.filter(x=>x.status==='fulfilled').flatMap(x=>x.value.json.decisions.map(d=>d.filename)).sort()).toEqual(miss.calls.flatMap(x=>githubRequestData(x.body).filenames).sort());
 });

@@ -608,3 +608,7 @@ The flag supports `openai` and `openai-batch`, preserves your model and exact cu
 See [the command and setup guide](docs/live-knowledge.md), [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md), and the [acceptance record](evals/github-inference-readiness.json). Keep the Mac awake and online during Batch processing. Run `npm run hillclimb` for regression checks.
 
 The older `--knowledge-live` mode remains a separate [research-first workflow](docs/research-first-knowledge.md); it does not attach GitHub tools to the image-curation call.
+
+`--github-all` preserves the ordinary default or custom `--prompt` and adds only
+authenticated read-only GitHub tools. It does not append research or editorial
+instructions. See [prompt preservation](docs/live-knowledge.md#prompt-preservation).

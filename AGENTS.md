@@ -59,6 +59,16 @@ LLM receives identical personas, context, and filename whitelist in both passes.
 
 ## 4  Prompt Placeholders
 
+For `--github-all`, use the ordinary prompt renderer and preserve the selected
+original or custom prompt text. The flag attaches authenticated read-only tools;
+it must not inject research, role-play, consent, citation or editorial directions.
+Use the ordinary free-text speaker schema; do not reject a prompt-defined
+facilitator with a GitHub-only speaker allowlist.
+Context and people metadata follow the ordinary prompt workflow. Cache splitting
+must preserve the rendered instruction bytes. This explicit user correction
+supersedes the separate GitHub prompt introduced earlier in this PR.
+
+
 | Placeholder      | Source            | Required                  |
 | ---------------- | ----------------- | ------------------------- |
 | `{{curators}}`   | CLI `--curators`  | ✓                         |

@@ -193,7 +193,6 @@ const privateEnabled = liveEnabled || githubAll;
 const liveAbort = new AbortController();
 if (githubAll && liveEnabled) program.error("Use --github-all by itself; --knowledge-live is the separate research-first mode.");
 if (githubAll && !["openai", "openai-batch"].includes(providerName)) program.error("--github-all supports openai and openai-batch.");
-if (githubAll && program.getOptionValueSource("prompt") === "cli") program.error("--github-all uses its live GitHub prompt; omit --prompt.");
 if (knowledgeBrief && !privateEnabled) program.error("--knowledge-brief requires --knowledge-live.");
 if (liveEnabled && providerName !== "openai") program.error("Live knowledge requires --provider openai; batch and Ollama are not supported yet.");
 if (liveEnabled && program.getOptionValueSource("prompt") === "cli") program.error("Live knowledge uses its source-aware prompt; omit --prompt.");
@@ -331,7 +330,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
         discoverOnly:knowledgeDiscover, researchOnly:knowledgeResearchOnly, signal:liveAbort.signal, progress:line=>console.log(line)});
       if (knowledgeDiscover || knowledgeResearchOnly) { console.log(`knowledge: saved ${liveRun.root}`); return; }
       }
-      absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = liveRun.provider.promptPath;
+      absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = githubAll ? promptPath : liveRun.provider.promptPath;
       if(!githubAll)process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
       process.umask(0o077);
       if(!githubAll)process.chdir(liveRun.root);

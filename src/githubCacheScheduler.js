@@ -10,13 +10,13 @@ export class GithubCacheScheduler {
   }
   respond(body) {
     if(this.signal?.aborted)return Promise.reject(knowledgeError('Curation cancelled.'));
-    if(!body.prompt_cache_key?.startsWith('photo-select:github-v2:'))return this.send(body);
+    if(!body.prompt_cache_key?.startsWith('photo-select:github-v3:'))return this.send(body);
     const key=body.prompt_cache_key;let group=this.groups.get(key);
     if(!group){
-      const brief=JSON.parse(body.input[0].content[0].text).brief;
+      const prefix=body.input[0].content[0].text;
       // Conservative coverage guard: a tiny unrelated hit must not release a
       // half-million-token brief. API tokenization can differ from local counts.
-      group={key,required:Math.ceil(validateGithubBrief(brief).textTokens*.95),phase:'seed',queue:[],active:false,lastHit:0};this.groups.set(key,group);
+      group={key,required:Math.ceil(validateGithubBrief(prefix).textTokens*.95),phase:'seed',queue:[],active:false,lastHit:0};this.groups.set(key,group);
     }
     if(group.error)return Promise.reject(group.error);
     return new Promise((resolve,reject)=>{group.queue.push({body,resolve,reject});if(!group.active)void this.pump(group);});

@@ -23,6 +23,27 @@ No extra flag is needed. Keep the configured Photo Filter service available (nor
 
 All voices, including tagged people, are fictionalized lenses. Their generated dialogue is not a quotation or evidence of their actual views. Names encountered in GitHub source text do not automatically become curators. Version 2.0.0 records this user-authorized change to the earlier fixed-roster contract.
 
+## Prompt preservation
+
+`--github-all` uses `prompts/default_prompt.hbs` by default, exactly as the ordinary
+workflow does. `--prompt` remains available. The supplied context is rendered into
+its usual background section, including an inline `--knowledge-brief` when used.
+The original exhibition framing, facilitator, people-note directions, uncertainty
+rule and one-sentence decision reasons remain unchanged. Field-note placeholders
+remain part of that template; this correction does not add a new notebook pass.
+
+GitHub tool definitions and authentication are request capabilities, not extra
+curatorial prose. The previous `github_prompt.hbs` is retained only as a historical
+artifact and is no longer selected. No GitHub-specific instruction paragraph is
+appended. The credential filter, read-only bridge, tool-call audit, reply checks,
+transport retries, and normal image sorting remain enabled.
+
+Caching splits the original rendered instructions into adjacent developer content
+blocks without adding or removing text. The cache key is now `github-v3`, so the
+old prompt's cache cannot be mistaken for the restored prompt's cache. An invalid
+reply may receive the existing one-repair request; it does not silently replace
+the original curation prompt.
+
 ## Context size
 
 Use a project question and useful repository links in `--context`, or supply them with `--knowledge-brief`. The file is included in every curation request. A complete multi-megabyte archive export can exceed the model window even though private GitHub access is working.
@@ -35,7 +56,7 @@ The launcher starts a private tunnel and a local GitHub read-only bridge. The mo
 
 The scope is everything the active GitHub credential can read, including public, private, collaborator and organization repositories. Discovery has no fixed repository catalog, owner restriction or knowledge/wiki naming rule. New repositories and branches are available on subsequent tool calls. GitHub API permissions, organization SSO and rate limits still govern access.
 
-The prompt directs the team to follow relevant links, inspect branch heads and commit dates, prefer commit-pinned reads, preserve competing editions and qualify incomplete coverage. This is model-directed exploration, not an exhaustive crawler. A recent branch is not automatically adopted or authoritative. The private trace shows what was actually read.
+The flag preserves the ordinary curation prompt, including an explicit `--prompt` override. It adds authenticated GitHub tools to the same request without adding research or editorial instructions. Put any desired research questions or branch preferences in your own context or template. Tool descriptions make the read operations available; the model chooses whether to use them. The private trace shows which repositories and refs were actually read.
 
 The bridge exposes only selected read tools that GitHub also marks read-only. It blocks writes, arbitrary URLs/commands, credential-file reads, credential-like output and unsupported binary resources. Embedded text resources are converted to explicit text so the API receives file contents, not merely a download notice. Individual GitHub responses are bounded at 8 MB and 60 seconds; each curation attempt permits up to 32 tool calls.
 
@@ -121,7 +142,7 @@ Inspect private receipts before retrying after an uncertain interruption.
 
 Batch requests are uploaded from memory. Both output and error files are read and matched to their submitted requests. Error diagnostics are saved privately before remote cleanup; terminal messages show error codes and fixed guidance rather than raw API prose. Successful rows survive a different row failing. If result retrieval or diagnostic persistence fails, remote files are retained for recovery. Otherwise the temporary remote input, output and error files are deleted after retrieval; returned traces remain in the private run. Cleanup failures hold the run and leave file IDs in its receipt. Ctrl-C requests Batch cancellation and closes the tunnel. If the process or machine is forcibly killed, inspect `batch-*.json` and the OpenAI Batch dashboard for unfinished jobs/files before retrying. A new invocation resumes the selected image directory with a fresh private API audit; it does not replay the previous model conversation.
 
-A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing schema and citation checks does not establish editorial quality or citation entailment.
+A malformed reply gets one repair with the same images, context, tools and roster. The repair can read newer sources; both response traces are retained. Source/tool failures, missing results or persistence errors hold the run. Passing reply validation does not establish editorial quality. GitHub links already in the brief may appear in the reply without a fresh tool read; actual fetched sources are recorded separately in the audit.
 
 ## Held responses and unavailable files
 
@@ -169,11 +190,14 @@ The older [`--knowledge-live` mode](research-first-knowledge.md) researches firs
 ## Prompt caching with GitHub Batch curation
 
 No additional flag is needed. On GPT-5.6 and later, a context brief with at least
-1,024 locally counted tokens gets an explicit cache breakpoint after the complete
-brief. It stays user-supplied evidence. The application neither summarizes nor
+1,024 locally counted tokens uses the ordinary rendered prompt and its existing
+cache breakpoint after the complete context. The selected template must expose
+that context boundary; a custom template without it stays uncached. The application neither summarizes nor
 truncates it. Changing filenames, photo tags, added curators and repair directions
 come after that boundary. The output schema before it is stable; local validation
-still enforces each batch's exact roster, filenames and minutes bounds.
+still enforces each batch's filenames and minutes bounds. Speaker labels use the
+ordinary free-text schema, so the facilitator named in the original template is
+not rejected by a GitHub-only roster restriction.
 
 For eligible `--provider openai-batch` requests, Flex receives the first real
 curation request as a cache seed. The next checks reuse before remaining work is
@@ -183,7 +207,7 @@ single request checks again. These are useful curation jobs, not extra warmups.
 `--workers 20` continues to prepare work; the cache guard controls API fanout.
 
 The guard requires reported cached tokens covering at least 95% of the locally
-counted brief, allowing for differences in API tokenization. A tiny unrelated hit
+counted cached prefix, allowing for differences in API tokenization. A tiny unrelated hit
 is insufficient. Cache writes are reported separately and do not count as reads.
 Missing usage, a failed seed, or a probe/reader miss holds further submissions for
 that shared prefix. Completed, validated curation results remain usable and retain
@@ -203,7 +227,10 @@ to `openai-batch` mode.
 To run a paid acceptance test, use `npm run evals:github-prompt-cache -- --live`
 from the development checkout. It uses four synthetic photographs, a synthetic
 brief, the existing OpenAI credential and the actual private GitHub tunnel. Add
-`--context /absolute/path/to/brief.txt` to test an unchanged full brief instead.
+`--repository owner/repo` to verify a private README read as part of the synthetic
+brief. `--context /absolute/path/to/brief.txt` uses that file verbatim instead;
+reads are then discretionary, so a file that does not ask for a connection check
+may not satisfy the canary's tool-use criterion.
 Add `--verbosity high` to match the ordinary CLI settings. The test records actual
 tier, full-brief preservation, request hashes, cache usage, encrypted-field
 omissions and measured request overlap. Queuing two jobs together does not necessarily make

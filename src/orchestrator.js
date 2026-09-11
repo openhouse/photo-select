@@ -594,7 +594,7 @@ export async function triageDirectory(options) {
   }
   if (provider.knowledge) {
     curators = [...provider.curators];
-    promptPath = provider.promptPath;
+    if (!provider.preservePrompt) promptPath = provider.promptPath;
     contextPath = undefined;
     await provider.assertDirectory(dir);
     await provider.assertCurrent();
@@ -957,6 +957,7 @@ export async function triageDirectory(options) {
                   const first = await buildPrompt(promptPath, {
                     curators: finalCurators,
                     contextPath,
+                    contextText: provider.preservePrompt ? provider.brief : undefined,
                     images: batch,
                     hasFieldNotes: false,
                     isSecondPass: false,

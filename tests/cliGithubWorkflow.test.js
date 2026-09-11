@@ -1,8 +1,11 @@
+import {requestInstructions} from './helpers/githubRequest.js';
+import {buildPrompt,DEFAULT_PROMPT_PATH} from '../src/templates.js';
 import {afterEach,expect,it} from 'vitest';
 import {createServer} from 'node:http';
 import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';
 import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {fileURLToPath} from 'node:url';import sharp from 'sharp';
 const exec=promisify(execFile),cli=fileURLToPath(new URL('../src/index.js',import.meta.url));
+const requestHelpers=new URL('./helpers/githubRequest.js',import.meta.url).href;
 const productionRun=new URL('../src/githubRun.js',import.meta.url).href;
 const roots=[],servers=[];afterEach(async()=>{await Promise.all(servers.splice(0).map(s=>new Promise(resolve=>s.close(resolve))));await Promise.all(roots.splice(0).map(p=>fs.rm(p,{recursive:true,force:true})));});
 async function setup(pairs=1,{people={},legacy=false}={}){
@@ -27,32 +30,34 @@ async function setup(pairs=1,{people={},legacy=false}={}){
  const peopleBase='http://127.0.0.1:'+server.address().port;
  // Real CLI, source setup, provider, Batch transport, audit and orchestrator.
  // Only external tunnel/OpenAI operations are substituted with deterministic IO.
- const wrapper=`import fs from 'node:fs/promises';import {startGithubRun as actual} from ${JSON.stringify(productionRun)};
+ const wrapper=`import fs from 'node:fs/promises';import {startGithubRun as actual} from ${JSON.stringify(productionRun)};import {githubRequestData,requestInstructions} from ${JSON.stringify(requestHelpers)};
  export async function startGithubRun(options){
   const files=new Map(),batches=new Map();let next=0,count=0;
   const client={files:{create:async({file})=>{const id='file-'+(++next);files.set(id,await file.text());return {id};},content:async id=>({text:async()=>files.get(id)}),del:async id=>{files.delete(id);return {deleted:true};}},batches:{
    create:async({input_file_id})=>{const id='batch-'+(++next),output='file-'+(++next),rows=[];
-    for(const line of files.get(input_file_id).trim().split('\\n')){const job=JSON.parse(line),request=job.body,user=request.input.at(-1),brief=JSON.parse(user.content[0].text);count++;
-     await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,speakers:request.text.format.schema.properties.minutes.items.properties.speaker.enum,instructions:request.instructions,tools:request.tools,cacheKey:request.prompt_cache_key,labels:user.content.filter(x=>x.type==='input_text').slice(1).map(x=>JSON.parse(x.text))})+'\\n');
+    for(const line of files.get(input_file_id).trim().split('\\n')){const job=JSON.parse(line),request=job.body,user=request.input.at(-1),brief=githubRequestData(request);count++;
+     await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,speakers:request.text.format.schema.properties.minutes.items.properties.speaker.enum,instructions:requestInstructions(request),tools:request.tools,cacheKey:request.prompt_cache_key,labels:user.content.filter(x=>x.type==='input_text').slice(1).map(x=>JSON.parse(x.text))})+'\\n');
      if(process.env.TEST_FAIL_AFTER && count>Number(process.env.TEST_FAIL_AFTER)){rows.push({custom_id:job.custom_id,response:{status_code:503,body:{error:{code:'rate_limit_exceeded',message:'Synthetic interruption'}}}});continue;}
-     const minutes=Array.from({length:request.text.format.schema.properties.minutes.minItems??Number(request.input[1].content[0].text.match(/between ([0-9]+) and/)[1])},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'}));
+     const minutes=Array.from({length:brief.minutesMin},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'}));
      const json={minutes,decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))};
      rows.push({custom_id:job.custom_id,response:{status_code:200,body:{status:'completed',usage:{input_tokens:6000,input_tokens_details:{cached_tokens:count===1?0:5000,cache_write_tokens:count===1?5000:0}},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(json)}]}]}}});
     }
     files.set(output,rows.map(x=>JSON.stringify(x)).join('\\n'));batches.set(id,{id,status:'completed',output_file_id:output});return {id};
    },retrieve:async id=>batches.get(id),cancel:async()=>{}}};
   client.responses={create:async(request)=>{
-   const ordinal=++count;const user=request.input.at(-1),brief=JSON.parse(user.content[0].text);
+   const ordinal=++count;const user=request.input.at(-1),brief=githubRequestData(request);
    await fs.appendFile(process.env.TEST_CALLS,JSON.stringify({filenames:brief.filenames,curators:brief.curators,serviceTier:request.service_tier,tools:request.tools})+'\\n');
    if(process.env.TEST_DISCOVERY_FAILURE==='1'&&ordinal===3)throw Object.assign(Error("424 Error retrieving tool list from MCP server: 'github'. Http status code: 424 (Failed Dependency)"),{status:424,code:'http_error',type:'external_connector_error',param:'tools'});
-   const minimum=Number(request.input[1].content[0].text.match(/between ([0-9]+) and/)[1]);
+   const minimum=brief.minutesMin;
    return {id:'response-'+ordinal,status:'completed',service_tier:'flex',output:[{type:'reasoning',summary:[],encrypted_content:'gAAAAA'+'X'.repeat(50)+'sk-'+'A'.repeat(80)}],usage:{input_tokens:6000,input_tokens_details:{cached_tokens:ordinal===1?0:5000,cache_write_tokens:ordinal===1?5000:0}},output_text:JSON.stringify({minutes:Array.from({length:minimum},(_,i)=>({speaker:brief.curators[i%brief.curators.length],text:'Synthetic visual reading. What next?'})),decisions:brief.filenames.map(filename=>({filename,decision:filename.startsWith('keep-')?'keep':'aside',reason:'Synthetic image decision.'}))})};
   }};
   return actual({...options,base:process.env.TEST_AUDIT,tunnelId:'tunnel_'+'a'.repeat(32)},{startTunnel:async()=>({assertCurrent:async()=>{},stop:async()=>{}}),client});
  }`;
  const loader=path.join(root,'loader.mjs');await fs.writeFile(loader,`export async function resolve(specifier,context,next){if(specifier==='./githubRun.js'&&context.parentURL?.endsWith('/src/index.js'))return {url:'data:text/javascript,'+encodeURIComponent(${JSON.stringify(wrapper)}),shortCircuit:true};return next(specifier,context);}`);
- async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,workers=1,discoveryFailure=false}={}){
+ async function run({failAfter,recurse=false,disablePeople=false,curators,identityPolicy='passthrough',context,prompt,knowledgeBrief,workers=1,discoveryFailure=false}={}){
   const args=['--loader',loader,cli,'--github-all','--provider','openai-batch','--model','gpt-5.6-terra','--workers',String(workers),'--verbose','--dir',source];if(!recurse)args.push('--no-recurse');if(disablePeople)args.push('--disable-photo-filter');if(curators)args.push('--curators',curators.join(','));
+  if(knowledgeBrief)args.push("--knowledge-brief",knowledgeBrief);
+  if(prompt){const file=path.join(root,'custom.hbs');await fs.writeFile(file,prompt);args.push('--prompt',file);}
   if(context){const file=path.join(root,'context.txt');await fs.writeFile(file,context);args.push('--context',file);}
   const env={...process.env,OPENAI_API_KEY:'synthetic-test-key',NODE_NO_WARNINGS:'1',PHOTO_SELECT_HTTP_DRIVER:'',PHOTO_SELECT_DISABLE_PEOPLE:'0',PHOTO_SELECT_IDENTITY_POLICY:identityPolicy,PHOTO_FILTER_API_BASE:peopleBase,TEST_AUDIT:audit,TEST_CALLS:calls,TEST_FAIL_AFTER:failAfter?String(failAfter):'',TEST_DISCOVERY_FAILURE:discoveryFailure?'1':''};
   try{return {...await exec(process.execPath,args,{cwd:root,env,timeout:25000,maxBuffer:1024*1024}),code:0};}catch(e){return {code:e.code,stdout:e.stdout,stderr:e.stderr};}
@@ -96,7 +101,7 @@ it.each([{legacy:false,identityPolicy:'passthrough'},{legacy:true,identityPolicy
  const f=await setup(1,{people,legacy}),result=await f.run({curators:['Base A','Base B'],identityPolicy});expect(result.code,result.stderr).toBe(0);
  const calls=(await fs.readFile(f.calls,'utf8')).trim().split('\n').map(s=>JSON.parse(s));
  const added=identityPolicy==='canonicalize'?'Pat artist  neighbor':guest,expected=['Base A','Base B',added];
- expect(calls).toHaveLength(1);expect(calls[0].curators).toEqual(expected);expect(calls[0].speakers).toEqual(expected);
+ expect(calls).toHaveLength(1);expect(calls[0].curators).toEqual(expected);expect(calls[0].speakers).toBeUndefined();
  expect(calls[0].instructions).toContain(added);expect(calls[0].tools[0].server_label).toBe('github');
  expect(calls[0].labels.sort((a,b)=>a.filename.localeCompare(b.filename))).toEqual([{filename:'aside-0.jpg',people:[guest,'Base A','One appearance']},{filename:'keep-0.jpg',people:[guest,'Base A']}]);
  expect(result.stdout).toContain('additional curators from tags: '+added);
@@ -128,7 +133,7 @@ it('keeps full context, sorting and private cache usage through the actual CLI',
  expect(await jpgs(path.join(f.source,'_keep'))).toHaveLength(10);expect(await jpgs(path.join(f.source,'_aside'))).toHaveLength(10);
  const audit=path.join(f.audit,(await fs.readdir(f.audit))[0]),records=await Promise.all((await fs.readdir(audit)).filter(n=>/^curation-/.test(n)).sort().map(async n=>JSON.parse(await fs.readFile(path.join(audit,n),'utf8'))));
  expect(records).toHaveLength(3);expect(records.map(r=>r.attempts[0].response._photoSelectCache.role)).toEqual(['seed','probe','reader']);
- for(const record of records){expect(JSON.parse(record.request.input[0].content[0].text).brief).toBe(context);expect(record.status).toBe('completed');expect(record.request.service_tier).toBe('flex');expect(record.attempts[0].request_sha256).toBe(record.model_sha256);}
+ for(const record of records){expect(requestInstructions(record.request)).toContain(context);expect(record.status).toBe('completed');expect(record.request.service_tier).toBe('flex');expect(record.attempts[0].request_sha256).toBe(record.model_sha256);}
  expect(new Set(records.map(r=>r.request.prompt_cache_key)).size).toBe(1);
 },30000);
 
@@ -143,3 +148,16 @@ it('finishes the real CLI with twenty workers despite ciphertext matches and one
  expect(records.every(r=>r.attempts[0].omittedEncryptedReasoning.length===1)).toBe(true);
  expect(records.some(r=>r.attempts[0].response._photoSelectFlex.attempt===2)).toBe(true);
 });
+
+it.each(['default','custom','inline'])('sends the ordinary rendered prompt through the actual CLI (%s)',async kind=>{
+ const f=await setup(),context='Exhibition brief with a private GitHub link: https://github.com/fixture/private.';
+ const prompt=kind==='custom'?(await fs.readFile(DEFAULT_PROMPT_PATH,'utf8')).replace('You are moderating a collaborative curatorial session','Use the requested custom exhibition format. You are moderating a collaborative curatorial session'):undefined;
+ const result=await f.run({context:kind==='inline'?undefined:context,knowledgeBrief:kind==='inline'?context:undefined,prompt,curators:['Base A','Base B']});
+ expect(result.code,result.stderr).toBe(0);
+ const call=JSON.parse((await fs.readFile(f.calls,'utf8')).trim());
+ const contextPath=path.join(f.root,'expected-context.txt');await fs.writeFile(contextPath,context);
+ const original=await buildPrompt(kind==='custom'?path.join(f.root,'custom.hbs'):DEFAULT_PROMPT_PATH,{curators:call.curators,images:call.filenames,contextPath});
+ expect(call.instructions).toBe(original.prompt);expect(call.tools[0].server_label).toBe('github');
+ expect(call.instructions).toContain('If uncertain, choose "aside"');
+ expect(call.instructions).toContain("Read Jamie's notes");
+},30000);

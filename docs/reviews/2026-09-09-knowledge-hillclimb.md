@@ -516,3 +516,45 @@ resumed photo run uses that implementation, the saved nine-person base roster,
 high reasoning/verbosity, twenty workers and the unchanged full brief. A private
 launcher receipt records its command, process and eventual exit status. Idle sleep
 is inhibited for the command's lifetime. Launch is not a completion claim.
+
+
+## 2026-09-11 — restore the original prompt and attach GitHub separately
+
+Jamie clarified that `--github-all` must enable authenticated reads without
+changing the curation prompt. The prior provider selected a separate template,
+appended research/governance paragraphs, duplicated the brief into different
+message roles and rejected ordinary brief links without a tool read.
+
+The provider now accepts the ordinary rendered default or custom prompt unchanged.
+The original `default_prompt.hbs` is byte-identical to the pre-PR version. Context,
+inline context and per-photo people metadata follow the ordinary workflow. Cache
+splitting preserves every instruction byte, with a new `github-v3` key. The flag
+attaches the authenticated read-only MCP tool separately; audits, credential
+screening, output structure/filename checks, retries and sorting remain enabled.
+
+The first restored-prompt live check found a second incompatibility: the prompt
+names Jamie as facilitator, but the GitHub-only speaker enum/allowlist rejected
+Jamie when absent from the curator list. The provider now uses the ordinary
+free-text speaker schema. Input rosters remain isolated and unchanged per batch.
+A facilitator regression fails on the earlier code and passes on the correction.
+Explicit empty custom prompts are preserved rather than replaced by a default.
+
+Verification: nine focused prompt-parity tests, plus CLI cases for default,
+custom and inline context; 454 tests across 49 suites and 269 focused evals pass.
+The CLI parity cases were also checked against the old context-loss behavior and
+failed as expected. Existing sixty-image/twenty-worker outage and opaque-response
+regressions still complete with the correct keep/aside outputs.
+
+The fresh live canary in `evals/probes/2026-09-11-github-original-prompt.json`
+completed all four synthetic-image curations. Every response performed live
+account and private-file reads. Each returned 56,423 source-text bytes, whose Git
+blob hash matched the separately verified GitHub file metadata. The three
+follow-ups reused 15,740 cached tokens without rewrites. Actual request overlap
+was one; the concurrent queue has separate deterministic coverage. No repository
+body was prefetched into the request. The canary's synthetic brief requests its
+connectivity checks; the application does not append those instructions.
+
+Earlier large-brief and source canaries remain historical. The earlier full
+photograph run stopped on a reply-validation hold before this correction and has
+not been declared complete. This prompt-restoration change does not reclassify
+already-sorted photographs or establish full-corpus completion.

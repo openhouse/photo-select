@@ -1,3 +1,4 @@
+import {requestInstructions,githubRequestData} from './helpers/githubRequest.js';
 import {expect,it} from 'vitest';
 import {GithubCurationProvider} from '../src/providers/github.js';
 import {GithubBatchTransport} from '../src/githubBatch.js';
@@ -28,7 +29,7 @@ it.each(['summary','tool-output','message','nested-tool-reasoning'])('still hold
 const discoveryError=()=>Object.assign(Error("424 Error retrieving tool list from MCP server: 'github'. Http status code: 424 (Failed Dependency)"),{status:424,code:'http_error',type:'external_connector_error',param:'tools'});
 function transportFixture(create,{signal,retryDelayMs=1}={}){
  const calls=[],saved=[],receipts=[],progress=[];
- const client={responses:{create:async(body,options)=>{calls.push({body:structuredClone(body),options});const number=calls.length;await create?.(number,options);const filenames=JSON.parse(body.input.at(-1).content[0].text).filenames;return {id:'response-'+number,status:'completed',service_tier:'flex',usage:{input_tokens:4500,input_tokens_details:{cached_tokens:number===1?0:4000,cache_write_tokens:number===1?4000:0}},output:[{...response.output[0]},...response.output.slice(1).map(item=>({...item,content:[{type:'output_text',text:JSON.stringify({...value,decisions:filenames.map(filename=>({...value.decisions[0],filename}))})}]}))]};}}};
+ const client={responses:{create:async(body,options)=>{calls.push({body:structuredClone(body),options});const number=calls.length;await create?.(number,options);const filenames=githubRequestData(body).filenames;return {id:'response-'+number,status:'completed',service_tier:'flex',usage:{input_tokens:4500,input_tokens_details:{cached_tokens:number===1?0:4000,cache_write_tokens:number===1?4000:0}},output:[{...response.output[0]},...response.output.slice(1).map(item=>({...item,content:[{type:'output_text',text:JSON.stringify({...value,decisions:filenames.map(filename=>({...value.decisions[0],filename}))})}]}))]};}}};
  const transport=new GithubBatchTransport({client,signal,retryDelayMs,saveReceipt:async r=>receipts.push(structuredClone(r)),progress:line=>progress.push(line)});
  const p=new GithubCurationProvider({tunnelId,curators:['Base'],brief,cacheServiceTier:'flex',respond:body=>transport.respond(body),encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r)});
  return {p,calls,saved,receipts,progress};

@@ -1,3 +1,4 @@
+import {requestInstructions,githubRequestData} from './helpers/githubRequest.js';
 import {expect,it} from 'vitest';
 import {GithubCurationProvider} from '../src/providers/github.js';
 import {GithubBatchTransport} from '../src/githubBatch.js';
@@ -6,31 +7,31 @@ const tunnelId='tunnel_'+'a'.repeat(32),base=['Base'];
 const reply=(filename,speaker='Base')=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({minutes:[{speaker,text:'What next?'}],decisions:[{filename,decision:'keep',reason:'Visible form.'}]})}]}]});
 async function requests(){
  const calls=[];const p=new GithubCurationProvider({tunnelId,curators:base,brief,encodeImage:async file=>Buffer.from(file),respond:async r=>{calls.push(r);return reply(calls.length===1?'a.jpg':'b.jpg');}});
- await p.chat({model:'gpt-5.6-terra',images:['a.jpg'],prompt:'Review a.jpg',reasoningEffort:'high'});
- await p.chat({model:'gpt-5.6-terra',images:['b.jpg'],curators:['Base','Guest'],photoPeople:[{file:'b.jpg',people:['Guest']}],prompt:'Review b.jpg with Guest',minutesMax:4,reasoningEffort:'high'});
+ await p.chat({model:'gpt-5.6-terra',images:['a.jpg'],reasoningEffort:'high'});
+ await p.chat({model:'gpt-5.6-terra',images:['b.jpg'],curators:['Base','Guest'],photoPeople:[{file:'b.jpg',people:['Guest']}],minutesMax:4,reasoningEffort:'high'});
  return calls;
 }
 it('caches the entire unchanged user brief before filenames, voices, metadata and images',async()=>{
  const [a,b]=await requests();
  expect(a.prompt_cache_options).toEqual({mode:'explicit',ttl:'30m'});
- expect(a.prompt_cache_key).toMatch(/^photo-select:github-v2:/);expect(a.prompt_cache_key).toBe(b.prompt_cache_key);
+ expect(a.prompt_cache_key).toMatch(/^photo-select:github-v3:/);expect(a.prompt_cache_key).toBe(b.prompt_cache_key);
  expect(a.instructions).toBe(b.instructions);expect(a.text).toEqual(b.text);expect(a.tools).toEqual(b.tools);
- expect(a.input[0]).toEqual(b.input[0]);expect(a.input[0].role).toBe('user');
- expect(JSON.parse(a.input[0].content[0].text).brief).toBe(brief);
+ expect(a.input[0].content[0]).toEqual(b.input[0].content[0]);expect(a.input[0].role).toBe('developer');
+ expect(a.input[0].content[0].text).toContain(brief);
  expect(a.input[0].content[0].prompt_cache_breakpoint).toEqual({mode:'explicit'});
  expect(JSON.stringify(a).split('Record 299:')).toHaveLength(2);
- expect(b.input[1].role).toBe('developer');expect(b.input[1].content[0].text).toContain('Guest');
- const metadata=JSON.parse(b.input.at(-1).content[0].text);expect(metadata).not.toHaveProperty('brief');expect(metadata.curators).toEqual(['Base','Guest']);
+ expect(b.input[0].content[1].text).toContain('Guest');
+ expect(githubRequestData(b).curators).toEqual(['Base','Guest']);
  expect(b.input.at(-1).content[1].text).toContain('Guest');
 });
 it.each(['voice','filename','count'])('retains local %s validation with a stable schema and repairs after the breakpoint',async kind=>{
  const calls=[],saved=[];const p=new GithubCurationProvider({tunnelId,curators:base,brief,encodeImage:async()=>Buffer.from('image'),save:async r=>saved.push(r),respond:async r=>{
-  calls.push(r);const result=reply(kind==='filename'?'invented.jpg':'a.jpg',kind==='voice'?'Invented':'Base');
+  calls.push(r);const result=reply(kind==='filename'?'invented.jpg':'a.jpg',kind==='voice'?123:'Base');
   if(kind==='count'){const value=JSON.parse(result.output[0].content[0].text);value.minutes.push(...value.minutes);result.output[0].content[0].text=JSON.stringify(value);}return result;
  }});
  await expect(p.chat({model:'gpt-5.6-terra',images:['a.jpg'],minutesMin:1,minutesMax:1})).rejects.toThrow();
  expect(calls).toHaveLength(2);expect(calls[0].prompt_cache_key).toBeTruthy();expect(calls[1].prompt_cache_key).toBe(calls[0].prompt_cache_key);
- expect(calls[1].instructions).toBe(calls[0].instructions);expect(calls[1].input[0]).toEqual(calls[0].input[0]);expect(calls[1].input.at(-1)).toEqual(calls[0].input.at(-1));expect(calls[1].input[1].content[0].text).toContain('Repair');expect(saved[0].status).toBe('held');
+ expect(calls[1].instructions).toBe(calls[0].instructions);expect(calls[1].input[0].content[0]).toEqual(calls[0].input[0].content[0]);expect(calls[1].input.at(-1)).toEqual(calls[0].input.at(-1));expect(requestInstructions(calls[1])).toContain('Repair');expect(saved[0].status).toBe('held');
 });
 function fixture({missAt=0,failAt=0,blockAt=0}={}){
  const files=new Map(),batches=new Map(),sizes=[],rows=[],events=[];let next=0,executed=0,release;
@@ -76,7 +77,7 @@ it('invalidates the key for brief, model, effort, verbosity or tunnel changes',a
 });
 it.each([{model:'gpt-5.5',text:brief},{model:'gpt-5.6-terra',text:'Short brief.'},{model:'gpt-5.6-terra',text:'a'.repeat(5000)}])('does not impose explicit caching on unsupported models or fewer than 1024 tokens: %j',async({model,text})=>{
  let request;const p=new GithubCurationProvider({tunnelId,curators:base,brief:text,encodeImage:async()=>Buffer.from('image'),respond:async r=>{request=r;return reply('a.jpg');}});
- await p.chat({model,images:['a.jpg']});expect(request.prompt_cache_options).toBeUndefined();expect(JSON.parse(request.input[0].content[0].text).brief).toBe(text);
+ await p.chat({model,images:['a.jpg']});expect(request.prompt_cache_options).toBeUndefined();expect(requestInstructions(request)).toContain(text);
 });
 it('requires a new probe after idle time rather than trusting an old hit',async()=>{
  const [body]=await requests(),f=fixture();let now=1;const t=new GithubBatchTransport({client:f.client,flushMs:1,now:()=>now});
@@ -105,7 +106,7 @@ it('does not promote writes, tiny reads, missing tools or stale code to live acc
 it('states dynamic minutes bounds when a direct caller supplies no rendered prompt',async()=>{
  let request;const p=new GithubCurationProvider({tunnelId,curators:base,brief,encodeImage:async()=>Buffer.from('image'),respond:async r=>{request=r;return reply('a.jpg');}});
  await p.chat({model:'gpt-5.6-terra',images:['a.jpg'],minutesMin:1,minutesMax:7});
- expect(request.input[1].content[0].text).toContain('Produce between 1 and 7 minutes items.');
+ expect(requestInstructions(request)).toContain('Produce between 1 and 7 diarized items');
 });
 
 it('accepts four complete Flex curations and rejects a miss in either reader',async()=>{

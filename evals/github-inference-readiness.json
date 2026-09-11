@@ -9,11 +9,11 @@
     "batchWithImagesAndTools": "passed",
     "credentialSinks": "passed",
     "workers20": "passed",
-    "ci": "passed"
+    "ci": "pending"
   },
   "olderResearchFirstCanaryQualifies": false,
   "syntheticTraceTestsQualify": false,
-  "note": "Reliability correction passed 443 tests and 258 focused evals, including a sixty-image CLI run through injected failures. A fresh full-brief cache canary passed. Production resumption and CI are tracked separately.",
+  "note": "Original prompt restored: 454 tests and 269 focused evals pass. A fresh four-curation synthetic-image canary verifies private README text delivery and three 15,740-token cache reads with zero rewrites. Full-corpus completion and installed-command acceptance are separate.",
   "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
   "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
   "transport": "private-tunnel",
@@ -28,19 +28,27 @@
   },
   "cacheEvidence": {
     "status": "passed",
-    "path": "evals/probes/2026-09-11-github-reliability-cache.json",
+    "path": "evals/probes/2026-09-11-github-original-prompt.json",
     "priorEvidence": [
       "evals/probes/2026-09-11-github-cache-initial.json",
       "evals/probes/2026-09-11-github-cache-held.json",
       "evals/probes/2026-09-11-github-cache-diagnostic.json",
-      "evals/probes/2026-09-11-github-cache-flex.json"
+      "evals/probes/2026-09-11-github-cache-flex.json",
+      "evals/probes/2026-09-11-github-reliability-cache.json"
     ],
-    "scope": "Current reliability correction: four live Flex curations with the unchanged 573,984-token brief and ordinary CLI verbosity high. Follow-ups reused 577,895 cached tokens without rewrites; encrypted reasoning was omitted with hashes and live GitHub get_me calls completed. Actual request overlap was one."
+    "scope": "Original default prompt, four synthetic images and a synthetic brief. Each response called GitHub get_me and read 56,423 bytes from the selected private README; returned text matched its Git blob hash. All three follow-ups reused 15,740 tokens without writes. This is bounded evidence, not a full-corpus run."
   },
   "ciEvidence": {
     "implementationCommit": "8615c315f0e3b8d083169a2643f97b8d0d14ded9",
     "push": "https://github.com/openhouse/photo-select/actions/runs/34590296074",
     "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34590300235",
     "conclusion": "success"
+  },
+  "promptParityEvidence": {
+    "tests": [
+      "tests/githubPromptParity.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Exact rendered instruction equality for default/custom/context/inline paths, unchanged original template, and byte-preserving cache splitting."
   }
 }
