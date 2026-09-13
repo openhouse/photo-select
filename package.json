@@ -23,7 +23,8 @@
     "debug:batch": "node scripts/debug-batch.mjs",
     "evals:knowledge": "node scripts/eval-knowledge-context.mjs",
     "hillclimb": "npm test -- --maxWorkers=2 --minWorkers=2 && npm run evals:knowledge",
-    "evals:github-prompt-cache": "node scripts/eval-github-prompt-cache.mjs"
+    "evals:github-prompt-cache": "node scripts/eval-github-prompt-cache.mjs",
+    "evals:curatorial-packet": "vitest run tests/curatorialPacket.test.js tests/curatorialPacketBuild.test.js --maxWorkers=2 --minWorkers=2"
   },
   "engines": {
     "node": ">=20"
