@@ -144,3 +144,52 @@ identity, media timing, publication permission, or exhaustive semantic coverage.
 The generic tool does not scan arbitrary secrets; choose the source boundary in
 the private build configuration. Never copy private packet results into this
 repository merely to demonstrate passing tests.
+
+
+## Export one Markdown context for Photo Select
+
+A preservation packet can contain far more text than a model request accepts.
+Use an explicit export profile to produce a runnable context projection. The
+exporter includes complete selected textual sources once each, adapts active
+links into in-document navigation or supplied GitHub witnesses, and reports
+what remains in the archive. It does not silently truncate or summarize bodies.
+
+```sh
+node scripts/curatorial-context.mjs /private/path/packet /private/path/profile.json /private/path/context.md
+npm run evals:curatorial-context
+```
+
+Then use the resulting file with the existing Photo Select `--context` option:
+
+```sh
+photo-select --context /private/path/context.md
+```
+
+The profile contains `title`, `date`, `packetFingerprint` (from the packet
+manifest), `pagePaths` (authored guide pages), `sourceIds` (full exact-source
+SHA-256 IDs), `scope` (the selection rationale and omitted material), optional
+`maxTokens` (default 850,000), `request` (verbatim export request), and
+`retrievalCases`. Each retrieval case has an `id`, `sourceId`, and `contains`
+array of literal passages selected independently from the original source.
+Choose sources for the recipient's archival question; the exporter does not
+choose a narrative or automatically determine which documents matter.
+
+The output must be outside the immutable packet, and neither it nor its receipt
+may already exist. Inputs are verified against the packet fingerprint and exact
+source hashes. The exporter checks internal navigation, source-specific passage
+retrieval, the configured token budget, and Photo Select's existing conservative
+GitHub brief guard. Both the decoded text count and the guard's JSON-escaped
+count use `o200k_base`; neither is a billing receipt or a promise that later
+images, tools, and output fit a particular model. No curation or API call runs.
+
+The private `context.md.receipt.json` records the output hash, byte/token counts,
+coverage, profile, original request, retrieval results, and implementation
+hashes. It is evidence for the export; only `context.md` is passed to Photo
+Select. Keep both files outside this public repository.
+
+Tests use the actual prompt loader to verify that exported source text reaches
+the prompt, while leaving the runtime, prompt template, curator roster, caching,
+and photo-move behavior unchanged. Fenced code examples are retained as source
+text; their links and anchors do not count as active navigation. Media pointers
+cannot be exported as if they contained text. External-source access still
+depends on the tools and credentials attached to a later curation request.
