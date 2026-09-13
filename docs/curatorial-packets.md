@@ -193,3 +193,30 @@ and photo-move behavior unchanged. Fenced code examples are retained as source
 text; their links and anchors do not count as active navigation. Media pointers
 cannot be exported as if they contained text. External-source access still
 depends on the tools and credentials attached to a later curation request.
+
+### Preserve primary material when revising a context
+
+A selected source can itself be a summary. A passing source-passage check does
+not establish that the original correspondence or transcript is present. When
+replacing an earlier context, compare the actual source bodies and explicitly
+restore primary material that would otherwise be lost.
+
+An optional `supplements` array restores exact text from a separately supplied
+file. Each entry has `title`, `file`, `sha256` (the entire source file),
+`bodySha256` (the selected bytes), and `provenance` describing custody and date.
+An optional `byteRange: [start, end]` selects a half-open byte interval; omission
+selects the complete file. Both hashes are required. A supplement must be valid
+UTF-8 plain text. Drift, invalid ranges, or a shortened excerpt fail before
+writing output. Do not use character offsets as byte offsets.
+
+Supplements appear before the packet orientation, inside code fences that keep
+their text exact and quoted markup inactive. Add independent `retrievalCases`
+using the supplement's `bodySha256` as `sourceId`; checking a summary alone must
+not substitute for checking the actual correspondence. The receipt records
+supplement hashes, byte ranges, and byte counts separately from packet coverage.
+
+Generated source links use short local aliases; each source heading retains
+its complete original hash. Repeated reference targets share a list of linked
+origins. These changes reduce navigation overhead while preserving differing
+editions and every origin-to-target relationship. Local aliases are specific to
+the exported file; use original hashes for identity across exports.

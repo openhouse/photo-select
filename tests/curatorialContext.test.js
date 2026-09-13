@@ -46,3 +46,26 @@ it('shares one remote source definition across repeated references without remov
  const {markdown}=renderCuratorialContext(input);
  expect(markdown.split(url)).toHaveLength(2);expect(markdown).toContain('First account, with uncertainty.');expect(markdown).toContain('A third account.');expect(checkContextLinks(markdown)).toEqual([]);
 });
+it('uses short source anchors while retaining the full identity and body of each edition',()=>{
+ const {markdown}=renderCuratorialContext(fixture());
+ expect(markdown).toContain('[Other](<#context-source-2>)');
+ expect(markdown).toContain('id="context-source-2"');
+ expect(markdown).toContain(`Original SHA-256: \`${b}\``);
+ expect(markdown).toContain('Different testimony survives.');expect(checkContextLinks(markdown)).toEqual([]);
+});
+it('groups repeated reference targets without losing the association to either source',()=>{
+ const input=fixture();input.catalog[0].body='First account.\n[Section](two.md#section)';
+ input.catalog.push(source(c,'three.md','Third account.\n[Section again](two.md#section)'));input.sourceIds.push(c);
+ const {markdown}=renderCuratorialContext(input);const appendix=markdown.slice(markdown.indexOf('## References requiring'));
+ expect(appendix.split('`two.md#section`')).toHaveLength(2);
+ expect(appendix).toContain('[S1](#context-source-1)');expect(appendix).toContain('[S3](#context-source-3)');
+ expect(markdown).toContain('First account.');expect(markdown).toContain('Third account.');expect(checkContextLinks(markdown)).toEqual([]);
+});
+it('preserves supplemental correspondence exactly, including quoted Markdown and non-ASCII text',()=>{
+ const input=fixture();const body='From: Writer\r\nNo rush — please keep both requests separate.\r\n```\r\n[Quoted link](local.md)\r\n```\r\n';
+ input.supplements=[{title:'Complete conversation',body,bodySha256:c,sha256:'e'.repeat(64),provenance:'Exact excerpt from the previous context.'}];
+ const {markdown,coverage}=renderCuratorialContext(input);
+ expect(markdown).toContain(body);expect(markdown.indexOf(body)).toBeLessThan(markdown.indexOf('## Orientation'));
+ expect(markdown).toContain(`<!-- source:${c} -->`);expect(markdown).toContain('Exact excerpt from the previous context.');
+ expect(coverage.supplementalSources).toBe(1);expect(checkContextLinks(markdown)).toEqual([]);
+});

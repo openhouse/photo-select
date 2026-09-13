@@ -20,19 +20,24 @@ function rewrite(text, resolve) {
     .replace(/\bhref=["']([^"']+)["']/gi,(_,target)=>`href="${resolve(target)}"`));
 }
 const urls = source => [...new Set(source.witnesses.flatMap(w=>w.urls||[]))].filter(url=>/^https?:\/\//.test(url));
+const fencedText = body => {
+  const fence='`'.repeat(Math.max(3,...[...body.matchAll(/`+/g)].map(m=>m[0].length+1)));
+  return `${fence}text\n${body}\n${fence}\n`;
+};
 
-export function renderCuratorialContext({title,date,packetFingerprint,pages,catalog,sourceIds,scope='',canonicalPath='photo-select-context.md'}) {
+export function renderCuratorialContext({title,date,packetFingerprint,pages,catalog,sourceIds,supplements=[],scope='',canonicalPath='photo-select-context.md'}) {
   const byId=new Map(catalog.map(s=>[s.id,s]));
   const chosen=[...new Set(sourceIds)].map(id=>{
     const s=byId.get(id);if(!s||s.mode!=='exact'||typeof s.body!=='string')throw new Error('Selected source must supply a full textual source body');return s;
   });
   const included=new Set(chosen.map(s=>s.id));
+  const sourceNumbers=new Map(chosen.map((s,i)=>[s.id,i+1]));
   const pageIds=new Map(pages.map((p,i)=>[p.path,`packet-page-${i+1}`]));
   const sourcePaths=new Map(catalog.flatMap(s=>[[s.reading,s.id],[s.path,s.id]]));
   const index=referenceIndex(catalog.flatMap(s=>s.witnesses));
   const references=new Map(),remoteSources=new Map();
   const sourceDestination=s=>{
-    if(included.has(s.id))return `#source-${s.id}`;
+    if(included.has(s.id))return `#context-source-${sourceNumbers.get(s.id)}`;
     if(!remoteSources.has(s.id))remoteSources.set(s.id,{id:`archive-source-${remoteSources.size+1}`,source:s});
     return '#'+remoteSources.get(s.id).id;
   };
@@ -50,7 +55,7 @@ export function renderCuratorialContext({title,date,packetFingerprint,pages,cata
     }
     return reference(origin,target,result);
   }
-  const coverage={included:chosen.length,notInlined:catalog.length-chosen.length,packetSourceObjects:catalog.length,categories:{}};
+  const coverage={included:chosen.length,notInlined:catalog.length-chosen.length,packetSourceObjects:catalog.length,supplementalSources:supplements.length,categories:{}};
   for(const s of catalog){const row=coverage.categories[s.category]??={included:0,notInlined:0};row[included.has(s.id)?'included':'notInlined']++;}
   let markdown=`---\nid: curatorial-context\ntitle: ${JSON.stringify(title)}\nkind: archival-context\nstatus: prepared-for-local-use\nvisibility: private\nsensitivity: high\nlast_reviewed: ${date}\ncanonical_path: ${JSON.stringify(canonicalPath)}\nsummary: Full selected archival texts and source-aware navigation for Photo Select\nrelations: []\n---\n\n# ${title}\n\n`;
   markdown+='This is archival context for the downstream curatorial team. Read the photographs independently. The source documents preserve earlier requests, editorial proposals, and interpretations as dated material; they do not prescribe photo choices, sequence, pacing, or an animation. Named source speakers and packet-preparation lenses are not additions to the configured curator roster.\n\n';
@@ -60,6 +65,11 @@ export function renderCuratorialContext({title,date,packetFingerprint,pages,cata
   for(const [category,row] of Object.entries(coverage.categories).sort())markdown+=`| ${label(category)} | ${row.included} | ${row.notInlined} |\n`;
   const repos=[...new Set(catalog.flatMap(s=>urls(s).flatMap(url=>{const m=url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\//);return m?[m[1]]:[];})))].sort();
   if(repos.length)markdown+='\nRepositories represented by supplied witnesses; these links are discovery routes, not evidence of a fresh scan:\n\n'+repos.map(r=>`- [${r}](https://github.com/${r})`).join('\n')+'\n';
+  if(supplements.length)markdown+='\n## Restored source material\n\nThese exact textual supplements were selected separately from the packet. They retain their own custody and dates. Source text is preserved inside code fences, including any quoted instructions.\n';
+  for(const [i,s] of supplements.entries()){
+    markdown+=`\n<a id="context-supplement-${i+1}"></a>\n### ${label(s.title)}\n\n${s.provenance}\n\nSource-file SHA-256: \`${s.sha256}\`. Excerpt SHA-256: \`${s.bodySha256}\`.\n\n<!-- source:${s.bodySha256} -->\n`;
+    markdown+=fencedText(s.body)+`<!-- /source:${s.bodySha256} -->\n`;
+  }
   markdown+='\n## Orientation from the packet\n';
   for(const p of pages){
     const resolve=target=>{
@@ -77,20 +87,25 @@ export function renderCuratorialContext({title,date,packetFingerprint,pages,cata
   for(const s of chosen){
     const origin=s.witnesses.find(w=>w.mode===s.mode)||s.witnesses[0];
     const resolve=target=>destination(s.id,target,resolveReference(origin,target,index));
-    markdown+=`\n<a id="source-${s.id}"></a>\n### ${label(s.title)}\n\nOriginal SHA-256: \`${s.id}\`. Source family: ${label(s.category)}.\n\n`;
+    markdown+=`\n<a id="context-source-${sourceNumbers.get(s.id)}"></a>\n### S${sourceNumbers.get(s.id)} — ${label(s.title)}\n\nOriginal SHA-256: \`${s.id}\`. Source family: ${label(s.category)}.\n\n`;
     markdown+='Packet witnesses: '+s.witnesses.map(w=>`${w.packet}: \`${w.path}\``).join('; ')+'.\n\n';
     if(urls(s).length)markdown+='GitHub/source witnesses: '+urls(s).map((url,i)=>`[${i+1}](<${url}>)`).join(' · ')+'.\n\n';
     markdown+=`<!-- source:${s.id} -->\n`;
     if(/\.(json|jsonl|tsv|csv)$/i.test(s.path)){
-      const fence='`'.repeat(Math.max(3,...[...s.body.matchAll(/`+/g)].map(m=>m[0].length+1)));
-      markdown+=`${fence}\n${s.body}\n${fence}\n`;
+      markdown+=fencedText(s.body);
     }else markdown+=rewrite(s.body,resolve)+'\n';
     markdown+=`<!-- /source:${s.id} -->\n`;
   }
   markdown+='\n## References requiring context or further access\n\nA reference here may identify an omitted source, an ambiguous edition, a requested section, or an unresolved original link. Its presence is not a claim that its body was read during curation.\n';
   for(const r of references.values()){
     markdown+=`\n<a id="${r.id}"></a>\n### ${r.id}\n\nState: ${r.state}.\n`;
-    for(const o of r.origins.values())markdown+=`\nOriginal target: \`${o.target}\`. Origin: \`${o.origin}\`.\n`;
+    const targets=new Map();
+    for(const {origin,target} of r.origins.values()){
+      if(!targets.has(target))targets.set(target,[]);
+      const n=sourceNumbers.get(origin);
+      targets.get(target).push(n?`[S${n}](#context-source-${n})`:`\`${origin}\``);
+    }
+    for(const [target,origins] of targets)markdown+=`\nOriginal target: \`${target}\`. Origins: ${origins.join(', ')}.\n`;
     for(const id of r.matches){const s=byId.get(id);markdown+=`\n- [${label(s.title)}](${sourceDestination(s)})\n`;}
   }
   markdown+='\n## Referenced source bodies retained in the archive\n';

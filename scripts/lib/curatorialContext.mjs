@@ -28,7 +28,19 @@ export async function exportCuratorialContext(packetRoot,profile,output){
   }
   const pages=[];
   for(const p of profile.pagePaths)pages.push({path:safePath(p),text:await readFile(path.join(packetRoot,p),'utf8')});
-  const {markdown,coverage,references}=renderCuratorialContext({...profile,canonicalPath:path.basename(output),pages,catalog});
+  const supplements=[];
+  for(const s of profile.supplements||[]){
+    const bytes=await readFile(s.file);
+    if(hash(bytes)!==s.sha256)throw new Error('Supplement source integrity failed');
+    const range=s.byteRange??[0,bytes.length];
+    if(!Array.isArray(range)||range.length!==2||!range.every(Number.isSafeInteger)||range[0]<0||range[1]<=range[0]||range[1]>bytes.length)throw new Error('Supplement byte range is invalid');
+    const selectedBytes=bytes.subarray(...range);
+    if(hash(selectedBytes)!==s.bodySha256)throw new Error('Supplement body integrity failed');
+    const body=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(selectedBytes);
+    if(body.includes('\0'))throw new Error('Supplement is not plain text');
+    supplements.push({...s,byteRange:range,bytes:selectedBytes.length,body});
+  }
+  const {markdown,coverage,references}=renderCuratorialContext({...profile,canonicalPath:path.basename(output),pages,catalog,supplements});
   const linkErrors=checkContextLinks(markdown);if(linkErrors.length)throw new Error(`Context navigation failed: ${linkErrors.length} unavailable links`);
   const inputGuard=validateGithubBrief(markdown);
   if(inputGuard.textTokens>maxTokens)throw new Error(`Context token budget exceeded: ${inputGuard.textTokens} > ${maxTokens}; no text was truncated`);
@@ -43,6 +55,7 @@ export async function exportCuratorialContext(packetRoot,profile,output){
   for(const file of ['src/core/curatorialContext.js','scripts/lib/curatorialContext.mjs','scripts/curatorial-context.mjs','src/core/githubBrief.js'])implementation[file]=hash(await readFile(path.join(base,file)));
   const receipt={schemaVersion:1,status:'PASS_OFFLINE_CONTEXT_EXPORT',sha256:hash(markdown),bytes:Buffer.byteLength(markdown),decodedTextTokens:countGithubTextTokens(markdown),inputGuard,maxTokens,
     packetFingerprint:verified.fingerprint,profileSha256:hash(JSON.stringify(profile)),profile,originalRequest:profile.request??null,coverage,references,retrievalPassed,linkErrors:0,modelRequests:0,implementation,
+    supplements:supplements.map(s=>({sourceSha256:s.sha256,bodySha256:s.bodySha256,byteRange:s.byteRange,bytes:s.bytes})),
     limitation:'Explicit source projection, not a full packet concatenation. Offline loading and input-budget checks do not guarantee a later provider request with image/tool/output tokens will fit or succeed.'};
   let wrote=false;
   try{
