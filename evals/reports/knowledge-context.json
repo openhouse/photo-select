@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "b7fb16ed928a447cdeba507d86d50c5e72e13698bfe801cc3b412bd7d42e02a9",
-    "files": 198
+    "sha256": "78e02158144d48d52800dde20d22e0d69dbf2f30b23957f814d5e5107cd96798",
+    "files": 199
   },
   "behaviorPreservation": {
     "status": "passed",
@@ -28,7 +28,7 @@
     "status": "pending",
     "evidence": "evals/probes/2026-09-11-github-minutes-cache.json"
   },
-  "passed": 438,
+  "passed": 443,
   "failed": 0,
   "skipped": 0,
   "sourceAccess": false,

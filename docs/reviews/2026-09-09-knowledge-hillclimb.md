@@ -856,3 +856,48 @@ not call a model, run photo curation, or award an aesthetic score. The existing
 large-PR marker remains `--mechanical`; this is a substantive rule change and
 full procedure documentation, with no auto-merge. The aggregate hill-climb and
 final candidate receipt are recorded with the updated PR validation.
+
+
+## Complete integration game and verified stop, 2026-09-14
+
+The physical-print rules are saved in `docs/integration-game-rules.md`, with
+the full procedure updated to stop at the first completed, verified level
+containing at least 500 photographs. The threshold is not an upper cap.
+Invalid or partially copied outputs cannot complete the game, and exhausted
+sources or incompatible rules require a pause rather than a success claim.
+The offline builder refuses a further round once its verified predecessor
+has reached the threshold.
+
+| Candidate/check | Observation | Bounded response |
+| --- | --- | --- |
+| New stop-rule regressions against the previous helper | 5 failed, 35 passed | Add verified completion status at 500 and above; retain continue below 500. |
+| Focused repaired candidate | All 40 integration tests passed | Include actual filesystem verification, tampered output, a copied 500-photo level, and refusal to create its successor. |
+| Procedure review | The old continuation paragraph still implied another round after any successful level | Restrict continuation explicitly to verified selections below 500. |
+
+A fresh private integration exercised the complete game from terminal-aligned
+source snapshots. Eighteen numbered directories were built and individually
+verified; the final directory contains 500 unchanged source photographs and
+all 353 from its predecessor. Every current candidate has a disposition and
+an image-specific reading. Newly encountered photographs were examined on
+full-frame review sheets; existing readings were reconsidered as each pool
+expanded, with nine earlier alternatives visually revisited for the last
+round. The total unique visual-review inventory is 737 photographs. These
+readings are curatorial judgments, not scores certified by a word-count test.
+
+Private photographs, previews, individual readings, inventories, and receipts
+remain outside this repository. Public regression fixtures use synthetic
+bytes. No model calls or new Photo Select curation process were started.
+Aggregate tests, the candidate-bound focused receipt, and the independent
+actual-directory audit are recorded with the final PR validation.
+
+Validation: the aggregate run passed **628 tests across 59 suites**, followed
+by **443 focused evaluations**, with zero failures or skips. All 40 integration
+regressions passed. The independent private audit checked **5,736 source and
+output files**, **3,343 complete candidate dispositions**, every count bound,
+all inherited image hashes, and the first valid finish at level 18; it found
+zero errors. Its first attempt exposed an audit-only timestamp assumption:
+inherited copies must be compared to their preceding integration, not to a
+different source snapshot. The audit was corrected and rerun in full; image
+bytes and production copy behavior did not change. The final focused receipt
+is regenerated after this documentation update to bind the final candidate.
+Hosted CI is checked against the pushed commit before reporting its status.

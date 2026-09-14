@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { planIntegratedSelection } from '../src/core/planIntegratedSelection.js';
+import { planIntegratedSelection, integrationGameStatus } from '../src/core/planIntegratedSelection.js';
 import { buildIntegration, verifyIntegration } from '../scripts/lib/integratedSelection.mjs';
 const scratch = [];
 afterEach(async () => { for (const dir of scratch.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -212,4 +212,39 @@ it('does not certify a legacy receipt as meeting the new rule', async () => {
   const report = JSON.parse(await readFile(out + '.integration.json')); report.schemaVersion = 1;
   await writeFile(out + '.integration.json', JSON.stringify(report));
   expect((await verifyIntegration(out)).errors.join(' ')).toMatch(/legacy|schema|identity/i);
+});
+
+it.each([[499, 'continue'], [500, 'complete'], [501, 'complete']])('finishes only a verified level at the threshold: %i', (count, expected) => {
+  expect(integrationGameStatus({ count, verified: true })).toBe(expected);
+  expect(integrationGameStatus({ count, verified: false })).toBe('needs-verification');
+});
+it('reports the game state only after successful file verification', async () => {
+  const { config, out } = await fixture(); await buildIntegration(config, out);
+  expect((await verifyIntegration(out)).gameStatus).toBe('continue');
+  await writeFile(path.join(out, 'a.jpg'), 'tampered');
+  const report = await verifyIntegration(out);
+  expect(report.errors.length).toBeGreaterThan(0); expect(report.gameStatus).not.toBe('complete');
+});
+it('refuses a new round after a completed 500-photo level without creating output', async () => {
+  const { root } = await fixture();
+  const first = { step: 1, sources: [], decisions: [] };
+  const rows = Array.from({ length: 500 }, (_, i) => ({ filename: `image-${i}.jpg`, sha256: digest('photo'), bytes: 5 }));
+  for (const id of ['C', 'D']) {
+    const directory = path.join(root, id, '_level-002'); await mkdir(directory, { recursive: true });
+    for (const row of rows) await writeFile(path.join(directory, row.filename), 'photo');
+    first.sources.push({ id, directory, terminalLevel: 2, level: 2, files: rows });
+  }
+  first.decisions = rows.map(row => ({ filename: row.filename, decision: 'add', reason: 'Synthetic diverse candidate.' }));
+  const parent = path.join(root, 'finished-game'); await mkdir(parent);
+  const previous = path.join(parent, '01'); await buildIntegration(first, previous);
+  expect((await verifyIntegration(previous)).gameStatus).toBe('complete');
+  const next = structuredClone(first); next.step = 2; next.previous = { directory: previous, files: rows };
+  next.decisions.forEach(row => { row.decision = 'inherit'; });
+  for (const source of next.sources) {
+    source.level = 1; source.directory = path.join(path.dirname(source.directory), '_level-001');
+    await mkdir(source.directory); for (const row of rows) await writeFile(path.join(source.directory, row.filename), 'photo');
+  }
+  const out = path.join(parent, '02');
+  await expect(buildIntegration(next, out)).rejects.toThrow(/game.*complete.*500/i);
+  await expect(readdir(out)).rejects.toThrow();
 });

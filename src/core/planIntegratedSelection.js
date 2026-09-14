@@ -52,3 +52,8 @@ export function planIntegratedSelection(config) {
   if (photos.length < minimum || photos.length > maximum) throw new Error(`Selection count ${photos.length} must be between ${minimum} and ${maximum} inclusive, including inherited photos.`);
   return { sourceCounts, bounds: { minimum, maximum, effectiveMinimum: Math.max(minimum, preceding.size) }, photos, count: photos.length, previousCount: preceding.size, addedCount: photos.length - preceding.size, candidateCount: pool.size };
 }
+
+export function integrationGameStatus({ count, verified }) {
+  if (!verified || !Number.isSafeInteger(count) || count < 0) return 'needs-verification';
+  return count >= 500 ? 'complete' : 'continue';
+}

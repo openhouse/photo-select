@@ -35,8 +35,9 @@ source_processing_level(k) = source_terminal_level - (k - 1)
 Thus `01` draws from each terminal shortlist; `02` draws from the next less deep
 snapshot of each run. Continue one processing level at a time. Different runs
 may finish at different depths. Align their distance from the terminal level,
-not their absolute processing numbers. Stop when any source has no next valid
-level; agree on a new source scope before proceeding.
+not their absolute processing numbers. If a source has no next valid level
+before the game finishes, pause for a source-scope decision; do not mark the
+game complete.
 
 ## 2. Freeze complete inventories and count the sources
 
@@ -97,7 +98,7 @@ preceding integration does. There is no required quota from either run and no
 requirement to reach the maximum. Every output photo must come from the current
 source pool, including all inherited photos.
 
-If the rules conflict, stop before copying and report the source counts,
+If the rules conflict, pause before copying and report the source counts,
 inherited count and specific conflict. Preserve the existing directories.
 Do not silently drop inherited photos, inflate counts, substitute a source,
 skip a level, or relax the bound. An oversized earlier selection requires a
@@ -199,10 +200,20 @@ dispositions, limitations, and verification results. Link photos by their
 original filenames. A contact sheet or filename order is for navigation; it
 does not constitute a preference ranking or animation order.
 
-## 7. Continue and evaluate
+## 7. Continue, finish and evaluate
 
-After a level passes both curatorial review and file verification, use that
-exact directory as the predecessor for the next numbered sibling. Step back
+Stop after the first completed, verified integration containing **500 or more
+photographs**. The source-count bounds and inheritance rule must still pass.
+A planned or partially copied selection does not finish the game. The verifier
+reports `gameStatus: complete` only after all file checks succeed; it reports
+`continue` for a valid smaller level. The builder refuses another round after
+a verified predecessor has reached 500. There is no requirement to truncate a
+valid larger selection to exactly 500. For the plain-language physical-print
+version, see [the game rules](integration-game-rules.md).
+
+If a level passes both curatorial review and file verification and contains
+fewer than 500 photographs, use that exact directory as the predecessor for
+the next numbered sibling. Step back
 once in each original run and repeat the complete procedure. Do not start a
 new Photo Select model run merely to integrate completed results.
 

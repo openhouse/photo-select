@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, lstat, realpath, mkdir, rm, copyFile, uti
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { planIntegratedSelection, isIntegrationImage } from '../../src/core/planIntegratedSelection.js';
+import { planIntegratedSelection, isIntegrationImage, integrationGameStatus } from '../../src/core/planIntegratedSelection.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const number = n => String(n).padStart(2, '0');
@@ -37,7 +37,10 @@ async function inputs(config, output) {
       if (prior.sources.length !== config.sources.length || config.sources.some(source => !prior.sources.some(old => old.id === source.id && old.terminalLevel === source.terminalLevel && old.level === source.level + 1))) throw new Error('source level continuity');
     } catch (error) { throw new Error('Preceding integration receipt missing or invalid: ' + error.message); }
   }
-  if (config.step > 1) await inventory(config.previous.directory, config.previous.files);
+  if (config.step > 1) {
+    await inventory(config.previous.directory, config.previous.files);
+    if (integrationGameStatus({ count: config.previous.files.length, verified: true }) === 'complete') throw new Error('Integration game already complete: preceding verified level has 500 or more photos.');
+  }
   for (const source of config.sources) {
     if (path.basename(source.directory) !== `_level-${String(source.level).padStart(3, '0')}`) throw new Error('Source directory does not match declared level.');
     const root = await realpath(source.directory);
@@ -80,6 +83,6 @@ export async function verifyIntegration(output) {
     const plan = await inputs(report.configuration, output);
     for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Receipt plan differs: ' + key);
     await inventory(output, plan.photos);
-    return { errors: [], sourceCounts: plan.sourceCounts, bounds: plan.bounds, count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
+    return { errors: [], gameStatus: integrationGameStatus({ count: plan.count, verified: true }), sourceCounts: plan.sourceCounts, bounds: plan.bounds, count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
   } catch (error) { return { errors: [error.message] }; }
 }
