@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, lstat, realpath, mkdir, rm, copyFile, uti
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { planIntegratedSelection, isIntegrationImage, integrationGameStatus } from '../../src/core/planIntegratedSelection.js';
+import { planIntegratedSelection, isIntegrationImage, integrationGameStatus, planIntermediateSelection } from '../../src/core/planIntegratedSelection.js';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const number = n => String(n).padStart(2, '0');
@@ -84,5 +84,65 @@ export async function verifyIntegration(output) {
     for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Receipt plan differs: ' + key);
     await inventory(output, plan.photos);
     return { errors: [], gameStatus: integrationGameStatus({ count: plan.count, verified: true }), sourceCounts: plan.sourceCounts, bounds: plan.bounds, count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
+  } catch (error) { return { errors: [error.message] }; }
+}
+
+async function intermediateInputs(config, output) {
+  const parent = await realpath(path.dirname(output));
+  const endpoints = [];
+  for (const endpoint of [config.lower, config.upper]) {
+    if (!endpoint?.directory || !/^[a-f0-9]{64}$/.test(endpoint.receiptSha256)) throw new Error('Endpoint and frozen receipt hash required.');
+    const file = endpoint.directory + '.integration.json';
+    const raw = await readFile(file);
+    if (hash(raw) !== endpoint.receiptSha256) throw new Error('Endpoint receipt changed.');
+    const receipt = JSON.parse(raw);
+    if (parent !== await realpath(path.dirname(endpoint.directory))) throw new Error('Endpoints and output must be siblings.');
+    endpoints.push(receipt);
+  }
+  const [lower, upper] = endpoints;
+  const lowStep = lower.configuration?.step; const highStep = upper.configuration?.step;
+  if (!Number.isInteger(lowStep) || highStep !== lowStep + 1 || path.basename(output) !== number(lowStep) + '.5') throw new Error('Endpoints must be consecutive integer boxes and output their .5 sibling.');
+  if (path.resolve(upper.configuration.previous?.directory ?? '') !== path.resolve(config.lower.directory)) throw new Error('Upper endpoint must inherit the lower endpoint.');
+  for (const endpoint of [config.lower, config.upper]) {
+    const result = await verifyIntegration(endpoint.directory);
+    if (result.errors.length) throw new Error('Invalid endpoint: ' + result.errors.join('; '));
+    if (hash(await readFile(endpoint.directory + '.integration.json')) !== endpoint.receiptSha256) throw new Error('Endpoint receipt changed during verification.');
+  }
+  return planIntermediateSelection({ lower: lower.photos, upper: upper.photos, decisions: config.decisions });
+}
+export async function buildIntermediateSelection(config, output) {
+  output = path.resolve(output); config = structuredClone(config);
+  const receiptPath = output + '.interpolation.json';
+  await absent(output); await absent(receiptPath);
+  const plan = await intermediateInputs(config, output);
+  let created = false;
+  try {
+    await mkdir(output); created = true;
+    for (const photo of plan.photos) {
+      const source = path.join(photo.inherited ? config.lower.directory : config.upper.directory, photo.filename);
+      const target = path.join(output, photo.filename);
+      await copyFile(source, target, constants.COPYFILE_EXCL);
+      const stat = await lstat(source); await utimes(target, stat.atime, stat.mtime);
+    }
+    await inventory(output, plan.photos);
+    await intermediateInputs(config, output);
+    const report = { schemaVersion: 1, kind: 'intermediate-selection', output, ...plan, configuration: config, configurationSha256: hash(JSON.stringify(config)) };
+    await writeFile(receiptPath, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
+    return report;
+  } catch (error) {
+    if (created) await rm(output, { recursive: true, force: true });
+    throw error;
+  }
+}
+export async function verifyIntermediateSelection(output) {
+  output = path.resolve(output);
+  try {
+    const report = JSON.parse(await readFile(output + '.interpolation.json', 'utf8'));
+    if (report.schemaVersion !== 1 || report.kind !== 'intermediate-selection' || report.output !== output || hash(JSON.stringify(report.configuration)) !== report.configurationSha256) throw new Error('Intermediate receipt identity or configuration differs.');
+    const plan = await intermediateInputs(report.configuration, output);
+    for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Intermediate receipt plan differs: ' + key);
+    await inventory(output, plan.photos);
+    const { photos, ...counts } = plan;
+    return { errors: [], ...counts };
   } catch (error) { return { errors: [error.message] }; }
 }

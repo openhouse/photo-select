@@ -237,3 +237,45 @@ receipts outside the public repository. Public documentation and tests use
 generic examples and synthetic file bytes. Automated passing checks establish
 file integrity and rule compliance; they do not measure the curatorial merit
 of the palette or the quality of a future animation.
+
+## Optional intermediate box
+
+An explicitly requested intermediate box sits between two completed consecutive
+integer boxes; it is not another outward game round. For example, between `17`
+and `18`, create `17.5`. Preserve every lower-box photo and choose the additions
+only from the upper box. The target is the arithmetic mean of their counts,
+rounded to the nearest whole photograph with halves upward: 353 and 500 produce
+427, requiring 74 additions to the lower box. An exact integer mean is unchanged.
+The original game and its 500-photo stop remain intact.
+
+Visually review every photo in the upper box that is absent from the lower box.
+Record an `add` or `aside` decision and reason for each; lower-box inheritance
+is automatic. Freeze the SHA-256 of each endpoint's existing integration receipt
+before copying. The private configuration has this shape:
+
+```json
+{
+  "lower": { "directory": "/private/integration/17", "receiptSha256": "<64 lowercase hex characters>" },
+  "upper": { "directory": "/private/integration/18", "receiptSha256": "<64 lowercase hex characters>" },
+  "decisions": [
+    { "filename": "additional.jpg", "decision": "add", "reason": "The reviewed photograph adds a distinct relationship." }
+  ]
+}
+```
+
+The example abbreviates the complete candidate list. Build and verify with:
+
+```sh
+node scripts/interpolate-selection.mjs build /private/17.5.selection.json /private/integration/17.5
+node scripts/interpolate-selection.mjs verify /private/integration/17.5
+```
+
+Both endpoint integrations must pass their existing verifier. The builder checks
+receipt hashes, consecutive siblings, exact subset membership, decisions and
+count before writing. It copies exclusively into a new directory, preserving
+filenames, bytes and modification times, then rechecks all inputs and output.
+The separate `NN.5.interpolation.json` receipt records rounding, endpoint bindings,
+all copied hashes and decisions. Verification requires the endpoint sources to
+remain available. Existing outputs and receipts are refused. A failed build
+cleans up only its own newly created image directory; interrupted partial copies
+must be inspected before another attempt.

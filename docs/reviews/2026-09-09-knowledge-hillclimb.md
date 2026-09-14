@@ -901,3 +901,26 @@ different source snapshot. The audit was corrected and rerun in full; image
 bytes and production copy behavior did not change. The final focused receipt
 is regenerated after this documentation update to bind the final candidate.
 Hosted CI is checked against the pushed commit before reporting its status.
+
+## Reviewed midpoint between completed boxes, 2026-09-14
+
+An intermediate box now preserves the complete lower selection while choosing
+only from the upper selection. Its count is their arithmetic mean rounded to
+whole photographs, with halves upward. This uses a separate interpolation
+receipt and CLI; integer source-level progression and the verified 500-photo
+stop are unchanged. There is no model call or automatic visual selection.
+
+The first test run exposed the missing intermediate planner, copy operation and
+CLI: **21 new cases failed while the existing 40 passed**. After implementation,
+all **61 integration cases passed**. The new cases exercise odd and even means,
+equal endpoint counts, literal 353/500 -> 427, mandatory subset membership,
+complete decisions, receipt drift, reversed endpoints, exclusive copies,
+endpoint preservation, tampered files and receipts, and the actual CLI.
+
+The private midpoint review examined all 147 additions available between boxes
+containing 353 and 500 images. It chose 74 and retained the other 73 in the upper
+box. The resulting target is 427 photographs, preserving all 353 lower-box
+images. Individual readings, comparative decisions, full-frame review sheets
+and actual-file verification stay outside the public repository. Tests establish
+count and integrity; they do not certify aesthetic merit. The aggregate checks,
+final candidate fingerprint and hosted status are recorded in the PR validation.

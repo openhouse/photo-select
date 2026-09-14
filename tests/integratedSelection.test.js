@@ -4,6 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import * as midpointCore from '../src/core/planIntegratedSelection.js';
+import * as midpointIO from '../scripts/lib/integratedSelection.mjs';
 import { planIntegratedSelection, integrationGameStatus } from '../src/core/planIntegratedSelection.js';
 import { buildIntegration, verifyIntegration } from '../scripts/lib/integratedSelection.mjs';
 const scratch = [];
@@ -247,4 +249,79 @@ it('refuses a new round after a completed 500-photo level without creating outpu
   const out = path.join(parent, '02');
   await expect(buildIntegration(next, out)).rejects.toThrow(/game.*complete.*500/i);
   await expect(readdir(out)).rejects.toThrow();
+});
+
+// Intermediate boxes must preserve the lower box and choose only from the upper.
+async function midpointFixture() {
+  const { config, out, root } = await fixture();
+  config.decisions[2].decision = 'add';
+  const b = config.sources[1];
+  await writeFile(path.join(b.directory, 'c.jpg'), 'gamma');
+  b.files.push({ filename: 'c.jpg', sha256: digest('gamma'), bytes: 5 });
+  config.decisions.push({ filename: 'c.jpg', decision: 'aside', reason: 'Source alternate.' });
+  await buildIntegration(config, out);
+  const midpoint = { lower: { directory: config.previous.directory, receiptSha256: digest(await readFile(config.previous.directory + '.integration.json')) },
+    upper: { directory: out, receiptSha256: digest(await readFile(out + '.integration.json')) },
+    decisions: [{ filename: 'a.jpg', decision: 'add', reason: 'Distinct view.' }, { filename: 'b.jpg', decision: 'aside', reason: 'Retain in the upper box.' }] };
+  return { root, config: midpoint, out: path.join(root, '01.5') };
+}
+it.each([[353, 500, 427], [10, 12, 11], [10, 11, 11], [10, 10, 10]])('rounds the %i/%i midpoint to %i while retaining the entire lower set', (low, high, count) => {
+  const rows = Array.from({ length: high }, (_, n) => ({ filename: `${n}.jpg`, bytes: 1, sha256: digest(String(n)) }));
+  const plan = midpointCore.planIntermediateSelection({ lower: rows.slice(0, low), upper: rows,
+    decisions: rows.slice(low).map((r, i) => ({ filename: r.filename, decision: i < count - low ? 'add' : 'aside', reason: 'Reviewed candidate.' })) });
+  expect(plan.count).toBe(count); expect(plan.previousCount).toBe(low);
+  expect(plan.photos.filter(p => p.inherited).map(p => p.filename).sort()).toEqual(rows.slice(0, low).map(p => p.filename).sort());
+});
+it('builds and verifies an intermediate box without altering either endpoint', async () => {
+  const { config, out } = await midpointFixture();
+  const report = await midpointIO.buildIntermediateSelection(config, out);
+  expect(report.count).toBe(2); expect(report.addedCount).toBe(1);
+  expect((await readdir(out)).sort()).toEqual(['a.jpg', 'old.jpg']);
+  expect((await readdir(config.lower.directory)).sort()).toEqual(['old.jpg']);
+  expect((await readdir(config.upper.directory)).sort()).toEqual(['a.jpg', 'b.jpg', 'old.jpg']);
+  expect(await readFile(path.join(out, 'a.jpg'), 'utf8')).toBe('alpha');
+  expect((await midpointIO.verifyIntermediateSelection(out)).errors).toEqual([]);
+});
+it.each([
+  ['wrong count', c => { c.decisions[1].decision = 'add'; }, /count|midpoint/i],
+  ['missing disposition', c => { c.decisions.pop(); }, /coverage|decision/i],
+  ['unknown photo', c => { c.decisions[1].filename = '../extra.jpg'; }, /unknown|candidate/i],
+  ['duplicate decision', c => { c.decisions[1] = c.decisions[0]; }, /duplicate/i],
+  ['blank reason', c => { c.decisions[0].reason = ''; }, /reason/i],
+  ['invalid disposition', c => { c.decisions[0].decision = 'inherit'; }, /decision/i],
+  ['changed source receipt', c => { c.upper.receiptSha256 = '0'.repeat(64); }, /receipt/i],
+  ['reversed endpoints', c => { [c.lower, c.upper] = [c.upper, c.lower]; }, /consecutive|endpoint/i],
+])('refuses midpoint %s before creating output', async (_name, change, pattern) => {
+  const { config, out } = await midpointFixture(); change(config);
+  await expect(midpointIO.buildIntermediateSelection(config, out)).rejects.toThrow(pattern);
+  await expect(readdir(out)).rejects.toThrow();
+});
+it('rejects an upper set missing or changing an inherited photo', () => {
+  const row = { filename: 'old.jpg', sha256: digest('old'), bytes: 3 };
+  for (const upper of [[], [{ ...row, sha256: digest('new') }]]) {
+    expect(() => midpointCore.planIntermediateSelection({ lower: [row], upper, decisions: [] })).toThrow(/subset|changed/i);
+  }
+});
+it.each(['missing', 'changed', 'extra', 'symlink', 'receipt'])('midpoint verification detects %s output', async mode => {
+  const { config, out } = await midpointFixture(); await midpointIO.buildIntermediateSelection(config, out);
+  const file = path.join(out, 'a.jpg');
+  if (mode === 'missing') await rm(file);
+  if (mode === 'changed') await writeFile(file, 'bad');
+  if (mode === 'extra') await writeFile(path.join(out, 'extra.jpg'), 'bad');
+  if (mode === 'symlink') { await rm(file); await symlink(path.join(config.upper.directory, 'a.jpg'), file); }
+  if (mode === 'receipt') { const p = out + '.interpolation.json'; const receipt = JSON.parse(await readFile(p)); receipt.count++; await writeFile(p, JSON.stringify(receipt)); }
+  expect((await midpointIO.verifyIntermediateSelection(out)).errors.length).toBeGreaterThan(0);
+});
+it('refuses to overwrite a midpoint and detects subsequent endpoint drift', async () => {
+  const { config, out } = await midpointFixture(); await midpointIO.buildIntermediateSelection(config, out);
+  await expect(midpointIO.buildIntermediateSelection(config, out)).rejects.toThrow(/exists/i);
+  await writeFile(path.join(config.upper.directory, 'b.jpg'), 'changed unselected source');
+  expect((await midpointIO.verifyIntermediateSelection(out)).errors.length).toBeGreaterThan(0);
+});
+it('runs the intermediate CLI and returns failure for a tampered copy', async () => {
+  const { config, out, root } = await midpointFixture(); const input = path.join(root, 'midpoint.json');
+  await writeFile(input, JSON.stringify(config)); const cli = path.resolve('scripts/interpolate-selection.mjs');
+  expect(JSON.parse(execFileSync(process.execPath, [cli, 'build', input, out], { encoding: 'utf8' })).count).toBe(2);
+  await writeFile(path.join(out, 'a.jpg'), 'bad');
+  expect(() => execFileSync(process.execPath, [cli, 'verify', out], { stdio: 'pipe' })).toThrow();
 });
