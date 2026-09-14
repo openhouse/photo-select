@@ -955,3 +955,21 @@ its curatorial usefulness is not established by its presence or length. No
 prompt change, automated aesthetic score, photo reselection or model request
 is part of this change. The full hill-climb results and exact candidate/hosted
 verification are recorded in the pull request.
+
+
+## Promotion and ongoing branch coverage, 2026-09-14
+
+Before promoting the completed work through the release branches, the CI review
+found push coverage tied to one historical work branch. Push checks now cover
+`main`, `develop`, `feature/repair-large-context` and `work/**`, while retaining
+pull-request checks. This keeps the same full hill-climb gate on promoted merge
+commits and future dated work branches. The workflow change is verified by
+GitHub's actual push and pull-request runs; no source-text assertion is used
+as a substitute for workflow execution.
+
+The user explicitly authorized merging the current pull request through the
+release branches and starting a new dated worktree. This supersedes the earlier
+draft-only review state. Preserve commit ancestry through merge commits, verify
+checks on each promotion, synchronize local branches without discarding local
+work, and start the next branch from the promoted baseline. Offline evaluation
+results and outstanding live-service acceptance evidence remain distinct.

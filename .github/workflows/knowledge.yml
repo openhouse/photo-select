@@ -2,7 +2,7 @@ name: Knowledge RFC checks
 on:
   pull_request:
   push:
-    branches: [work/2026-09-09-knowledge]
+    branches: [main, develop, feature/repair-large-context, 'work/**']
 permissions:
   contents: read
 jobs:
