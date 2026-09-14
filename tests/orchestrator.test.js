@@ -13,10 +13,11 @@ vi.mock("../src/chatClient.js", async () => {
     ...actual,
     chatCompletion: vi.fn(),
     getPeople: vi.fn().mockResolvedValue([]),
+    prefetchPeople: vi.fn().mockResolvedValue({ mode: "bulk", names: 0 }),
   };
 });
 
-import { chatCompletion, getPeople } from "../src/chatClient.js";
+import { chatCompletion, getPeople, prefetchPeople } from "../src/chatClient.js";
 import { triageDirectory } from "../src/orchestrator.js";
 
 let tmpDir;
@@ -36,6 +37,23 @@ afterEach(async () => {
 });
 
 describe("triageDirectory", () => {
+  it("prefetches level metadata before the first paid request", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    expect(prefetchPeople).toHaveBeenCalledTimes(1);
+    expect(prefetchPeople.mock.invocationCallOrder[0]).toBeLessThan(
+      chatCompletion.mock.invocationCallOrder[0]
+    );
+  });
+
   it("moves files into keep and aside", async () => {
     chatCompletion.mockResolvedValueOnce(
       JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
@@ -71,32 +89,175 @@ describe("triageDirectory", () => {
     await expect(fs.stat(level2)).resolves.toBeTruthy();
   });
 
-  it("recurses even when all images kept", async () => {
-    chatCompletion
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
-      );
+  it("stops when all images at the completed level are kept", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg", "2.jpg"], aside: [] })
+    );
     await triageDirectory({
       dir: tmpDir,
       promptPath: promptFile,
       model: "test-model",
       recurse: true,
     });
-    expect(chatCompletion).toHaveBeenCalledTimes(2);
-    const aside2 = path.join(tmpDir, "_keep", "_aside", "2.jpg");
-    await expect(fs.stat(aside2)).resolves.toBeTruthy();
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_keep", "2.jpg"))).resolves.toBeTruthy();
   });
 
-  it("resumes into deepest _keep when parent has no images", async () => {
+  it("stops when all images at the completed level are set aside", async () => {
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: [], aside: ["1.jpg", "2.jpg"] })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "_aside", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("completes a target-sized level after continuing past unanimous keep", async () => {
+    await fs.writeFile(path.join(tmpDir, "3.jpg"), "c");
+    let completedLevels = 0;
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file)).sort();
+      completedLevels += 1;
+      if (completedLevels === 1) {
+        return JSON.stringify({ keep: names, aside: [] });
+      }
+      if (completedLevels === 2) {
+        return JSON.stringify({ keep: names.slice(0, 2), aside: names.slice(2) });
+      }
+      return JSON.stringify({ keep: names, aside: [] });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      targetLevelSize: 2,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    const targetArchive = path.join(
+      tmpDir,
+      "_keep",
+      "_keep",
+      "_level-003"
+    );
+    const targetPhotos = (await fs.readdir(targetArchive)).filter((name) =>
+      name.endsWith(".jpg")
+    );
+    expect(targetPhotos).toHaveLength(2);
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "_keep", "_level-004"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("evaluates unanimity after the entire level, not after each batch", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    chatCompletion.mockImplementation(async ({ images }) =>
+      JSON.stringify({
+        keep: images.map((file) => path.basename(file)),
+        aside: [],
+      })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      workers: 2,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(2);
+    expect(await fs.readdir(path.join(tmpDir, "_keep"))).toHaveLength(11);
+  });
+
+  it("recurses when separately unanimous batches make a mixed level", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    let rootBatch = 0;
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file));
+      if (images[0].startsWith(tmpDir + path.sep) && rootBatch++ === 0) {
+        return JSON.stringify({ keep: names, aside: [] });
+      }
+      return JSON.stringify({ keep: [], aside: names });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+      workers: 1,
+    });
+
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    await expect(
+      fs.stat(path.join(tmpDir, "_keep", "_aside"))
+    ).resolves.toBeTruthy();
+  });
+
+  it("does not restart a previously completed unanimous-keep level", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    await fs.mkdir(path.join(tmpDir, "_keep"));
+    await fs.writeFile(path.join(tmpDir, "_keep", "1.jpg"), "a");
+    await fs.writeFile(path.join(tmpDir, "_keep", "2.jpg"), "b");
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a previously completed unanimous-aside level", async () => {
+    await fs.rm(path.join(tmpDir, "1.jpg"));
+    await fs.rm(path.join(tmpDir, "2.jpg"));
+    await fs.mkdir(path.join(tmpDir, "_aside"));
+    await fs.writeFile(path.join(tmpDir, "_aside", "1.jpg"), "a");
+    await fs.writeFile(path.join(tmpDir, "_aside", "2.jpg"), "b");
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: true,
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("resumes into deepest _keep across completed mixed parent levels", async () => {
     await fs.rm(path.join(tmpDir, "1.jpg"));
     await fs.rm(path.join(tmpDir, "2.jpg"));
     const deep = path.join(tmpDir, "_keep", "_keep");
     await fs.mkdir(deep, { recursive: true });
     await fs.writeFile(path.join(deep, "1.jpg"), "a");
     await fs.writeFile(path.join(deep, "2.jpg"), "b");
+    await fs.mkdir(path.join(tmpDir, "_aside"));
+    await fs.writeFile(path.join(tmpDir, "_aside", "root-aside.jpg"), "aside");
+    await fs.mkdir(path.join(tmpDir, "_keep", "_aside"));
+    await fs.writeFile(
+      path.join(tmpDir, "_keep", "_aside", "middle-aside.jpg"),
+      "aside"
+    );
 
     chatCompletion
       .mockResolvedValueOnce(
@@ -316,7 +477,166 @@ describe("triageDirectory", () => {
           recurse: false,
           provider,
         })
+      ).rejects.toMatchObject({ code: "BILLING_LIMIT", exitCode: 75 });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "2.jpg"))).resolves.toBeTruthy();
+  });
+
+  it("pauses modern exhausted-credit errors without repeating or marking photos for review", async () => {
+    const exhausted = new Error(
+      "Your account does not have enough credits to perform the requested operation. Please add more credits to your account and try again."
+    );
+    exhausted.status = 429;
+    exhausted.error = {
+      message: exhausted.message,
+      type: "insufficient_quota",
+      code: "insufficient_quota",
+    };
+    const unexpectedSecondAttempt = new Error(
+      "A second submission must never start after credit exhaustion"
+    );
+    unexpectedSecondAttempt.code = "PROMPT_CACHE_PROBE_MISS";
+    const provider = {
+      submit: vi.fn(async () => ({})),
+      collect: vi
+        .fn()
+        .mockRejectedValueOnce(exhausted)
+        .mockRejectedValueOnce(unexpectedSecondAttempt),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "gpt-5.6-terra",
+          recurse: false,
+          provider,
+        })
       ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(provider.submit).toHaveBeenCalledTimes(1);
+    await expect(fs.stat(path.join(tmpDir, "NEEDS_REVIEW"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const levelDir = path.join(tmpDir, "_level-001");
+    const pause = JSON.parse(
+      await fs.readFile(path.join(levelDir, ".batch", "billing-pause.json"), "utf8")
+    );
+    expect(pause).toMatchObject({
+      schemaVersion: 1,
+      state: "paused",
+      reason: "billing_exhausted",
+      code: "BILLING_LIMIT",
+      level: 1,
+      remainingImages: 2,
+      remainingBatches: 1,
+      cause: {
+        code: "insufficient_quota",
+        type: "insufficient_quota",
+        status: 429,
+      },
+    });
+    const ledger = await fs.readFile(
+      path.join(levelDir, ".batch", "jobs.ndjson"),
+      "utf8"
+    );
+    expect(ledger).toContain('"event":"billing_paused"');
+  });
+
+  it("drains successful in-flight batches before reporting a billing pause", async () => {
+    for (let i = 3; i <= 11; i++) await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    const provider = {
+      submit: vi.fn(async ({ images }) => ({ images })),
+      collect: vi.fn(async ({ images }) => {
+        if (images.length === 1) {
+          const err = new Error("Your account does not have enough credits");
+          err.code = "insufficient_quota";
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          raw: JSON.stringify({
+            keep: images.map((file) => path.basename(file)),
+            aside: [],
+          }),
+        };
+      }),
+    };
+    await expect(
+      triageDirectory({
+        dir: tmpDir,
+        promptPath: promptFile,
+        model: "gpt-5.6-terra",
+        recurse: false,
+        workers: 2,
+        provider,
+      })
+    ).rejects.toMatchObject({ code: "BILLING_LIMIT" });
+    expect(await fs.readdir(path.join(tmpDir, "_keep"))).toHaveLength(10);
+    const pause = JSON.parse(await fs.readFile(
+      path.join(tmpDir, "_level-001", ".batch", "billing-pause.json")));
+    expect(pause.remainingImages).toBe(1);
+  });
+
+  it("clears a billing-pause checkpoint after the next successful batch", async () => {
+    const levelDir = path.join(tmpDir, "_level-001");
+    const pausePath = path.join(levelDir, ".batch", "billing-pause.json");
+    await fs.mkdir(path.dirname(pausePath), { recursive: true });
+    await fs.writeFile(
+      pausePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "paused",
+        reason: "billing_exhausted",
+      })
+    );
+    chatCompletion.mockResolvedValueOnce(
+      JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+    );
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+    });
+
+    await expect(fs.stat(pausePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("stops processing when a prompt-cache probe misses", async () => {
+    let calls = 0;
+    const provider = {
+      submit: vi.fn(async () => {
+        calls++;
+        if (calls === 1) {
+          const err = new Error("Prompt-cache probe did not report cached tokens");
+          err.code = "PROMPT_CACHE_PROBE_MISS";
+          throw err;
+        }
+        throw new Error("Billing hard limit has been reached");
+      }),
+      collect: vi.fn(),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        triageDirectory({
+          dir: tmpDir,
+          promptPath: promptFile,
+          model: "test-model",
+          recurse: false,
+          provider,
+        })
+      ).rejects.toMatchObject({ code: "PROMPT_CACHE_PROBE_MISS" });
     } finally {
       logSpy.mockRestore();
     }
@@ -328,9 +648,7 @@ describe("triageDirectory", () => {
 });
 
 describe("cascade scheduler invariants", () => {
-  it("processes the shallowest eligible level before nested _keep work", async () => {
-    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+  it("does not descend after unanimous aside", async () => {
     const seen = [];
     chatCompletion.mockImplementation(async ({ images }) => {
       const names = images.map((f) => path.basename(f)).sort();
@@ -349,7 +667,7 @@ describe("cascade scheduler invariants", () => {
     });
 
     expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
-    expect(seen[1]).toEqual(["deep.jpg"]);
+    expect(seen).toEqual([["1.jpg", "2.jpg"]]);
   });
 
   it("returns to base for late-arriving files after a deeper level settles", async () => {
@@ -358,6 +676,9 @@ describe("cascade scheduler invariants", () => {
     const keepDir = path.join(tmpDir, "_keep");
     await fs.mkdir(keepDir, { recursive: true });
     await fs.writeFile(path.join(keepDir, "deep.jpg"), "deep");
+    const asideDir = path.join(tmpDir, "_aside");
+    await fs.mkdir(asideDir, { recursive: true });
+    await fs.writeFile(path.join(asideDir, "earlier.jpg"), "aside");
     const seen = [];
     chatCompletion.mockImplementation(async ({ images }) => {
       const names = images.map((f) => path.basename(f)).sort();
@@ -380,9 +701,7 @@ describe("cascade scheduler invariants", () => {
     await expect(fs.stat(path.join(tmpDir, "_aside", "late.jpg"))).resolves.toBeTruthy();
   });
 
-  it("does not descend while current-level residue remains eligible", async () => {
-    await fs.mkdir(path.join(tmpDir, "_keep"), { recursive: true });
-    await fs.writeFile(path.join(tmpDir, "_keep", "deep.jpg"), "deep");
+  it("settles current-level residue before applying the unanimous stop", async () => {
     const seen = [];
     chatCompletion
       .mockImplementationOnce(async ({ images }) => {
@@ -392,10 +711,6 @@ describe("cascade scheduler invariants", () => {
       .mockImplementationOnce(async ({ images }) => {
         seen.push(images.map((f) => path.basename(f)).sort());
         return JSON.stringify({ keep: [], aside: ["2.jpg"] });
-      })
-      .mockImplementationOnce(async ({ images }) => {
-        seen.push(images.map((f) => path.basename(f)).sort());
-        return JSON.stringify({ keep: [], aside: ["deep.jpg"] });
       })
       .mockImplementation(async ({ images }) => {
         seen.push(images.map((f) => path.basename(f)).sort());
@@ -411,7 +726,7 @@ describe("cascade scheduler invariants", () => {
 
     expect(seen[0]).toEqual(["1.jpg", "2.jpg"]);
     expect(seen[1]).toEqual(["2.jpg"]);
-    expect(seen[2]).toEqual(["deep.jpg"]);
+    expect(seen).toHaveLength(2);
   });
 
   it("reports NEEDS_REVIEW images and blocks descent by default", async () => {
@@ -449,5 +764,107 @@ describe("cascade scheduler invariants", () => {
     await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
     const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
     expect(marker.trim()).toBe("");
+  });
+
+  it("automatically retries a failed level up to twice without a manual restart", async () => {
+    const incomplete = JSON.stringify({
+      object: "response",
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [],
+    });
+    chatCompletion
+      .mockResolvedValueOnce(incomplete)
+      .mockResolvedValueOnce(incomplete)
+      .mockResolvedValueOnce(
+        JSON.stringify({ keep: ["1.jpg"], aside: ["2.jpg"] })
+      );
+
+    const result = await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    });
+
+    expect(result).toEqual({ blocked: false, blockedCount: 0 });
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    await expect(fs.stat(path.join(tmpDir, "_keep", "1.jpg"))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(tmpDir, "_aside", "2.jpg"))).resolves.toBeTruthy();
+    const marker = await fs.readFile(path.join(tmpDir, "NEEDS_REVIEW"), "utf8");
+    expect(marker.trim()).toBe("");
+  });
+
+  it("retries only the failed batch and never resubmits classified files", async () => {
+    for (let i = 3; i <= 11; i++) {
+      await fs.writeFile(path.join(tmpDir, `${i}.jpg`), String(i));
+    }
+    let failedNames;
+    let singletonCalls = 0;
+    const seen = [];
+    chatCompletion.mockImplementation(async ({ images }) => {
+      const names = images.map((file) => path.basename(file)).sort();
+      seen.push(names);
+      if (names.length === 1) {
+        singletonCalls += 1;
+        failedNames = names;
+        if (singletonCalls === 1) {
+          return JSON.stringify({
+            object: "response",
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output: [],
+          });
+        }
+      }
+      return JSON.stringify({ keep: [], aside: names });
+    });
+
+    await triageDirectory({
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      workers: 1,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    });
+
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toEqual(failedNames);
+    expect(seen[2]).toHaveLength(1);
+    expect(seen[0].some((name) => seen[2].includes(name))).toBe(false);
+  });
+
+  it("persists the two-retry allowance so a restart cannot reset it", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    chatCompletion.mockResolvedValue(
+      JSON.stringify({
+        object: "response",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+      })
+    );
+
+    const options = {
+      dir: tmpDir,
+      promptPath: promptFile,
+      model: "test-model",
+      recurse: false,
+      retryNeedsReview: true,
+      needsReviewRetries: 2,
+    };
+    const first = await triageDirectory(options);
+    const second = await triageDirectory(options);
+
+    expect(first).toEqual({ blocked: true, blockedCount: 2 });
+    expect(second).toEqual({ blocked: true, blockedCount: 2 });
+    expect(chatCompletion).toHaveBeenCalledTimes(3);
+    expect(
+      warnSpy.mock.calls.some(([message]) => message.includes("exhausted (2/2)"))
+    ).toBe(true);
   });
 });

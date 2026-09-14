@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "status": "held",
+  "recordedAt": "2026-09-11T03:40:09.965Z",
+  "scope": "three synthetic images; actual Batch, GPT-5.6 Terra/high, private GitHub tunnel; no repository source reads",
+  "implementationSha256": {
+    "src/providers/github.js": "d51233a14e3846a31ae51622df6abb35085373b1290c008affe9e3298191a822",
+    "src/githubBatch.js": "ebf12237e78ad650969ecb079e93497638069316340b56cedfdbe170318d27df",
+    "src/githubCacheScheduler.js": "154cbb2f0cde0b237bbd2ad021e90c955004e5375fe76b9a1b34956e088eb11a",
+    "src/core/githubPromptCache.js": "f7802955e4f51876af9a972932b7ac8e0f6da479eb9b8c7be519e7e43ac3aa8a",
+    "src/core/promptCaching.js": "9c061faf950a80d9e714b7c6af7b8bd5aa7120c3b0ebb5b931394c309b7cd482",
+    "src/core/githubBrief.js": "6b500d23242e83db67068499a4a403a740bb4f00c74a999740c4cef538817d44",
+    "src/core/githubCuration.js": "4a50acf3e4da2644aa3e4163ab7fd142848984fa4424c3165ef0964acb9c1603",
+    "src/core/githubBridge.js": "d931e98eac7224486f893c0e719b9afd44c62b6c8f866b2cddaaeb71b31e1312",
+    "src/githubRun.js": "1410853c6c4d4bc76c645a88bcfef13114be087d157911283cb1e48b7ff68c16",
+    "src/githubTunnel.js": "c9d139abef39e6b7a058b36dcbf00667d641ce88005f4d8579985a3c72533d6d",
+    "src/knowledgeRun.js": "4eb06cc5a9a35d7fc57920c661f4e2eba451e74389a168aaa1a653f3f062bd98",
+    "scripts/github-mcp-bridge.mjs": "dd7f442f51c6c7385b35eab287842c454468208ee2fcd23dd8e109f5309dca99",
+    "scripts/eval-github-prompt-cache.mjs": "640c03f96a39c17619b3318d7e87512031e609b0ef17e7b41e08cda8ddc892b5",
+    "package-lock.json": "a67cad0265af8cfc0bbadb3ae02ed33fada7067fb6ee8667e589cb5200efdea5"
+  },
+  "requested": 3,
+  "completed": 2,
+  "usages": [
+    {
+      "curationStatus": "completed",
+      "requestSha256": "0f12a8fb104f3ece6c172e1f52cc529fefabdbee72ee6289f18fd1741428c662",
+      "role": "seed",
+      "key": "photo-select:github-v1:927a07943c2ce72b088710d2cf347bf8",
+      "inputTokens": 11447,
+      "cachedTokens": 0,
+      "writeTokens": 10549,
+      "requiredCachedTokens": 6307,
+      "verified": false,
+      "diagnostics": null,
+      "githubToolCalled": true,
+      "responseIdSha256": "b191888d09167e4527f75d06d3ba9c8ea4a754c7fb09c93fbaaba056c298c040",
+      "batchIdSha256": "0d1fb46677ade1fdfc6dbcd46ee29663005e1c6a34e1a79680658ba734f66a7c"
+    },
+    {
+      "curationStatus": "completed",
+      "requestSha256": "85395a0c376938a02eeea74285c8c1aabc6ae0c30b3dd8b47306421f88a2a4ed",
+      "role": "probe",
+      "key": "photo-select:github-v1:927a07943c2ce72b088710d2cf347bf8",
+      "inputTokens": 11524,
+      "cachedTokens": 0,
+      "writeTokens": 10549,
+      "requiredCachedTokens": 6307,
+      "verified": false,
+      "diagnostics": {
+        "type": "comparison_response_not_found"
+      },
+      "githubToolCalled": true,
+      "responseIdSha256": "1746f1ae1974dabe284ac711c8f8c27f952f4a7eb421ef87d03c702561988cfb",
+      "batchIdSha256": "ea983691023aaa58c7d0b6d93ce6a290de2112b6735883bcaff91ec259baa46c"
+    }
+  ],
+  "limitations": "Small live cache test, not the full project brief or corpus. Future Batch execution can outlast cache retention; each wave remains guarded.",
+  "note": "Final implementation and diagnostic eval: probe miss; reader held before submission. Diagnostic baseline unavailable; no cause established."
+}

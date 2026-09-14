@@ -4,13 +4,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="$(pwd)"
 
+# Route this opt-in feature to the configured worktree, preserving the caller cwd.
+for arg in "$@"; do
+  if [ "$arg" = "--github-all" ]; then
+    checkout="$(git -C "$SCRIPT_DIR" config --local --get photoSelect.knowledgeCheckout 2>/dev/null || true)"
+    if [ -n "$checkout" ] && [ "$checkout" != "$SCRIPT_DIR" ]; then
+      if [ ! -f "$checkout/photo-select-here.sh" ]; then
+        echo "Photo Select GitHub checkout is unavailable: $checkout" >&2
+        exit 1
+      fi
+      SCRIPT_DIR="$checkout"
+    fi
+    break
+  fi
+done
+
 # Load nvm if available
 if [ -z "${NVM_DIR:-}" ]; then
   if [ -d "$HOME/.nvm" ]; then
     export NVM_DIR="$HOME/.nvm"
   fi
 fi
-if [ -s "$NVM_DIR/nvm.sh" ]; then
+if [ -n "${NVM_DIR:-}" ] && [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
 fi
 
@@ -40,7 +55,7 @@ for arg in "$@"; do
 done
 
 if [ "$dir_specified" = true ]; then
-  npx photo-select "$@"
+  exec node "$SCRIPT_DIR/src/index.js" "$@"
 else
-  npx photo-select "$@" --dir "$TARGET_DIR"
+  exec node "$SCRIPT_DIR/src/index.js" "$@" --dir "$TARGET_DIR"
 fi

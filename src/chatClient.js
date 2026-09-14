@@ -19,6 +19,7 @@ import { getSurrogateImage } from "./imagePreprocessor.js";
 import { drain } from "./net.js";
 import { SimpleSemaphore } from "./lib/semaphore.js";
 import { buildCacheableResponsesPrompt } from "./core/promptCaching.js";
+import { createPeoplePrefetcher } from "./peoplePrefetch.js";
 
 function numEnv(name, fallback) {
   const v = process.env[name];
@@ -96,6 +97,15 @@ if (!USE_UNDICI && !isPeopleLookupDisabled()) {
 }
 const peopleSem = new SimpleSemaphore(PEOPLE_CONCURRENCY);
 const peopleCache = new Map();
+const peoplePrefetcher = createPeoplePrefetcher({
+  apiBase: PEOPLE_API_BASE,
+  isDisabled: isPeopleLookupDisabled,
+  commitEntries(entries) {
+    for (const [filename, people] of entries) {
+      peopleCache.set(filename, people);
+    }
+  },
+});
 
 const BUMP_TOKENS = numEnv("PHOTO_SELECT_BUMP_TOKENS", 4000);
 
@@ -233,6 +243,10 @@ export async function getPeople(filename) {
     peopleCache.set(filename, []);
     return [];
   }
+}
+
+export async function prefetchPeople(files, { force = false } = {}) {
+  return peoplePrefetcher.prefetch(files, { force });
 }
 
 /** Return any people who appear in more than one file */
