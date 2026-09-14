@@ -25,7 +25,8 @@
     "hillclimb": "npm test -- --maxWorkers=2 --minWorkers=2 && npm run evals:knowledge",
     "evals:github-prompt-cache": "node scripts/eval-github-prompt-cache.mjs",
     "evals:curatorial-packet": "vitest run tests/curatorialPacket.test.js tests/curatorialPacketBuild.test.js --maxWorkers=2 --minWorkers=2",
-    "evals:curatorial-context": "vitest run tests/curatorialContext.test.js tests/curatorialContextExport.test.js --maxWorkers=2 --minWorkers=2"
+    "evals:curatorial-context": "vitest run tests/curatorialContext.test.js tests/curatorialContextExport.test.js --maxWorkers=2 --minWorkers=2",
+    "evals:integrated-selection": "vitest run tests/integratedSelection.test.js --maxWorkers=2 --minWorkers=2"
   },
   "engines": {
     "node": ">=20"

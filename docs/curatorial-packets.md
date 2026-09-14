@@ -220,3 +220,7 @@ its complete original hash. Repeated reference targets share a list of linked
 origins. These changes reduce navigation overhead while preserving differing
 editions and every origin-to-target relationship. Local aliases are specific to
 the exported file; use original hashes for identity across exports.
+
+For cumulative integration of completed photo selections, see
+[integrated selections](integrated-selections.md). That separate offline helper
+copies reviewed images while preserving every preceding selection.

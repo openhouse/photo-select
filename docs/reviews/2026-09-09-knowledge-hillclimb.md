@@ -801,3 +801,28 @@ Validation: `npm run hillclimb` passed **531 tests across 54 suites** and
 regenerated after this documentation update to bind all candidate files.
 `git diff --check` passes. Exact-commit hosted CI is recorded on the PR after
 pushing; live model recovery remains pending a user-started Terminal run.
+
+
+## Cumulative photo integration, 2026-09-14
+
+The offline integration helper preserves a preceding numbered selection as an
+exact superset while adding explicitly reviewed images from the immediately
+preceding processing snapshot of each original run. It copies files without
+changing prompts, curation, authentication, or any original run directory.
+
+| Candidate/check | Observation | Bounded response |
+| --- | --- | --- |
+| Empty API baseline after writing filesystem tests | 21 behavioral cases failed; one API-presence check passed | Implement frozen source inventories, complete dispositions, mandatory inheritance, exclusive copies and receipt verification. |
+| First implementation | 22 cases passed | Add cross-platform collision, unrecorded predecessor, successive-level receipt and actual CLI cases. |
+| Broader evaluation | 24 passed; 2 failed | Case-colliding names reached the copy stage on macOS and a valid later integration could proceed without its preceding receipt. |
+| Revised implementation | 25 behavioral cases passed after removing the trivial API-presence check | Reject portable filename collisions before copying; require the predecessor receipt and bind inherited files and source-level progression for later integrations. |
+
+The full hill-climb includes this suite. The focused knowledge receipt binds it
+to the final file candidate. CLI tests use local synthetic bytes and exercise
+success plus a nonzero verification exit after tampering. Private source
+inventories, photographs, close readings and integration receipts stay outside
+this repository. Actual-directory checks are separate from these synthetic
+regressions. No model call, new curation run, or aesthetic-quality score is
+produced by this helper. The additive changes exceed 300 lines; the existing
+large-PR review marker remains `--mechanical`, without describing the logic as
+a mechanical change. No auto-merge is requested.
