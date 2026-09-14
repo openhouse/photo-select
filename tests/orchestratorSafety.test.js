@@ -11,6 +11,7 @@ vi.mock("../src/chatClient.js", async () => {
   const actual = await vi.importActual("../src/chatClient.js");
   return {
     ...actual,
+    prefetchPeople: vi.fn().mockResolvedValue({ mode: "bulk", names: 0 }),
     chatCompletion: vi.fn(),
     getPeople: vi.fn().mockResolvedValue([]),
   };

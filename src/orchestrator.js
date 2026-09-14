@@ -592,6 +592,13 @@ export async function triageDirectory(options) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
+  if (provider.knowledge) {
+    curators = [...provider.curators];
+    if (!provider.preservePrompt) promptPath = provider.promptPath;
+    contextPath = undefined;
+    await provider.assertDirectory(dir);
+    await provider.assertCurrent();
+  }
   if (recurse && depth === 0 && !_cascadeLevel) {
     return triageTree({
       ...options,
@@ -826,7 +833,7 @@ export async function triageDirectory(options) {
     }
 
     const peopleStart = Date.now();
-    const peopleResult = await prefetchPeople(images, {
+    const peopleResult = provider.knowledge && !provider.supportsPeopleMetadata ? { mode: "disabled" } : await prefetchPeople(images, {
       force: refreshPeopleIndex,
     });
     if (verbose && peopleResult.mode === "bulk") {
@@ -929,12 +936,13 @@ export async function triageDirectory(options) {
                 let attemptNum = 1;
                 let finalCurators = curators;
                 let added = [];
+                let photos = [];
                 const prepareFirstRequest = async () => {
                   const names = batch.map((file) => path.basename(file));
                   const peopleLists = await Promise.all(
-                    names.map((name) => getPeople(name))
+                    names.map((name) => provider.knowledge && !provider.supportsPeopleMetadata ? [] : getPeople(name))
                   );
-                  const photos = names.map((name, i) => ({
+                  photos = names.map((name, i) => ({
                     file: name,
                     people: sanitizePeople(peopleLists[i]),
                   }));
@@ -949,6 +957,7 @@ export async function triageDirectory(options) {
                   const first = await buildPrompt(promptPath, {
                     curators: finalCurators,
                     contextPath,
+                    contextText: provider.preservePrompt ? provider.brief : undefined,
                     images: batch,
                     hasFieldNotes: false,
                     isSecondPass: false,
@@ -960,6 +969,7 @@ export async function triageDirectory(options) {
                     images: batch,
                     model,
                     curators: finalCurators,
+                    photoPeople: photos,
                     baseCuratorCount: curators.length,
                     dynamicCuratorCount: added.length,
                     verbosity,
@@ -1010,6 +1020,7 @@ export async function triageDirectory(options) {
                       images: batch,
                       model,
                       curators: finalCurators,
+                      photoPeople: photos,
                       baseCuratorCount: curators.length,
                       dynamicCuratorCount: added.length,
                       verbosity: "low",
@@ -1135,6 +1146,7 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
+                if (provider.knowledge) { abortProcessing = true; queue.length = 0; throw err; }
                 if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();

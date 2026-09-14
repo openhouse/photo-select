@@ -174,7 +174,7 @@ through to the script unchanged.
 | `--batch-window` | `24h` | Completion window requested for batch jobs |
 | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
-People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+People tagged in two or more photos within a batch are automatically appended to its curator roster, ordered by their last appearance. This also applies with `--github-all`; the expanded roster and per-photo tags are retained in the private request audit, and `--verbose` lists additional curators. The configured Photo Filter metadata service must be available. All GitHub-mode voices, including tagged people, are fictionalized lenses.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
 
 Set `PHOTO_SELECT_IDENTITY_POLICY=canonicalize` to enable the older normalization/alias behaviour, though the default (`passthrough`) is recommended.
@@ -484,7 +484,7 @@ labels lets you compute precision, recall, and F1‑score for each model. Repeat
 the process on multiple batches will highlight which model gives the most
 consistent choices.
 
-The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
+The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches. This also applies with `--github-all`: GitHub access preserves the selected image directory, snapshots and resume behavior. Only API audit files go into a separate private run directory.
 
 ### Example: A/B testing models
 
@@ -558,7 +558,7 @@ full.
 
 ## Caching
 
-Responses from OpenAI are cached under a `.cache` directory using a hash of the
+Outside `--github-all`, responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
 saved reply instead of hitting the API. The tool never caches model responses
 that contain zero decisions (0 keeps + 0 asides). Such entries are skipped on
@@ -566,6 +566,15 @@ write and evicted on read. If a batch still produces no decisions, the run is
 retried (finalize mode when 10 or fewer images remain). After two consecutive
 no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
 continues.
+
+With `--github-all`, each curation can discover current GitHub sources. Eligible
+GPT-5.6+ requests instead reuse the full brief through API prompt caching. With
+`--provider openai-batch`, eligible requests use explicit Flex at Batch token rates,
+with no fallback to standard pricing. A seed/probe check precedes reader waves; `--verbose` reports actual
+cached, written and total input tokens. A cache miss holds further submissions.
+The brief, per-photo tags and automatic additional curators are preserved. See
+[GitHub prompt caching](docs/live-knowledge.md#prompt-caching-with-github-batch-curation)
+for operation, the full-brief live evidence, opt-in eval and limits.
 
 ## Testing
 
@@ -589,3 +598,17 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
+
+## GitHub access during curation
+
+Add `--github-all` to your existing command. The model can follow private GitHub links, discover accessible repositories and inspect recent branches during the same API call that curates your images. Your GitHub credential stays in a local read-only bridge; OpenAI's private tunnel carries the tool requests and source results.
+
+The flag supports `openai` and `openai-batch`, preserves your model and exact custom curator list, and automatically starts the configured tunnel. Jamie's current launcher is configured. Run from your image directory as before; selections go into its `_keep` and `_aside` directories, while API traces go to a separate private run whose path is printed.
+
+See [the command and setup guide](docs/live-knowledge.md), [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md), and the [acceptance record](evals/github-inference-readiness.json). Keep the Mac awake and online during Batch processing. Run `npm run hillclimb` for regression checks.
+
+The older `--knowledge-live` mode remains a separate [research-first workflow](docs/research-first-knowledge.md); it does not attach GitHub tools to the image-curation call.
+
+`--github-all` preserves the ordinary default or custom `--prompt` and adds only
+authenticated read-only GitHub tools. It does not append research or editorial
+instructions. See [prompt preservation](docs/live-knowledge.md#prompt-preservation).

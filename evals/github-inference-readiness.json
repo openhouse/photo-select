@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "feature": "github-tools-during-curation",
+  "ready": false,
+  "gates": {
+    "implementation": "passed",
+    "exactCommand": "pending",
+    "privateGithubDuringCuration": "pending",
+    "batchWithImagesAndTools": "passed",
+    "credentialSinks": "passed",
+    "workers20": "passed",
+    "ci": "pending"
+  },
+  "olderResearchFirstCanaryQualifies": false,
+  "syntheticTraceTestsQualify": false,
+  "note": "The user-started run now shows a filename mismatch after 45 completed curation records. The bounded format retry now receives specific validation issues, exact filenames and its rejected answer without changing the initial prompt or cached prefix. Offline repair and cache recovery checks remain separate from live model recovery and full-corpus completion.",
+  "batchEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
+  "batchEvidenceScope": "Installed launcher, --github-all, Batch, one synthetic image, requested model/high effort/twelve voices, private README text and branch/commit reads in the same curatorial response.",
+  "transport": "private-tunnel",
+  "workers20Evidence": "tests/githubFlex.test.js holds twenty pending jobs behind the seed/probe and measures a peak of eight concurrent readers; CLI and audit tests cover per-batch rosters, normal image sorting and serialized atomic commits. Live cache acceptance uses four synthetic images, with measured API concurrency one.",
+  "liveEvidence": "evals/probes/2026-09-10-private-tunnel-curation.json",
+  "additionalCuratorsEvidence": {
+    "tests": [
+      "tests/cliGithubWorkflow.test.js",
+      "tests/githubCuration.test.js"
+    ],
+    "scope": "Real CLI, metadata HTTP bulk/fallback, custom base roster, repeated-tag additions, per-photo labels, opt-out, repair and twenty concurrent request rosters; OpenAI and tunnel IO are synthetic."
+  },
+  "cacheEvidence": {
+    "status": "pending",
+    "path": "evals/probes/2026-09-11-github-minutes-cache.json",
+    "priorEvidence": [
+      "evals/probes/2026-09-11-github-cache-initial.json",
+      "evals/probes/2026-09-11-github-cache-held.json",
+      "evals/probes/2026-09-11-github-cache-diagnostic.json",
+      "evals/probes/2026-09-11-github-cache-flex.json",
+      "evals/probes/2026-09-11-github-reliability-cache.json",
+      "evals/probes/2026-09-11-github-original-prompt.json",
+      "evals/probes/2026-09-11-github-rendered-prefix-cache.json"
+    ],
+    "scope": "Historical passing evidence for the prior prompt and implementation: Full unchanged 573,984-token budget-counted brief and four synthetic images. All four responses reused 542,017 cached tokens with zero writes, including a warm seed; the decoded prefix is 538,616 local text tokens and the 95% coverage floor is 511,686. Tools were attached; no get_me calls occurred, and this cache test does not establish fresh private-source delivery. Measured API concurrency was one. The 2026-09-11 conditional invitation changes the prompt and renderer; this receipt is retained unchanged and does not establish live cache reuse for the new candidate."
+  },
+  "ciEvidence": {
+    "implementationCommit": "dcd8ce0b2cea7e5faa4068263538c7af95af9628",
+    "push": "https://github.com/openhouse/photo-select/actions/runs/34621403117",
+    "pullRequest": "https://github.com/openhouse/photo-select/actions/runs/34621401774",
+    "conclusion": "success",
+    "scope": "Prior commit only; current repair CI is verified on the PR after pushing."
+  },
+  "promptParityEvidence": {
+    "tests": [
+      "tests/githubContextPrompt.test.js",
+      "tests/githubOriginalContract.test.js",
+      "tests/githubPromptParity.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Frozen pre-PR template plus only the separately authorized conditional invitation. File and inline context, exact host matching, custom template opt-in, cache-key invalidation, repair preservation, and cached CLI seed/probe/readers are tested independently of production detection."
+  },
+  "completionRegression": {
+    "test": "tests/cliGithubWorkflow.test.js",
+    "scope": "84 batches, 840 synthetic images, twenty workers; cache misses at requests 7 and 70 and minute-count warnings at 64 and 65. Require 84 requests, two serial recoveries, all images sorted once and no completed-work replay. External API and tunnel operations mocked."
+  },
+  "cacheRecoveryEvidence": {
+    "status": "offline-only",
+    "tests": [
+      "tests/githubCacheRecovery.test.js",
+      "tests/githubPromptCache.test.js",
+      "tests/githubCacheTokenCount.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Mixed wave, up to two new serial recovery batches, persistent misses, unchanged 95% threshold, idle recheck, cancellation, hard failures, and request preservation. Live recovery is pending a user-started Terminal run."
+  },
+  "replyRepairEvidence": {
+    "status": "offline-only",
+    "tests": [
+      "tests/githubReplyRepair.test.js",
+      "tests/cliGithubWorkflow.test.js"
+    ],
+    "scope": "Shortened multi-suffix filename, exact missing/unexpected/duplicate diagnostics, rejected reply as user data, one repair, cache and initial prompt preservation, malformed JSON and structural errors, concurrent feedback isolation, private audit and exact sorting. The API is mocked; live model repair success and full-job completion are not inferred."
+  }
+}

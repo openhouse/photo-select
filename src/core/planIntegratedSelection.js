@@ -1,0 +1,98 @@
+const imagePattern = /\.(jpe?g|png|tiff?|webp|heic|avif|gif|dng)$/i;
+export const isIntegrationImage = name => imagePattern.test(name);
+
+export function planIntegratedSelection(config) {
+  if (!Number.isInteger(config.step) || config.step < 1) throw new Error('Invalid integration step.');
+  if (!Array.isArray(config.sources) || config.sources.length < 2) throw new Error('Two source runs are required.');
+  if (config.step === 1 && config.previous != null) throw new Error('The first integration must not have a predecessor.');
+  if (config.step > 1 && !Array.isArray(config.previous?.files)) throw new Error('Preceding inventory is required.');
+  const pool = new Map(); const runs = new Set(); const portableNames = new Map();
+  for (const source of config.sources) {
+    if (!source.id || runs.has(source.id)) throw new Error('Duplicate or missing source run.'); runs.add(source.id);
+    if (!Number.isInteger(source.terminalLevel) || source.level < 1 || source.level !== source.terminalLevel - config.step + 1) throw new Error('Source level must step back exactly once per integration.');
+    if (!Array.isArray(source.files)) throw new Error('Complete source inventory is required.');
+    const names = new Set();
+    for (const row of source.files) {
+      validateIntegrationPhoto(row); if (names.has(row.filename)) throw new Error('Duplicate source filename.'); names.add(row.filename);
+      const portable = row.filename.normalize('NFC').toLowerCase();
+      if (portableNames.has(portable) && portableNames.get(portable) !== row.filename) throw new Error('Case or Unicode filename collision.');
+      portableNames.set(portable, row.filename);
+      const existing = pool.get(row.filename);
+      if (existing && (existing.sha256 !== row.sha256 || existing.bytes !== row.bytes)) throw new Error('Conflicting bytes for filename: ' + row.filename);
+      if (!existing) pool.set(row.filename, { ...row, witnesses: [] });
+      pool.get(row.filename).witnesses.push({ run: source.id, level: source.level, directory: source.directory });
+    }
+  }
+  const sourceCounts = config.sources.map(source => ({ id: source.id, count: source.files.length }));
+  const minimum = Math.min(...sourceCounts.map(source => source.count));
+  const maximum = Math.max(...sourceCounts.map(source => source.count));
+  const preceding = new Set();
+  for (const row of config.previous?.files ?? []) {
+    validateIntegrationPhoto(row); if (preceding.has(row.filename)) throw new Error('Duplicate preceding filename.'); preceding.add(row.filename);
+    const source = pool.get(row.filename);
+    if (!source || source.sha256 !== row.sha256 || source.bytes !== row.bytes) throw new Error('Preceding photo missing or changed in source pool: ' + row.filename);
+  }
+  if (preceding.size > maximum) throw new Error(`Infeasible integration: ${preceding.size} inherited photos exceed source maximum ${maximum}. Preserve the predecessor and resolve the rule conflict before copying.`);
+  const decisions = new Map();
+  for (const row of config.decisions) {
+    if (decisions.has(row.filename)) throw new Error('Duplicate decision.');
+    if (!pool.has(row.filename)) throw new Error('Unknown decision filename.');
+    if (!['inherit', 'add', 'aside'].includes(row.decision)) throw new Error('Invalid decision.');
+    if (typeof row.reason !== 'string' || !row.reason.trim()) throw new Error('Every decision requires a reason.');
+    if (preceding.has(row.filename) !== (row.decision === 'inherit')) throw new Error('Every preceding photo must inherit unchanged.');
+    decisions.set(row.filename, row);
+  }
+  if (decisions.size !== pool.size) throw new Error('Decision coverage must include every candidate.');
+  const photos = [...pool.values()].filter(row => decisions.get(row.filename).decision !== 'aside')
+    .map(row => ({ ...row, inherited: preceding.has(row.filename) })).sort((a, b) => a.filename.localeCompare(b.filename));
+  if (photos.length < minimum || photos.length > maximum) throw new Error(`Selection count ${photos.length} must be between ${minimum} and ${maximum} inclusive, including inherited photos.`);
+  return { sourceCounts, bounds: { minimum, maximum, effectiveMinimum: Math.max(minimum, preceding.size) }, photos, count: photos.length, previousCount: preceding.size, addedCount: photos.length - preceding.size, candidateCount: pool.size };
+}
+
+export function integrationGameStatus({ count, verified }) {
+  if (!verified || !Number.isSafeInteger(count) || count < 0) return 'needs-verification';
+  return count >= 500 ? 'complete' : 'continue';
+}
+
+function validateIntegrationPhoto(row) {
+    if (typeof row.filename !== 'string' || /[\\/\x00]/.test(row.filename) || !isIntegrationImage(row.filename)) throw new Error('Invalid image filename.');
+    if (!/^[a-f0-9]{64}$/.test(row.sha256) || !Number.isSafeInteger(row.bytes) || row.bytes < 1) throw new Error('Invalid frozen file hash or size.');
+}
+
+// A reviewed interpolation is separate from an outward integration-game round.
+export function planIntermediateSelection({ lower, upper, decisions }) {
+  const index = rows => {
+    if (!Array.isArray(rows)) throw new Error('Complete endpoint inventory required.');
+    const result = new Map(); const portable = new Set();
+    for (const row of rows) {
+      validateIntegrationPhoto(row);
+      const key = row.filename.normalize('NFC').toLowerCase();
+      if (portable.has(key)) throw new Error('Duplicate or colliding endpoint filename.');
+      portable.add(key); result.set(row.filename, row);
+    }
+    return result;
+  };
+  const lo = index(lower); const hi = index(upper);
+  for (const row of lo.values()) {
+    const other = hi.get(row.filename);
+    if (!other || row.sha256 !== other.sha256 || row.bytes !== other.bytes) throw new Error('Lower endpoint must be an unchanged subset of the upper endpoint.');
+  }
+  const choices = new Map();
+  if (!Array.isArray(decisions)) throw new Error('Candidate decisions required.');
+  for (const row of decisions) {
+    if (choices.has(row.filename)) throw new Error('Duplicate decision.');
+    if (!hi.has(row.filename) || lo.has(row.filename)) throw new Error('Unknown candidate; inherited photos are automatic.');
+    if (!['add', 'aside'].includes(row.decision)) throw new Error('Invalid candidate decision.');
+    if (typeof row.reason !== 'string' || !row.reason.trim()) throw new Error('Every decision requires a reason.');
+    choices.set(row.filename, row.decision);
+  }
+  if (choices.size !== hi.size - lo.size) throw new Error('Decision coverage must include every additional candidate.');
+  const average = (lo.size + hi.size) / 2;
+  const targetCount = Math.ceil(average);
+  const photos = upper.filter(row => lo.has(row.filename) || choices.get(row.filename) === 'add')
+    .map(({ filename, sha256, bytes }) => ({ filename, sha256, bytes, inherited: lo.has(filename) }))
+    .sort((a, b) => a.filename.localeCompare(b.filename));
+  if (photos.length !== targetCount) throw new Error(`Midpoint count must be ${targetCount}; got ${photos.length}.`);
+  return { average, rounding: 'nearest whole photo; halves upward', targetCount, count: photos.length,
+    previousCount: lo.size, upperCount: hi.size, addedCount: photos.length - lo.size, candidateCount: choices.size, photos };
+}
