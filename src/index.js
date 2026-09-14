@@ -5,9 +5,17 @@ import "./errorHandler.js";
 
 import { Command } from "commander";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
+import { openSync, writeSync, closeSync } from "node:fs";
 import { DEFAULT_PROMPT_PATH } from "./templates.js";
 import { configureHttpFromEnv, closeDispatcher } from "./net.js";
 import { scheduler } from "./scheduler.js";
+import { parsePositiveInteger } from "./core/parsePositiveInteger.js";
+
+if (process.argv.some(arg => /^(?:--knowledge-(?:live|discover|research-only)|--github-all)(=|$)/.test(arg)) && !process.argv.includes('--help')) {
+  const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
+  await reuseRepositoryEnvironment();
+}
 
 function parseEnvFlag(value, fallback = false) {
   if (value == null || value === "") return fallback;
@@ -70,9 +78,22 @@ program
   )
   .option("--no-recurse", "Process a single directory only")
   .option(
+    "--target-level-size <n>",
+    "Continue until a completed level contains at most N photos",
+    parsePositiveInteger
+  )
+  .option(
     "--retry-needs-review",
-    "Re-include files listed in NEEDS_REVIEW for an explicit retry",
+    "Automatically retry files listed in NEEDS_REVIEW",
     parseEnvFlag(process.env.PHOTO_SELECT_RETRY_NEEDS_REVIEW, false)
+  )
+  .option(
+    "--needs-review-retries <n>",
+    "Maximum automatic repair passes per level",
+    parsePositiveInteger,
+    process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES
+      ? parsePositiveInteger(process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES)
+      : 2
   )
   .option(
     "-P, --parallel <n>",
@@ -80,6 +101,11 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option("--field-notes", "Enable field notes workflow")
+  .option("--github-all", "Let the curatorial model read all accessible GitHub repositories live through your private tunnel")
+  .option("--knowledge-live [profile]", "Explore current knowledge repositories automatically; optional private JSON profile")
+  .option("--knowledge-brief <text>", "Describe the photo project inline; no context file needed")
+  .option("--knowledge-discover", "Refresh the knowledge repository/branch catalog without model requests or photo changes")
+  .option("--knowledge-research-only", "Save live research without starting photo curation")
   .option("-v, --verbose", "Print extra logs")
   .option(
     "--save-io",
@@ -103,6 +129,19 @@ program
     (v) => Math.max(1, parseInt(v, 10))
   )
   .option(
+    "--adaptive-workers",
+    "Dynamically tune OpenAI request concurrency; --workers is the ceiling",
+    parseEnvFlag(process.env.PHOTO_SELECT_ADAPTIVE_WORKERS, false)
+  )
+  .option(
+    "--adaptive-min-workers <n>",
+    "Minimum request concurrency while adaptive workers are enabled",
+    parsePositiveInteger,
+    process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS
+      ? parsePositiveInteger(process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS)
+      : 1
+  )
+  .option(
     "--concurrency <n>",
     "Maximum in-flight OpenAI requests",
     (v) => Math.max(1, parseInt(v, 10))
@@ -111,6 +150,11 @@ program
     "--disable-photo-filter",
     "Disable photo-filter API lookups for this job",
     disablePhotoFilterDefault
+  )
+  .option(
+    "--refresh-people-index",
+    "Force one verified rebuild of Photo Filter's people index",
+    parseEnvFlag(process.env.PHOTO_SELECT_REFRESH_PEOPLE_INDEX, false)
   )
   .parse(process.argv);
 
@@ -137,7 +181,21 @@ let {
   concurrency: concurrencyFlag,
   disablePhotoFilter,
   retryNeedsReview,
+  needsReviewRetries,
+  targetLevelSize,
+  adaptiveWorkers,
+  adaptiveMinWorkers,
+  refreshPeopleIndex,
+  knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief, githubAll,
 } = program.opts();
+const liveEnabled = Boolean(knowledgeLive || knowledgeDiscover || knowledgeResearchOnly);
+const privateEnabled = liveEnabled || githubAll;
+const liveAbort = new AbortController();
+if (githubAll && liveEnabled) program.error("Use --github-all by itself; --knowledge-live is the separate research-first mode.");
+if (githubAll && !["openai", "openai-batch"].includes(providerName)) program.error("--github-all supports openai and openai-batch.");
+if (knowledgeBrief && !privateEnabled) program.error("--knowledge-brief requires --knowledge-live.");
+if (liveEnabled && providerName !== "openai") program.error("Live knowledge requires --provider openai; batch and Ollama are not supported yet.");
+if (liveEnabled && program.getOptionValueSource("prompt") === "cli") program.error("Live knowledge uses its source-aware prompt; omit --prompt.");
 
 if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   const n = Number(parallel) || 1;
@@ -145,6 +203,14 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
 if (!workers) workers = 1;
+if (adaptiveWorkers && adaptiveMinWorkers > workers) {
+  program.error("--adaptive-min-workers cannot exceed --workers");
+}
+if (adaptiveWorkers) {
+  process.env.PHOTO_SELECT_ADAPTIVE_WORKERS = "1";
+  process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS = String(adaptiveMinWorkers);
+  process.env.PHOTO_SELECT_ADAPTIVE_MAX_WORKERS = String(workers);
+}
 
 const envConc = Number(process.env.CONCURRENCY);
 const envWorkers = Number(process.env.WORKERS);
@@ -184,11 +250,15 @@ scheduler.setConcurrency(Math.min(concurrency, undiciConnections));
 console.log(
   `⚙️  workers=${workers} concurrency=${concurrency} undici_connections=${undiciConnections}`
 );
+if (adaptiveWorkers) {
+  console.log(`⚙️  adaptive=on range=${adaptiveMinWorkers}..${workers}`);
+}
 
 let shuttingDown = false;
 async function handleSignal(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (privateEnabled) { liveAbort.abort(); return; }
   console.log(`\n🛑  received ${sig}, shutting down…`);
   scheduler.setConcurrency(0);
   await scheduler.waitForIdle().catch(() => {});
@@ -234,17 +304,53 @@ if (!finalReasoningEffort) {
 process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
 (async () => {
+  let liveRun;
   try {
-    if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
+    if (privateEnabled) {
+      const { reuseRepositoryEnvironment } = await import('./knowledgeRun.js');
+      await reuseRepositoryEnvironment();
+    }
+    if ((provider === 'openai' || githubAll) && !process.env.OPENAI_API_KEY && !knowledgeDiscover) {
       console.error(
         '❌  OPENAI_API_KEY is missing. Add it to a .env file or your shell env.'
       );
       process.exit(1);
     }
-    const absDir = path.resolve(dir);
+    let absDir = path.resolve(dir);
+    let restoreOutput = () => {};
+    if (privateEnabled) {
+      const brief = [knowledgeBrief, contextPath ? await readFile(path.resolve(contextPath), 'utf8') : undefined].filter(Boolean).join('\n\n') || undefined;
+      if (githubAll) {
+        const { startGithubRun } = await import('./githubRun.js');
+        liveRun = await startGithubRun({source:absDir,brief,curators,provider,signal:liveAbort.signal,progress:line=>console.log(line)});
+      } else {
+      const { startLiveKnowledge, loadLiveProfile } = await import('./knowledgeRun.js');
+      const profile = await loadLiveProfile(knowledgeLive || true);
+      liveRun = await startLiveKnowledge({profile, source:absDir, brief, model:finalModel,
+        discoverOnly:knowledgeDiscover, researchOnly:knowledgeResearchOnly, signal:liveAbort.signal, progress:line=>console.log(line)});
+      if (knowledgeDiscover || knowledgeResearchOnly) { console.log(`knowledge: saved ${liveRun.root}`); return; }
+      }
+      absDir = liveRun.images; contextPath = undefined; curators = [...liveRun.provider.curators]; promptPath = githubAll ? promptPath : liveRun.provider.promptPath;
+      if(!githubAll)process.env.PHOTO_SELECT_DISABLE_PEOPLE = '1';
+      process.umask(0o077);
+      if(!githubAll)process.chdir(liveRun.root);
+      const fd=openSync(path.join(liveRun.root,'runtime.log'),'a',0o600);
+      const stdout=process.stdout.write, stderr=process.stderr.write;
+      const privateWrite=(stream,original)=>(chunk,encoding,callback)=>{
+        const bytes=typeof chunk==='string'?Buffer.from(chunk,typeof encoding==='string'?encoding:'utf8'):chunk;
+        writeSync(fd,bytes);
+        if(verbose)return original.call(stream,chunk,encoding,callback);
+        if(typeof encoding==='function')encoding();else callback?.();
+        return true;
+      };
+      process.stdout.write=privateWrite(process.stdout,stdout);
+      process.stderr.write=privateWrite(process.stderr,stderr);
+      restoreOutput=()=>{process.stdout.write=stdout;process.stderr.write=stderr;closeSync(fd);};
+    }
+    try {
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
-    const driver = await getProvider(provider);
+    const driver = liveRun?.provider || await getProvider(provider);
     await triageDirectory({
       dir: absDir,
       promptPath,
@@ -263,19 +369,30 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       verbosity,
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
+      needsReviewRetries,
+      targetLevelSize,
+      refreshPeopleIndex,
     });
-    console.log("🎉  Finished triaging.");
+    } finally { restoreOutput(); await liveRun?.stop?.(); }
+    console.log(liveRun ? `knowledge: curation and field notes saved in ${liveRun.root}` : "🎉  Finished triaging.");
   } catch (err) {
+    if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
-        "🛑  Billing limit reached. Please review your provider usage before retrying."
+        `⏸️  OpenAI API credits exhausted. Run paused${
+          Number.isInteger(err?.remainingImages)
+            ? ` with ${err.remainingImages} image(s) remaining`
+            : ""
+        }; completed work was preserved.`
       );
+      console.error("   Add credits, then rerun the same command to resume.");
       if (process.env.PHOTO_SELECT_VERBOSE === "1" && err?.cause) {
         console.error("  ↳ cause:", err.cause);
       }
-      process.exit(1);
+      process.exitCode = err?.exitCode || 75;
+      return;
     }
     console.error("❌  Error:", err);
     process.exit(1);
-  }
+  } finally { await liveRun?.stop?.(); }
 })();

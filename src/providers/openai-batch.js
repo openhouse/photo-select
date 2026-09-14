@@ -1,6 +1,7 @@
 import { OpenAI } from 'openai';
 import { mkdir, writeFile, appendFile, readFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { AsyncResource } from 'node:async_hooks';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { buildInput, buildMessages, schemaForBatch } from '../chatClient.js';
@@ -8,17 +9,53 @@ import { buildReplySchema } from '../replySchema.js';
 import { computeMaxOutputTokens, computeOutputBudget, estimateInputTokens } from '../tokenEstimate.js';
 import { delay } from '../config.js';
 import { debugBatch } from '../../scripts/debug-batch.mjs';
-import { buildCacheableResponsesPrompt } from '../core/promptCaching.js';
+import {
+  buildCacheableResponsesPrompt,
+  promptCacheHitFromUsage,
+  stabilizeResponseSchemaForPromptCache,
+} from '../core/promptCaching.js';
+import {
+  OPENAI_BATCH_MAX_REQUESTS,
+  planCacheSeededBatches,
+} from '../core/batchAggregation.js';
+import {
+  AdaptiveConcurrencyController,
+  readRateLimitSnapshot,
+} from '../core/adaptiveConcurrency.js';
+import {
+  isBillingLimitError,
+  providerErrorSummary,
+} from '../core/providerErrors.js';
 
 const DEFAULT_COMPLETION_WINDOW = process.env.PHOTO_SELECT_BATCH_COMPLETION_WINDOW || '24h';
 const DEFAULT_POLL_MS = Number(process.env.PHOTO_SELECT_BATCH_CHECK_INTERVAL_MS || 60000);
+const DEFAULT_AGGREGATION_MS = Number(
+  process.env.PHOTO_SELECT_BATCH_AGGREGATION_MS || 1000
+);
+const DEFAULT_MAX_BATCH_BYTES = Number(
+  process.env.PHOTO_SELECT_BATCH_MAX_INPUT_BYTES || 190 * 1024 * 1024
+);
 const DEFAULT_ENDPOINT = '/v1/responses';
 const FALLBACK_ENDPOINT = '/v1/chat/completions';
+const FLEX_SERVICE_TIER = 'flex';
+const FLEX_TIMEOUT_MS = Number(process.env.PHOTO_SELECT_FLEX_TIMEOUT_MS || 15 * 60 * 1000);
 
 const TERMINAL_FAILURE = new Set(['failed', 'expired', 'canceled']);
 const ALLOWED_REASONING_EFFORT = new Set(['auto', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 
 const MAX_SAFE_ID_LENGTH = 200;
+
+function envBool(name, fallback = false) {
+  const value = process.env[name];
+  if (value == null || value === '') return fallback;
+  return /^(1|true|yes|on)$/i.test(value);
+}
+
+function estimatedRateLimitTokens(item) {
+  const budget = item.responsesRequest.budget;
+  return Number(budget?.inputs?.estimatedInputTokens || 0) +
+    Number(budget?.maxOutputTokens || 0);
+}
 
 function safeId(customId) {
   const sanitized = customId.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -245,18 +282,35 @@ async function streamToText(resp) {
 export default class OpenAIBatchProvider {
   name = 'openai-batch';
   supportsAsync = true;
+  supportsDeferredPreparation = true;
 
   constructor({
     client,
     pollIntervalMs = DEFAULT_POLL_MS,
     completionWindow = DEFAULT_COMPLETION_WINDOW,
+    aggregationWindowMs = DEFAULT_AGGREGATION_MS,
+    maxBatchInputBytes = DEFAULT_MAX_BATCH_BYTES,
+    maxBatchRequests = OPENAI_BATCH_MAX_REQUESTS,
     enableFallback = true,
     helpers = {},
+    adaptiveConcurrency = envBool('PHOTO_SELECT_ADAPTIVE_WORKERS'),
+    adaptiveOptions = {},
   } = {}) {
     this.client = client || new OpenAI();
     this.pollIntervalMs = pollIntervalMs;
     this.completionWindow = completionWindow;
+    this.aggregationWindowMs = Math.max(0, Number(aggregationWindowMs) || 0);
+    this.maxBatchInputBytes = Math.max(1, Number(maxBatchInputBytes) || 1);
+    this.maxBatchRequests = Math.max(1, Number(maxBatchRequests) || 1);
     this.enableFallback = enableFallback;
+    this.pendingSubmissionGroups = new Map();
+    this.adaptiveController = adaptiveConcurrency
+      ? new AdaptiveConcurrencyController({
+          minConcurrency: Number(process.env.PHOTO_SELECT_ADAPTIVE_MIN_WORKERS || 1),
+          maxConcurrency: Number(process.env.PHOTO_SELECT_ADAPTIVE_MAX_WORKERS || 10),
+          ...adaptiveOptions,
+        })
+      : null;
     this.helpers = {
       buildInput,
       buildMessages,
@@ -269,80 +323,402 @@ export default class OpenAIBatchProvider {
   async submit(options = {}) {
     const {
       levelDir,
-      prompt,
-      promptCachePrefix,
-      images = [],
-      curators = [],
-      baseCuratorCount = curators.length,
-      dynamicCuratorCount,
       model = 'gpt-5',
-      minutesMin = 3,
-      minutesMax = 12,
       reasoningEffort,
-      verbosity = 'low',
     } = options;
     if (!levelDir) throw new Error('levelDir is required for openai-batch provider');
     if (reasoningEffort && !ALLOWED_REASONING_EFFORT.has(reasoningEffort)) {
       throw new Error(`invalid reasoningEffort: ${reasoningEffort}`);
     }
-    const dirs = await ensureDirs(levelDir);
-    const responsesRequest = await this.#buildResponsesRequest({
-      prompt,
-      promptCachePrefix,
-      images,
-      curators,
-      model,
-      minutesMin,
-      minutesMax,
-      reasoningEffort,
-      verbosity,
-      baseCuratorCount,
-      dynamicCuratorCount,
+    const prepare = AsyncResource.bind(async () => {
+      const deferred = typeof options.prepare === 'function'
+        ? await options.prepare()
+        : {};
+      const preparedOptions = {
+        ...options,
+        ...(deferred || {}),
+        levelDir,
+        model,
+      };
+      const {
+        prompt,
+        promptCachePrefix,
+        images = [],
+        curators = [],
+        baseCuratorCount = curators.length,
+        dynamicCuratorCount,
+        minutesMin = 3,
+        minutesMax = 12,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity = 'low',
+      } = preparedOptions;
+      if (
+        preparedReasoningEffort &&
+        !ALLOWED_REASONING_EFFORT.has(preparedReasoningEffort)
+      ) {
+        throw new Error(`invalid reasoningEffort: ${preparedReasoningEffort}`);
+      }
+      const dirs = await ensureDirs(levelDir);
+      const responsesRequest = await this.#buildResponsesRequest({
+        prompt,
+        promptCachePrefix,
+        images,
+        curators,
+        model,
+        minutesMin,
+        minutesMax,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity,
+        baseCuratorCount,
+        dynamicCuratorCount,
+      });
+      const customId = computeCustomId({
+        levelDir,
+        prompt,
+        model,
+        curators,
+        used: responsesRequest.used,
+        minutesMin,
+        minutesMax,
+        reasoningEffort: preparedReasoningEffort,
+        verbosity,
+      });
+      return {
+        dirs,
+        customId,
+        safe: safeId(customId),
+        levelDir,
+        prompt,
+        images,
+        curators,
+        model,
+        minutesMin,
+        minutesMax,
+        verbosity,
+        responsesRequest,
+      };
     });
-    const customId = computeCustomId({
-      levelDir,
-      prompt,
-      model,
-      curators,
-      used: responsesRequest.used,
-      minutesMin,
-      minutesMax,
-      reasoningEffort,
-      verbosity,
-    });
-    const safe = safeId(customId);
+    return this.#enqueueSubmission({ levelDir, model, prepare });
+  }
 
-    const attempts = [
-      { endpoint: DEFAULT_ENDPOINT, request: responsesRequest },
-    ];
-    if (this.enableFallback) {
-      attempts.push({ endpoint: FALLBACK_ENDPOINT, request: null });
+  #enqueueSubmission(item) {
+    const groupKey = JSON.stringify([
+      path.resolve(item.levelDir),
+      item.model,
+      this.completionWindow,
+    ]);
+    let group = this.pendingSubmissionGroups.get(groupKey);
+    if (!group) {
+      group = { items: [], timer: null };
+      this.pendingSubmissionGroups.set(groupKey, group);
     }
 
+    return new Promise((resolve, reject) => {
+      group.items.push({ ...item, resolve, reject });
+      if (!group.timer) {
+        group.timer = setTimeout(() => {
+          void this.#flushSubmissionGroup(groupKey);
+        }, this.aggregationWindowMs);
+      }
+    });
+  }
+
+  async #flushSubmissionGroup(groupKey) {
+    const group = this.pendingSubmissionGroups.get(groupKey);
+    if (!group) return;
+    this.pendingSubmissionGroups.delete(groupKey);
+    let items = [];
+    const completedHandles = new Map();
+    const resolved = new Set();
+    const recordHandle = (handle) => {
+      completedHandles.set(handle.customId, handle);
+      return handle;
+    };
+    const resolveHandle = (handle) => {
+      const item = items.find((candidate) => candidate.customId === handle.customId);
+      if (!item || resolved.has(item.customId)) return handle;
+      resolved.add(item.customId);
+      item.resolve(handle);
+      return handle;
+    };
+    try {
+      items = (await Promise.all(group.items.map(async (queued) => {
+        try {
+          return {
+            ...await queued.prepare(),
+            resolve: queued.resolve,
+            reject: queued.reject,
+          };
+        } catch (err) {
+          queued.reject(err);
+          return null;
+        }
+      }))).filter(Boolean);
+      if (items.length === 0) return;
+      const partitionable = items.map((item) => ({
+        ...item,
+        id: item.customId,
+        promptCacheKey: item.responsesRequest.body.prompt_cache_options?.mode === 'explicit'
+          ? item.responsesRequest.body.prompt_cache_key
+          : undefined,
+        jsonl: JSON.stringify({
+          custom_id: item.customId,
+          method: 'POST',
+          url: DEFAULT_ENDPOINT,
+          body: item.responsesRequest.body,
+        }) + '\n',
+      }));
+      const plan = planCacheSeededBatches(partitionable, {
+        maxRequests: this.maxBatchRequests,
+        maxBytes: this.maxBatchInputBytes,
+      });
+      if (!plan.seeded) {
+        const handles = [];
+        for (const partition of plan.batches) {
+          const submitted = await this.#submitPreparedGroup(partition);
+          submitted.forEach(recordHandle);
+          handles.push(...submitted);
+        }
+        handles.forEach(resolveHandle);
+        return;
+      }
+
+      const seedHandles = await this.#submitPreparedFlexGroup(
+        plan.batches[0], 'seed', recordHandle);
+      const probeHandles = await this.#submitPreparedFlexGroup(
+        plan.batches[1], 'probe', recordHandle);
+      if (!promptCacheHitFromUsage(probeHandles[0].completedResult.usage)) {
+        const err = new Error(
+          'OpenAI prompt-cache probe completed without reporting cached tokens; reader fanout was stopped'
+        );
+        err.code = 'PROMPT_CACHE_PROBE_MISS';
+        err.usage = probeHandles[0].completedResult.usage;
+        throw err;
+      }
+      if (this.adaptiveController) {
+        this.adaptiveController.observe(probeHandles[0].adaptiveObservation);
+      }
+      const readerGroups = this.adaptiveController
+        ? [await this.#submitPreparedFlexGroup(
+            plan.batches.slice(2).flat(), 'reader', recordHandle)]
+        : await Promise.all(plan.batches.slice(2).map((partition) =>
+            this.#submitPreparedFlexGroup(partition, 'reader', recordHandle)));
+      const missedReader = readerGroups.flat().find((handle) =>
+        !promptCacheHitFromUsage(handle.completedResult?.usage));
+      if (missedReader) {
+        const err = new Error(
+          'OpenAI Flex reader completed without reporting cached tokens; the cache cohort was stopped'
+        );
+        err.code = 'PROMPT_CACHE_READER_MISS';
+        err.usage = missedReader.completedResult?.usage;
+        throw err;
+      }
+      if (this.adaptiveController) {
+        await appendLedger(items[0].dirs.base, {
+          event: 'adaptive_parallelism',
+          ...this.adaptiveController.snapshot(),
+        });
+      }
+
+      const handles = [
+        ...seedHandles,
+        ...probeHandles,
+        ...readerGroups.flat(),
+      ];
+      handles.forEach(resolveHandle);
+    } catch (err) {
+      if (isBillingLimitError(err)) {
+        for (const handle of completedHandles.values()) resolveHandle(handle);
+      }
+      for (const item of items) {
+        if (!resolved.has(item.customId)) item.reject(err);
+      }
+    }
+  }
+
+  async #submitPreparedFlexGroup(items, cacheRole, onCompleted) {
+    const submitOne = async (item) => {
+      const requestBody = {
+        ...item.responsesRequest.body,
+        service_tier: FLEX_SERVICE_TIER,
+      };
+      const jsonlPath = path.join(item.dirs.inputs, `${item.safe}.jsonl`);
+      await writeFile(jsonlPath, JSON.stringify({
+        custom_id: item.customId,
+        method: 'POST',
+        url: DEFAULT_ENDPOINT,
+        body: requestBody,
+      }) + '\n', 'utf8');
+
+      let response;
+      let responseHeaders;
+      const submittedAt = new Date().toISOString();
+      try {
+        const apiPromise = this.client.responses.create(requestBody, {
+          headers: { 'Idempotency-Key': crypto.randomUUID() },
+          timeout: FLEX_TIMEOUT_MS,
+        });
+        if (typeof apiPromise?.withResponse === 'function') {
+          const raw = await apiPromise.withResponse();
+          response = raw.data;
+          responseHeaders = raw.response?.headers;
+        } else {
+          response = await apiPromise;
+        }
+      } catch (err) {
+        const summary = providerErrorSummary(err);
+        await appendLedger(item.dirs.base, {
+          custom_id: item.customId,
+          event: 'submit_error',
+          endpoint: DEFAULT_ENDPOINT,
+          service_tier: FLEX_SERVICE_TIER,
+          cache_role: cacheRole,
+          ...summary,
+        });
+        throw err;
+      }
+      const rateLimits = readRateLimitSnapshot(responseHeaders);
+      const parsed = extractStructured(response, { customId: item.customId });
+      const completedAt = new Date().toISOString();
+      const ticketPath = path.join(item.dirs.tickets, `${item.safe}.ticket.json`);
+      const statusPath = path.join(item.dirs.status, `${item.safe}.status.json`);
+      const resultPath = path.join(item.dirs.results, `${response.id}.jsonl`);
+      const ticket = {
+        custom_id: item.customId,
+        batch_id: response.id,
+        model: item.model,
+        endpoint: DEFAULT_ENDPOINT,
+        service_tier: FLEX_SERVICE_TIER,
+        cache_role: cacheRole,
+        status: response.status,
+        submitted_at: submittedAt,
+        completed_at: completedAt,
+        used_images: item.responsesRequest.used.map((file) => path.basename(file)),
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
+      };
+      await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
+      await writeFile(statusPath, JSON.stringify({
+        id: response.id,
+        status: response.status,
+        service_tier: response.service_tier || FLEX_SERVICE_TIER,
+        usage: response.usage,
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
+      }, null, 2));
+      await writeFile(resultPath, JSON.stringify({
+        custom_id: item.customId,
+        response: { status_code: 200, body: response },
+      }) + '\n', 'utf8');
+      await appendLedger(item.dirs.base, {
+        custom_id: item.customId,
+        event: 'completed',
+        batch_id: response.id,
+        endpoint: DEFAULT_ENDPOINT,
+        service_tier: FLEX_SERVICE_TIER,
+        cache_role: cacheRole,
+        status: response.status,
+        usage: response.usage,
+        ...(Object.keys(rateLimits).length ? { rate_limits: rateLimits } : {}),
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      });
+
+      return {
+        provider: this.name,
+        customId: item.customId,
+        batchId: response.id,
+        levelDir: item.levelDir,
+        model: item.model,
+        ticketPath,
+        statusPath,
+        safeId: item.safe,
+        used: item.responsesRequest.used,
+        endpoint: DEFAULT_ENDPOINT,
+        serviceTier: FLEX_SERVICE_TIER,
+        completedResult: {
+          raw: parsed.text,
+          json: parsed.json,
+          usage: response.usage,
+        },
+        adaptiveObservation: {
+          cacheHit: promptCacheHitFromUsage(response.usage),
+          headers: responseHeaders,
+          estimatedTokens: estimatedRateLimitTokens(item),
+        },
+      };
+    };
+
+    const accept = (handle) => {
+      if (
+        cacheRole === 'reader' &&
+        !handle.adaptiveObservation.cacheHit
+      ) {
+        const err = new Error(
+          'OpenAI Flex reader completed without reporting cached tokens; the cache cohort was stopped'
+        );
+        err.code = 'PROMPT_CACHE_READER_MISS';
+        err.usage = handle.completedResult?.usage;
+        err.adaptiveObservation = handle.adaptiveObservation;
+        throw err;
+      }
+      onCompleted?.(handle);
+      return handle;
+    };
+
+    if (!this.adaptiveController || cacheRole !== 'reader') {
+      return Promise.all(items.map(async (item) => accept(await submitOne(item))));
+    }
+    const cacheKey = items[0]?.responsesRequest.body.prompt_cache_key;
+    return this.adaptiveController.run(items, async (item) => {
+      const handle = await submitOne(item);
+      return {
+        value: accept(handle),
+        observation: handle.adaptiveObservation,
+      };
+    }, { cacheKey });
+  }
+
+  async #submitPreparedGroup(items) {
+    const first = items[0];
+    const groupDigest = crypto
+      .createHash('sha256')
+      .update(items.map((item) => item.customId).join('\0'))
+      .digest('hex')
+      .slice(0, 24);
+    const jsonlPath = path.join(
+      first.dirs.inputs,
+      items.length === 1 ? `${first.safe}.jsonl` : `batch-${groupDigest}.jsonl`
+    );
+    const endpoints = this.enableFallback
+      ? [DEFAULT_ENDPOINT, FALLBACK_ENDPOINT]
+      : [DEFAULT_ENDPOINT];
     let batch;
-    let lastErr;
     let inputFile;
     let endpointUsed = DEFAULT_ENDPOINT;
-    for (const attempt of attempts) {
-      const endpoint = attempt.endpoint;
-      const request = attempt.request ||
-        (await this.#buildChatCompletionsRequest({
-          prompt,
-          images,
-          curators,
-          model,
-          minutesMin,
-          minutesMax,
-          verbosity,
-        }, responsesRequest.used));
-      const jsonlLine = {
-        custom_id: customId,
-        method: 'POST',
-        url: endpoint,
-        body: request.body,
-      };
-      const jsonlPath = path.join(dirs.inputs, `${safe}.jsonl`);
-      await writeFile(jsonlPath, JSON.stringify(jsonlLine) + '\n', 'utf8');
+    let lastErr;
+
+    for (const endpoint of endpoints) {
+      const requests = endpoint === DEFAULT_ENDPOINT
+        ? items.map((item) => item.responsesRequest)
+        : await Promise.all(
+          items.map((item) => this.#buildChatCompletionsRequest({
+            prompt: item.prompt,
+            images: item.images,
+            curators: item.curators,
+            model: item.model,
+            minutesMin: item.minutesMin,
+            minutesMax: item.minutesMax,
+            verbosity: item.verbosity,
+          }, item.responsesRequest.used))
+        );
+      const jsonl = items
+        .map((item, index) => JSON.stringify({
+          custom_id: item.customId,
+          method: 'POST',
+          url: endpoint,
+          body: requests[index].body,
+        }))
+        .join('\n') + '\n';
+      await writeFile(jsonlPath, jsonl, 'utf8');
       try {
         inputFile = await this.client.files.create({
           file: createReadStream(jsonlPath),
@@ -353,73 +729,82 @@ export default class OpenAIBatchProvider {
           endpoint,
           completion_window: this.completionWindow,
           metadata: {
-            custom_id: customId,
-            model,
-            level: levelKey(levelDir),
+            custom_id: items.length === 1
+              ? first.customId
+              : `ps-group:${groupDigest}`,
+            request_count: String(items.length),
+            model: first.model,
+            level: levelKey(first.levelDir),
           },
         });
         endpointUsed = endpoint;
         break;
       } catch (err) {
         lastErr = err;
-        await appendLedger(dirs.base, {
-          custom_id: customId,
+        const summary = providerErrorSummary(err);
+        await Promise.all(items.map((item) => appendLedger(item.dirs.base, {
+          custom_id: item.customId,
           event: 'submit_error',
           endpoint,
-          message: err?.message,
-        });
-        if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) {
-          throw err;
-        }
+          ...summary,
+        })));
+        if (isBillingLimitError(err)) throw err;
+        if (!this.enableFallback || endpoint === FALLBACK_ENDPOINT) throw err;
       }
     }
 
-    if (!batch) {
-      throw lastErr || new Error('Failed to create batch job');
-    }
+    if (!batch) throw lastErr || new Error('Failed to create batch job');
 
-    const ticketPath = path.join(dirs.tickets, `${safe}.ticket.json`);
     const submittedAt = new Date().toISOString();
-    const ticket = {
-      custom_id: customId,
-      batch_id: batch.id,
-      model,
-      endpoint: endpointUsed,
-      status: batch.status,
-      input_file_id: inputFile.id,
-      submitted_at: submittedAt,
-      completion_window: this.completionWindow,
-      used_images: responsesRequest.used.map((file) => path.basename(file)),
-      output_budget: budgetArtifact(responsesRequest.budget),
-    };
-    await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
-    await appendLedger(dirs.base, {
-      custom_id: customId,
-      event: 'submitted',
-      batch_id: batch.id,
-      endpoint: endpointUsed,
-      status: batch.status,
-      output_budget: budgetArtifact(responsesRequest.budget),
-    });
+    return Promise.all(items.map(async (item) => {
+      const ticketPath = path.join(
+        item.dirs.tickets,
+        `${item.safe}.ticket.json`
+      );
+      const statusPath = path.join(
+        item.dirs.status,
+        `${item.safe}.status.json`
+      );
+      const ticket = {
+        custom_id: item.customId,
+        batch_id: batch.id,
+        model: item.model,
+        endpoint: endpointUsed,
+        status: batch.status,
+        input_file_id: inputFile.id,
+        submitted_at: submittedAt,
+        completion_window: this.completionWindow,
+        used_images: item.responsesRequest.used.map((file) => path.basename(file)),
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      };
+      await writeFile(ticketPath, JSON.stringify(ticket, null, 2));
+      await appendLedger(item.dirs.base, {
+        custom_id: item.customId,
+        event: 'submitted',
+        batch_id: batch.id,
+        endpoint: endpointUsed,
+        status: batch.status,
+        output_budget: budgetArtifact(item.responsesRequest.budget),
+      });
+      await writeFile(statusPath, JSON.stringify(batch, null, 2));
 
-    const statusPath = path.join(dirs.status, `${safe}.status.json`);
-    await writeFile(statusPath, JSON.stringify(batch, null, 2));
-
-    return {
-      provider: this.name,
-      customId,
-      batchId: batch.id,
-      levelDir,
-      model,
-      ticketPath,
-      statusPath,
-      safeId: safe,
-      used: responsesRequest.used,
-      endpoint: endpointUsed,
-    };
+      return {
+        provider: this.name,
+        customId: item.customId,
+        batchId: batch.id,
+        levelDir: item.levelDir,
+        model: item.model,
+        ticketPath,
+        statusPath,
+        safeId: item.safe,
+        used: item.responsesRequest.used,
+        endpoint: endpointUsed,
+      };
+    }));
   }
 
   async collect(handle) {
+    if (handle.completedResult) return handle.completedResult;
     let lastStatus = null;
     const dirs = await ensureDirs(handle.levelDir);
     const ticketPath = path.join(dirs.tickets, `${handle.safeId}.ticket.json`);
@@ -589,6 +974,9 @@ export default class OpenAIBatchProvider {
       input,
       promptCachePrefix,
     });
+    const responseSchema = promptFields.prompt_cache_options?.mode === 'explicit'
+      ? stabilizeResponseSchemaForPromptCache(schema.schema)
+      : schema.schema;
     const body = {
       model,
       ...promptFields,
@@ -597,7 +985,7 @@ export default class OpenAIBatchProvider {
         format: {
           type: 'json_schema',
           name: schema.name,
-          schema: schema.schema,
+          schema: responseSchema,
           strict: true,
         },
       },

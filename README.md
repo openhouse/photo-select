@@ -158,6 +158,10 @@ through to the script unchanged.
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
 | `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
+| `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
+| `--retry-needs-review` | `false` | Automatically retry held `NEEDS_REVIEW` files without restarting the CLI |
+| `--needs-review-retries` | `2` | Maximum automatic repair passes per `_level-*` when retries are enabled |
+| `--refresh-people-index` | `false` | Force one atomic rebuild of Photo Filter's people index before the level prefetch |
 | `--parallel` | *(deprecated)* | Maps to `--workers` and prints a warning |
 | `--field-notes` | `false` | Enable notebook updates via field-notes workflow |
 | `--verbose` | `false` | Print extra logs |
@@ -170,7 +174,7 @@ through to the script unchanged.
 | `--batch-window` | `24h` | Completion window requested for batch jobs |
 | `--model-fallback` | *(unset)* | Fallback model if the chosen one is not batch-eligible |
 
-People detected in two or more photos are automatically appended to the `Curators:` line, ordered by their last appearance.
+People tagged in two or more photos within a batch are automatically appended to its curator roster, ordered by their last appearance. This also applies with `--github-all`; the expanded roster and per-photo tags are retained in the private request audit, and `--verbose` lists additional curators. The configured Photo Filter metadata service must be available. All GitHub-mode voices, including tagged people, are fictionalized lenses.
 Names from the per‑photo metadata API are passed through verbatim—parentheses, plus signs, and other punctuation are preserved. This may produce duplicates relative to CLI‑supplied names (e.g., `Beata` and `Beata (Kendell + Mandy cabin neighbor)`); the model is instructed to use the shortest variant for speaker labels.
 
 Set `PHOTO_SELECT_IDENTITY_POLICY=canonicalize` to enable the older normalization/alias behaviour, though the default (`passthrough`) is recommended.
@@ -203,6 +207,34 @@ other levels it skips individual files whose size/mtime match the manifest. Use
 to ignore existing manifests. Filesystem concurrency defaults to 12 (from
 `PHOTO_SELECT_FS_CONCURRENCY`); override it with `PHOTO_SELECT_STAGE_CONCURRENCY`
 or the `--stage-concurrency` flag when staging needs to be throttled.
+
+Recursive runs settle every photo in the current level before deciding what happens
+next. If the completed level is unanimous—every photo is in `_keep`, or every photo
+is in `_aside`—the run stops. A mixed level descends into `_keep` and continues.
+
+That unanimous-level rule remains the default. To request a smaller terminal level,
+set a positive target:
+
+```bash
+/path/to/photo-select/photo-select-here.sh --target-level-size 10
+```
+
+With `--target-level-size 10`, the tool completes and archives each level until a
+completed `_level-*` contains 10 or fewer source photos. Unanimous `_keep` above the
+target continues into `_keep`; unanimous `_aside` remains terminal because no photos
+remain to refine. The target is an upper bound, so a mixed level may reduce the next
+level from above 10 to below 10. Omitting the option preserves unanimous stopping
+exactly as before. The option changes recursive stopping only; it does not alter the
+curatorial prompt or decision schema.
+
+With `--retry-needs-review`, a safe batch failure remains marked and unmoved, then
+only the held files are submitted again automatically. The default allowance is two
+repair passes after the ordinary pass, independently for each `_level-*`. The used
+allowance is recorded under that level's `.batch` directory before submission, so a
+process restart cannot silently replenish it. Override the limit with
+`--needs-review-retries N` (or `PHOTO_SELECT_NEEDS_REVIEW_RETRIES`). If the allowance
+is exhausted, the level stays blocked for human review. Omitting
+`--retry-needs-review` preserves the existing fail-closed behavior.
 
 ### Concurrency: `--workers` (recommended)
 
@@ -334,7 +366,9 @@ on startup.
 
 ### People metadata (optional)
 
-Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. For each image it fetches `/api/photos/by-filename/<filename>/persons` and sends a JSON blob like `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. Results are cached per filename for the duration of the run. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip these lookups for a single job.
+Set `PHOTO_FILTER_API_BASE` to the base URL of your [photo‑filter](https://github.com/openhouse/photo-filter) service to include face‑tag data in the prompt. The CLI assumes the service is available at `http://localhost:3000` when the variable is unset and logs a warning if requests fail. Before each level, supported servers bulk-resolve the filenames from one content-addressed `photos.json` snapshot and prime the existing per-filename cache. Older servers fall back to `/api/photos/by-filename/<filename>/persons`. In either case the prompt receives the same JSON blob, such as `{ "filename": "DSCF1234.jpg", "people": ["Alice", "Bob"] }` before the image itself. If duplicate album exports for one semantic photograph disagree, the bulk index keeps the deterministic union of their known people labels rather than whichever album happened to be scanned first.
+
+Pass `--refresh-people-index` (or set `PHOTO_SELECT_REFRESH_PEOPLE_INDEX=1`) when the derived index may be stale. This forces one atomic rebuild from the active `photos.json` files. The returned corpus hash proves the index matches those files; it cannot prove the files match the current Apple Photos library, so upstream source freshness remains reported separately as `unknown`. Pass `--disable-photo-filter` (or set `PHOTO_SELECT_DISABLE_PEOPLE=1`) to skip people lookups for a single job.
 
 Example:
 
@@ -450,7 +484,7 @@ labels lets you compute precision, recall, and F1‑score for each model. Repeat
 the process on multiple batches will highlight which model gives the most
 consistent choices.
 
-The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches.
+The tool creates `_keep` and `_aside` sub‑folders inside every directory it touches. This also applies with `--github-all`: GitHub access preserves the selected image directory, snapshots and resume behavior. Only API audit files go into a separate private run directory.
 
 ### Example: A/B testing models
 
@@ -486,9 +520,20 @@ through that API, so no extra flags are needed.
 4. Parse that JSON to determine which files were explicitly labeled `keep` or `aside` and capture any notes about each image.
 5. Move those files to the corresponding sub‑folders and write a text file containing the notes next to each image. Files omitted from the decision block remain in place for the next batch so the model can review them again. Meeting minutes are saved as `minutes-<uuid>.json` (and `minutes-<uuid>.txt` when `PHOTO_SELECT_TRANSCRIPT_TXT=1`).
 6. Re‑run the algorithm on the newly created `_keep` folder (unless `--no-recurse`).
-   If every photo at a level is kept or every photo is set aside, recursion stops early.
+   By default, if every photo at a level is kept or every photo is set aside, recursion
+   stops early. With `--target-level-size N`, unanimous keep above `N` continues until
+   a completed level contains at most `N` source photos; unanimous aside still stops.
 7. On the first pass of each level a `_level-XXX` folder is created next to `_keep` and `_aside` containing a snapshot of the images originally present. If any files fail to copy after three retries (common on network drives), their paths are recorded in `failed-archives.txt` inside that folder.
 8. Stop when a directory has zero unclassified images.
+
+### Billing interruptions
+
+If OpenAI reports exhausted credits or a billing limit, Photo Select stops
+submitting new work, drains already-completed in-flight batches, and exits with
+status 75. Completed classifications remain in place; the current level records
+`.batch/billing-pause.json` plus a `billing_paused` ledger event. Add credits and
+rerun the same command to resume. Billing failures do not create `NEEDS_REVIEW`
+entries, and the pause marker is cleared after the next successful batch.
 
 ### Structured outputs (OpenAI)
 
@@ -513,7 +558,7 @@ full.
 
 ## Caching
 
-Responses from OpenAI are cached under a `.cache` directory using a hash of the
+Outside `--github-all`, responses from OpenAI are cached under a `.cache` directory using a hash of the
 prompt, model, and file metadata. Subsequent runs with the same inputs reuse the
 saved reply instead of hitting the API. The tool never caches model responses
 that contain zero decisions (0 keeps + 0 asides). Such entries are skipped on
@@ -521,6 +566,15 @@ write and evicted on read. If a batch still produces no decisions, the run is
 retried (finalize mode when 10 or fewer images remain). After two consecutive
 no-decision replies, the batch is marked `NEEDS_REVIEW` and processing
 continues.
+
+With `--github-all`, each curation can discover current GitHub sources. Eligible
+GPT-5.6+ requests instead reuse the full brief through API prompt caching. With
+`--provider openai-batch`, eligible requests use explicit Flex at Batch token rates,
+with no fallback to standard pricing. A seed/probe check precedes reader waves; `--verbose` reports actual
+cached, written and total input tokens. A cache miss holds further submissions.
+The brief, per-photo tags and automatic additional curators are preserved. See
+[GitHub prompt caching](docs/live-knowledge.md#prompt-caching-with-github-batch-curation)
+for operation, the full-brief live evidence, opt-in eval and limits.
 
 ## Testing
 
@@ -544,3 +598,17 @@ The **Vitest** suite covers random selection, safe moves, and response‑parsing
 
 Built to replace a manual workflow that relied on Finder tags and the ChatGPT web UI.
 Now everything—random choice, conversation, and file moves—happens automatically in the shell.
+
+## GitHub access during curation
+
+Add `--github-all` to your existing command. The model can follow private GitHub links, discover accessible repositories and inspect recent branches during the same API call that curates your images. Your GitHub credential stays in a local read-only bridge; OpenAI's private tunnel carries the tool requests and source results.
+
+The flag supports `openai` and `openai-batch`, preserves your model and exact custom curator list, and automatically starts the configured tunnel. Jamie's current launcher is configured. Run from your image directory as before; selections go into its `_keep` and `_aside` directories, while API traces go to a separate private run whose path is printed.
+
+See [the command and setup guide](docs/live-knowledge.md), [RFC 0012](docs/rfcs/0012-live-knowledge-exploration.md), and the [acceptance record](evals/github-inference-readiness.json). Keep the Mac awake and online during Batch processing. Run `npm run hillclimb` for regression checks.
+
+The older `--knowledge-live` mode remains a separate [research-first workflow](docs/research-first-knowledge.md); it does not attach GitHub tools to the image-curation call.
+
+`--github-all` preserves the ordinary default or custom `--prompt` and adds only
+authenticated read-only GitHub tools. It does not append research or editorial
+instructions. See [prompt preservation](docs/live-knowledge.md#prompt-preservation).

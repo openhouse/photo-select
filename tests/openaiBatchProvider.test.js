@@ -18,8 +18,145 @@ const createClient = () => {
     retrieve: vi.fn(),
     cancel: vi.fn(async () => ({})),
   };
-  return { files, batches };
+  const responses = {
+    create: vi.fn(),
+  };
+  return { files, batches, responses };
 };
+
+const CACHE_WRITE_USAGE = {
+  input_tokens: 7000,
+  input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+};
+const CACHE_HIT_USAGE = {
+  input_tokens: 7000,
+  input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
+};
+const RATE_LIMIT_HEADERS = {
+  'x-ratelimit-limit-requests': '500',
+  'x-ratelimit-remaining-requests': '499',
+  'x-ratelimit-limit-tokens': '2000000',
+  'x-ratelimit-remaining-tokens': '1900000',
+};
+
+function installCacheResponsesMock(client, usages) {
+  client.responses.create.mockImplementation(async (body) => {
+    const index = client.responses.create.mock.calls.length - 1;
+    return {
+      id: `resp_${index + 1}`,
+      object: 'response',
+      status: 'completed',
+      service_tier: body.service_tier,
+      usage: usages[index],
+      output: [{
+        type: 'message',
+        content: [{
+          type: 'output_json',
+          json: { minutes: [], decisions: [] },
+        }],
+      }],
+    };
+  });
+}
+
+function installCacheResponsesWithHeadersMock(client, usages, headers, {
+  readerDelayMs = 0,
+  activity,
+} = {}) {
+  client.responses.create.mockImplementation((body) => {
+    const index = client.responses.create.mock.calls.length - 1;
+    const data = {
+      id: `resp_${index + 1}`,
+      object: 'response',
+      status: 'completed',
+      service_tier: body.service_tier,
+      usage: usages[index],
+      output: [{ type: 'message', content: [{
+        type: 'output_json', json: { minutes: [], decisions: [] },
+      }] }],
+    };
+    const apiPromise = Promise.resolve(data);
+    apiPromise.withResponse = async () => {
+      const isReader = index >= 2;
+      if (isReader && activity) {
+        activity.active += 1;
+        activity.max = Math.max(activity.max, activity.active);
+      }
+      if (isReader && readerDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, readerDelayMs));
+      }
+      if (isReader && activity) activity.active -= 1;
+      return {
+        data,
+        response: { headers: new Headers(headers[index] || headers.at(-1)) },
+        request_id: `req_${index + 1}`,
+      };
+    };
+    return apiPromise;
+  });
+}
+
+async function installCacheBatchMock(client, usages) {
+  const events = [];
+  const customIdsByFile = new Map();
+  const customIdsByBatch = new Map();
+  let fileSequence = 0;
+  let batchSequence = 0;
+
+  client.files.create.mockImplementation(async ({ file }) => {
+    const fileId = `file_${++fileSequence}`;
+    const rows = (await fs.readFile(file.path, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    customIdsByFile.set(fileId, rows.map((row) => row.custom_id));
+    return { id: fileId };
+  });
+  client.batches.create.mockImplementation(async ({ input_file_id, metadata }) => {
+    const batchId = `batch_${++batchSequence}`;
+    customIdsByBatch.set(batchId, customIdsByFile.get(input_file_id));
+    events.push(`create:${metadata.request_count}`);
+    return { id: batchId, status: 'validating' };
+  });
+  client.batches.retrieve.mockImplementation(async (batchId) => {
+    events.push(`retrieve:${batchId}`);
+    return {
+      id: batchId,
+      status: 'completed',
+      output_file_id: `out_${batchId}`,
+    };
+  });
+  client.files.content.mockImplementation(async (outputFileId) => {
+    const batchId = outputFileId.slice('out_'.length);
+    const usage = usages[Number(batchId.slice('batch_'.length)) - 1];
+    events.push(`content:${batchId}`);
+    return {
+      text: async () => customIdsByBatch.get(batchId).map((customId) =>
+        JSON.stringify({
+          custom_id: customId,
+          response: {
+            status_code: 200,
+            body: {
+              id: `resp_${customId}`,
+              object: 'response',
+              status: 'completed',
+              usage,
+              output: [{
+                type: 'message',
+                content: [{
+                  type: 'output_json',
+                  json: { minutes: [], decisions: [] },
+                }],
+              }],
+            },
+          },
+        })
+      ).join('\n') + '\n',
+    };
+  });
+
+  return { events };
+}
 
 describe('OpenAIBatchProvider', () => {
   let tmpDir;
@@ -103,6 +240,406 @@ describe('OpenAIBatchProvider', () => {
     expect(ticket.output_budget.image_count).toBe(1);
     const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
     expect(ledger).toContain('output_budget');
+  });
+
+  it('coalesces compatible concurrent submissions into one multi-line Batch job', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 25,
+    });
+    const firstImage = path.join(tmpDir, '1.jpg');
+    const secondImage = path.join(tmpDir, '2.jpg');
+    await Promise.all([
+      fs.writeFile(firstImage, 'first'),
+      fs.writeFile(secondImage, 'second'),
+    ]);
+
+    const handles = await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview 1.jpg',
+        images: [firstImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview 2.jpg',
+        images: [secondImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    expect(client.files.create).toHaveBeenCalledTimes(1);
+    expect(client.batches.create).toHaveBeenCalledTimes(1);
+    expect(new Set(handles.map((handle) => handle.customId)).size).toBe(2);
+    expect(new Set(handles.map((handle) => handle.batchId))).toEqual(
+      new Set(['batch_123'])
+    );
+
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(lines).toHaveLength(2);
+    expect(new Set(lines.map((line) => line.custom_id))).toEqual(
+      new Set(handles.map((handle) => handle.customId))
+    );
+  });
+
+  it('runs a cache-compatible cohort through a sequential Flex seed and probe before readers', async () => {
+    const seedWrite = {
+      input_tokens: 7000,
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+    };
+    const cacheHit = {
+      input_tokens: 7000,
+      input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
+    };
+    installCacheResponsesMock(client, [seedWrite, cacheHit, cacheHit, cacheHit]);
+    helpers.schemaForBatch = vi.fn((_used, _curators, minutes) => ({
+      name: 'PhotoSelectPanelV1',
+      schema: {
+        properties: {
+          minutes: {
+            minItems: minutes.minutesMin,
+            maxItems: minutes.minutesMax,
+          },
+          decisions: {
+            items: {
+              properties: {
+                filename: { enum: [`batch-${minutes.minutesMin}.jpg`] },
+              },
+            },
+          },
+        },
+      },
+    }));
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+      pollIntervalMs: 0,
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+
+    const handles = await Promise.all(['a', 'b', 'c', 'd'].map((name, index) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${name}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+        minutesMin: index + 1,
+        minutesMax: index + 2,
+      })
+    ));
+
+    expect(client.files.create).not.toHaveBeenCalled();
+    expect(client.batches.create).not.toHaveBeenCalled();
+    expect(client.responses.create).toHaveBeenCalledTimes(4);
+    expect(client.responses.create.mock.calls.map(([body]) => body.service_tier))
+      .toEqual(['flex', 'flex', 'flex', 'flex']);
+    expect(client.responses.create.mock.calls.map(([body]) => body.prompt_cache_key))
+      .toEqual(Array(4).fill(client.responses.create.mock.calls[0][0].prompt_cache_key));
+    expect(new Set(client.responses.create.mock.calls.map(([body]) =>
+      JSON.stringify(body.text.format.schema)
+    )).size).toBe(1);
+    expect(new Set(handles.map((handle) => handle.batchId))).toEqual(
+      new Set(['resp_1', 'resp_2', 'resp_3', 'resp_4'])
+    );
+
+    const results = await Promise.all(handles.map((handle) => provider.collect(handle)));
+    expect(results.map((result) => result.json)).toEqual(
+      Array(4).fill({ minutes: [], decisions: [] })
+    );
+    expect(client.batches.retrieve).not.toHaveBeenCalled();
+    const tickets = await Promise.all(handles.map(async (handle) =>
+      JSON.parse(await fs.readFile(handle.ticketPath, 'utf8'))
+    ));
+    expect(tickets.map((ticket) => ticket.service_tier))
+      .toEqual(['flex', 'flex', 'flex', 'flex']);
+    expect(tickets.map((ticket) => ticket.cache_role))
+      .toEqual(['seed', 'probe', 'reader', 'reader']);
+  });
+
+  it('preserves completed cache-barrier work when a later reader exhausts credits', async () => {
+    client.responses.create.mockImplementation(async (body) => {
+      const index = client.responses.create.mock.calls.length - 1;
+      if (index === 2) {
+        const exhausted = new Error(
+          'Your account does not have enough credits to perform the requested operation.'
+        );
+        exhausted.status = 429;
+        exhausted.error = {
+          message: exhausted.message,
+          type: 'insufficient_quota',
+          code: 'insufficient_quota',
+        };
+        throw exhausted;
+      }
+      return {
+        id: `resp_${index + 1}`,
+        object: 'response',
+        status: 'completed',
+        service_tier: body.service_tier,
+        usage: index === 0 ? CACHE_WRITE_USAGE : CACHE_HIT_USAGE,
+        output: [{
+          type: 'message',
+          content: [{
+            type: 'output_json',
+            json: { minutes: [], decisions: [] },
+          }],
+        }],
+      };
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+    const outcomes = await Promise.allSettled(['seed', 'probe', 'reader'].map((name) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${name}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+      })
+    ));
+    expect(outcomes.map((outcome) => outcome.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(outcomes[2].reason).toMatchObject({
+      status: 429,
+      error: { code: 'insufficient_quota' },
+    });
+    const tickets = await fs.readdir(path.join(tmpDir, '.batch', 'tickets'));
+    expect(tickets).toHaveLength(2);
+    const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
+    const events = ledger.trim().split('\n').map((line) => JSON.parse(line));
+    expect(events.filter((event) => event.event === 'completed')).toHaveLength(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'submit_error',
+      code: 'insufficient_quota',
+      status: 429,
+    }));
+  });
+
+  it('uses a rolling adaptive reader window and persists sanitized rate-limit capacity', async () => {
+    const usages = [CACHE_WRITE_USAGE, ...Array(7).fill(CACHE_HIT_USAGE)];
+    const rateHeaders = usages.map(() => ({
+      ...RATE_LIMIT_HEADERS,
+      'x-request-id': 'do-not-persist',
+    }));
+    const activity = { active: 0, max: 0 };
+    installCacheResponsesWithHeadersMock(client, usages, rateHeaders, {
+      readerDelayMs: 10,
+      activity,
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+      maxBatchRequests: 2,
+      adaptiveConcurrency: true,
+      adaptiveOptions: {
+        minConcurrency: 1,
+        maxConcurrency: 3,
+        initialConcurrency: 1,
+        successesPerIncrease: 1,
+        cacheKeyRequestsPerMinute: Infinity,
+      },
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+
+    const handles = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${index}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+      })
+    ));
+
+    expect(activity.max).toBeGreaterThan(1);
+    expect(activity.max).toBeLessThanOrEqual(3);
+    const readerTicket = JSON.parse(await fs.readFile(handles[2].ticketPath, 'utf8'));
+    expect(readerTicket.rate_limits).toEqual({
+      limitRequests: 500,
+      remainingRequests: 499,
+      limitTokens: 2_000_000,
+      remainingTokens: 1_900_000,
+    });
+    expect(JSON.stringify(readerTicket)).not.toContain('do-not-persist');
+    const ledger = await fs.readFile(path.join(tmpDir, '.batch', 'jobs.ndjson'), 'utf8');
+    expect(ledger).toContain('adaptive_parallelism');
+  });
+
+  it.each([
+    ['probe write', [0, 0], 2, 'PROMPT_CACHE_PROBE_MISS'],
+    ['reader miss', [0, 6000, 6000, 0], 4, 'PROMPT_CACHE_READER_MISS'],
+  ])('fails the entire cache cohort on a %s', async (_case, cached, calls, code) => {
+    installCacheResponsesMock(client, cached.map((cachedTokens) => ({
+      input_tokens: 7000,
+      input_tokens_details: {
+        cached_tokens: cachedTokens,
+        cache_write_tokens: cachedTokens ? 0 : 6000,
+      },
+    })));
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const stablePrefix = 'Large stable context. '.repeat(300);
+
+    const results = await Promise.allSettled(['a', 'b', 'c', 'd'].map((name) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `${stablePrefix}Review ${name}.jpg.`,
+        promptCachePrefix: stablePrefix,
+        model: 'gpt-5.6-terra',
+      })
+    ));
+
+    expect(results.map((result) => result.status)).toEqual(
+      Array(4).fill('rejected')
+    );
+    expect(results.map((result) => result.reason?.code)).toEqual(
+      Array(4).fill(code)
+    );
+    expect(client.responses.create).toHaveBeenCalledTimes(calls);
+    expect(client.batches.create).not.toHaveBeenCalled();
+  });
+
+  it('coalesces worker submissions before staggered request preparation can split the Batch', async () => {
+    const immediateBuildInput = helpers.buildInput;
+    helpers.buildInput = vi.fn(async (prompt, images, curators) => {
+      if (path.basename(images[0]) === 'slow.jpg') {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return immediateBuildInput(prompt, images, curators);
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const fastImage = path.join(tmpDir, 'fast.jpg');
+    const slowImage = path.join(tmpDir, 'slow.jpg');
+    await Promise.all([
+      fs.writeFile(fastImage, 'fast'),
+      fs.writeFile(slowImage, 'slow'),
+    ]);
+
+    await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview fast.jpg',
+        images: [fastImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'stable context\nreview slow.jpg',
+        images: [slowImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('keeps valid cohort members grouped when one request cannot be prepared', async () => {
+    const immediateBuildInput = helpers.buildInput;
+    helpers.buildInput = vi.fn(async (prompt, images, curators) => {
+      if (path.basename(images[0]) === 'broken.jpg') {
+        throw new Error('synthetic preparation failure');
+      }
+      return immediateBuildInput(prompt, images, curators);
+    });
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 10,
+    });
+    const imagePaths = ['first.jpg', 'broken.jpg', 'third.jpg']
+      .map((name) => path.join(tmpDir, name));
+    await Promise.all(imagePaths.map((file) => fs.writeFile(file, 'data')));
+
+    const results = await Promise.allSettled(imagePaths.map((file) =>
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: `stable context\nreview ${path.basename(file)}`,
+        images: [file],
+        model: 'gpt-5.6-terra',
+      })
+    ));
+
+    expect(results.map((result) => result.status)).toEqual([
+      'fulfilled',
+      'rejected',
+      'fulfilled',
+    ]);
+    const inputsDir = path.join(tmpDir, '.batch', 'inputs');
+    const inputFiles = await fs.readdir(inputsDir);
+    expect(inputFiles).toHaveLength(1);
+    const lines = (await fs.readFile(path.join(inputsDir, inputFiles[0]), 'utf8'))
+      .trim()
+      .split('\n');
+    expect(lines).toHaveLength(2);
+  });
+
+  it('splits an aggregate before the configured Batch request limit', async () => {
+    const provider = new OpenAIBatchProvider({
+      client,
+      enableFallback: false,
+      helpers,
+      aggregationWindowMs: 25,
+      maxBatchRequests: 1,
+    });
+    const firstImage = path.join(tmpDir, '1.jpg');
+    const secondImage = path.join(tmpDir, '2.jpg');
+    await Promise.all([
+      fs.writeFile(firstImage, 'first'),
+      fs.writeFile(secondImage, 'second'),
+    ]);
+
+    await Promise.all([
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'review 1.jpg',
+        images: [firstImage],
+        model: 'gpt-5.6-terra',
+      }),
+      provider.submit({
+        levelDir: tmpDir,
+        prompt: 'review 2.jpg',
+        images: [secondImage],
+        model: 'gpt-5.6-terra',
+      }),
+    ]);
+
+    expect(client.files.create).toHaveBeenCalledTimes(2);
+    expect(client.batches.create).toHaveBeenCalledTimes(2);
   });
 
   it('limits safeId length for deeply nested level directories', async () => {
@@ -330,7 +867,7 @@ describe('OpenAIBatchProvider', () => {
       ttl: '30m',
     });
     expect(line.body.prompt_cache_key).toMatch(
-      /^photo-select:v1:[a-f0-9]{32}$/
+      /^photo-select:v2:[a-f0-9]{32}$/
     );
     expect(
       line.body.input[0].content.map((part) => part.text).join('')

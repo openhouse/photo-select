@@ -1,17 +1,25 @@
 import path from "node:path";
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { appendFile, readFile, writeFile, mkdir, stat, rename, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { batchStore } from "./batchContext.js";
 import crypto from "node:crypto";
 import { ensureArchiveLevel } from "./archive/ensureArchiveLevel.js";
 import { listImages, pickRandom, moveFiles } from "./imageSelector.js";
-import { parseReply, getPeople } from "./chatClient.js";
+import { parseReply, getPeople, prefetchPeople } from "./chatClient.js";
 import { buildPrompt } from "./templates.js";
 import FieldNotesWriter from "./fieldNotesWriter.js";
 import { MultiBar, Presets } from "cli-progress";
 import { sanitizePeople } from "./lib/people.js";
 import { finalizeCurators } from "./core/finalizeCurators.js";
+import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
+import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js";
+import { planNeedsReviewRetry } from "./core/planNeedsReviewRetry.js";
+import {
+  createBillingLimitError,
+  isBillingLimitError,
+  providerErrorSummary,
+} from "./core/providerErrors.js";
 
 const exec = promisify(execFile);
 
@@ -238,6 +246,50 @@ async function clearNeedsReviewEntries(dir, files) {
   await writeFile(marker, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
 }
 
+const NEEDS_REVIEW_RETRY_SCHEMA = 1;
+
+async function readNeedsReviewRetryState(statePath) {
+  try {
+    const parsed = JSON.parse(await readFile(statePath, "utf8"));
+    if (
+      parsed?.schemaVersion !== NEEDS_REVIEW_RETRY_SCHEMA ||
+      !Number.isInteger(parsed?.retriesUsed) ||
+      parsed.retriesUsed < 0
+    ) {
+      throw new Error("invalid retry-state shape");
+    }
+    return parsed.retriesUsed;
+  } catch (err) {
+    if (err?.code === "ENOENT") return 0;
+    const wrapped = new Error(
+      `Cannot read NEEDS_REVIEW retry state at ${statePath}: ${err.message}`
+    );
+    wrapped.code = "INVALID_NEEDS_REVIEW_RETRY_STATE";
+    wrapped.cause = err;
+    throw wrapped;
+  }
+}
+
+async function writeNeedsReviewRetryState(statePath, { retriesUsed, maxRetries }) {
+  await mkdir(path.dirname(statePath), { recursive: true });
+  const temporaryPath = `${statePath}.${process.pid}.tmp`;
+  await writeFile(
+    temporaryPath,
+    JSON.stringify(
+      {
+        schemaVersion: NEEDS_REVIEW_RETRY_SCHEMA,
+        retriesUsed,
+        maxRetries,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await rename(temporaryPath, statePath);
+}
+
 export async function listLevelState(dir, { retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false) } = {}) {
   const allImages = await listImages(dir);
   const needsReviewNames = await readNeedsReviewNames(dir);
@@ -281,6 +333,40 @@ export async function findShallowestLevelWithEligibleImages(rootDir, options = {
       }
       console.log(`${"  ".repeat(depth)}↘️  no eligible work at level ${level}; checking _keep`);
     }
+    const [hasKeep, hasAside] = await Promise.all([
+      dirExists(path.join(current, "_keep")),
+      dirExists(path.join(current, "_aside")),
+    ]);
+    let levelSize;
+    if (Number.isInteger(options.targetLevelSize)) {
+      try {
+        levelSize = (
+          await listImages(
+            path.join(current, `_level-${String(level).padStart(3, "0")}`)
+          )
+        ).length;
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    }
+    const outcome = evaluateLevelOutcome({
+      complete: state.needsReviewImages.length === 0,
+      hasKeep,
+      hasAside,
+      levelSize,
+      targetLevelSize: options.targetLevelSize,
+    });
+    if (outcome.shouldStop) {
+      return {
+        dir: current,
+        depth,
+        level,
+        levelSize,
+        state,
+        stopped: true,
+        outcome,
+      };
+    }
     const next = path.join(current, "_keep");
     if (!(await dirExists(next))) return null;
     current = next;
@@ -293,10 +379,34 @@ export async function triageTree(options) {
   const rootDir = options.dir;
   let lastDepth = 0;
 
+  if (Number.isInteger(options.targetLevelSize)) {
+    console.log(
+      `🎯  target-level-size=${options.targetLevelSize}: complete levels until one contains at most this many photos.`
+    );
+  }
+  if (options.retryNeedsReview) {
+    console.log(
+      `🔁  needs-review-retries=${options.needsReviewRetries}: automatic repair passes per level.`
+    );
+  }
+
   while (true) {
     const work = await findShallowestLevelWithEligibleImages(rootDir, options);
     if (!work) {
       console.log("✅  No pending image files found in cascade.");
+      break;
+    }
+    if (work.stopped) {
+      if (work.outcome.state === "target_reached") {
+        console.log(
+          `${"  ".repeat(work.depth)}🎯  Completed level ${work.level} contains ${work.levelSize} photo(s), meeting target ≤ ${options.targetLevelSize}; stopping recursion.`
+        );
+        break;
+      }
+      const bucket = work.outcome.state === "unanimous_keep" ? "kept" : "set aside";
+      console.log(
+        `${"  ".repeat(work.depth)}🎯  All images ${bucket} at completed level ${work.level}; stopping recursion.`
+      );
       break;
     }
     if (work.blocked) {
@@ -439,8 +549,12 @@ export async function resolveResumeLevel(startDir) {
  * @param {Object} options.provider     Chat provider instance
  * @param {string} options.model        Model id for the provider
  * @param {boolean} [options.recurse=true]  Whether to descend into _keep folders
+ * @param {number} [options.targetLevelSize] Continue until a completed level has at most this many photos
+ * @param {boolean} [options.retryNeedsReview=false] Automatically repair held files
+ * @param {number} [options.needsReviewRetries=2] Maximum repair passes per level
  * @param {string[]} [options.curators=[]]   Names inserted into the prompt
  * @param {string} [options.contextPath]     Optional additional context file
+ * @param {boolean} [options.refreshPeopleIndex=false] Force one derived people-index refresh
 * @param {boolean} [options.fieldNotes=false] Enable field notes workflow
 * @param {number} [options.depth=0]         Internal recursion depth (for logging)
 */
@@ -465,48 +579,40 @@ export async function triageDirectory(options) {
     forceRebuild = false,
     stageConcurrency,
     retryNeedsReview = envBool("PHOTO_SELECT_RETRY_NEEDS_REVIEW", false),
+    needsReviewRetries = Number(process.env.PHOTO_SELECT_NEEDS_REVIEW_RETRIES || 2),
     allowDescendWithNeedsReview = envBool("PHOTO_SELECT_ALLOW_DESCEND_WITH_NEEDS_REVIEW", false),
+    targetLevelSize,
+    refreshPeopleIndex = false,
     _cascadeLevel = false,
   } = options;
+  if (!Number.isInteger(needsReviewRetries) || needsReviewRetries < 1) {
+    throw new Error("needsReviewRetries must be a positive integer");
+  }
   if (!provider) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
+  }
+  if (provider.knowledge) {
+    curators = [...provider.curators];
+    if (!provider.preservePrompt) promptPath = provider.promptPath;
+    contextPath = undefined;
+    await provider.assertDirectory(dir);
+    await provider.assertCurrent();
   }
   if (recurse && depth === 0 && !_cascadeLevel) {
     return triageTree({
       ...options,
       provider,
       retryNeedsReview,
+      needsReviewRetries,
       allowDescendWithNeedsReview,
     });
   }
   const indent = "  ".repeat(depth);
   let notesWriter;
 
-  function isBillingLimitError(err) {
-    if (!err) return false;
-    const candidates = [
-      err?.message,
-      err?.error?.message,
-      err?.cause?.message,
-      err?.response?.data?.error?.message,
-      err?.response?.data?.message,
-      err?.response?.error?.message,
-      err?.response?.message,
-      err?.body?.error?.message,
-      err?.body?.message,
-    ]
-      .flat()
-      .filter(Boolean)
-      .map((msg) => String(msg));
-    return candidates.some((message) => /billing (hard )?limit/i.test(message));
-  }
-
-  function createBillingLimitError(err) {
-    const wrapped = new Error("Billing hard limit reached; aborting remaining batches.");
-    wrapped.code = "BILLING_LIMIT";
-    wrapped.cause = err;
-    return wrapped;
+  function isPromptCacheSafetyError(err) {
+    return err?.code === "PROMPT_CACHE_PROBE_MISS";
   }
 
   let dynamicWorkers = workers;
@@ -565,6 +671,60 @@ export async function triageDirectory(options) {
 
   // Archive original images at this level
   const levelDir = path.join(dir, `_level-${String(depth + 1).padStart(3, '0')}`);
+  const billingPausePath = path.join(levelDir, ".batch", "billing-pause.json");
+  const billingLedgerPath = path.join(levelDir, ".batch", "jobs.ndjson");
+  const appendBillingLedger = async (entry) => {
+    await mkdir(path.dirname(billingLedgerPath), { recursive: true });
+    await appendFile(
+      billingLedgerPath,
+      `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`,
+      "utf8"
+    );
+  };
+  const writeBillingPause = async (err) => {
+    const remainingState = await listLevelState(dir, { retryNeedsReview: false });
+    const remainingImages = remainingState.eligibleImages.length;
+    const pause = {
+      schemaVersion: 1,
+      state: "paused",
+      reason: "billing_exhausted",
+      code: "BILLING_LIMIT",
+      pausedAt: new Date().toISOString(),
+      level: depth + 1,
+      source: dir,
+      remainingImages,
+      remainingBatches: Math.ceil(remainingImages / BATCH_SIZE),
+      cause: providerErrorSummary(err),
+    };
+    await mkdir(path.dirname(billingPausePath), { recursive: true });
+    const temporaryPath = `${billingPausePath}.${process.pid}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify(pause, null, 2), "utf8");
+    await rename(temporaryPath, billingPausePath);
+    await appendBillingLedger({
+      event: "billing_paused",
+      code: pause.cause.code,
+      type: pause.cause.type,
+      status: pause.cause.status,
+      level: pause.level,
+      remaining_images: pause.remainingImages,
+      remaining_batches: pause.remainingBatches,
+    });
+    return pause;
+  };
+  const clearBillingPause = async () => {
+    try {
+      await stat(billingPausePath);
+    } catch (err) {
+      if (err?.code === "ENOENT") return false;
+      throw err;
+    }
+    await rm(billingPausePath, { force: true });
+    await appendBillingLedger({
+      event: "billing_resumed",
+      level: depth + 1,
+    });
+    return true;
+  };
   const runSession = async (payload) => {
     const handle = await provider.submit({
       levelDir,
@@ -590,17 +750,67 @@ export async function triageDirectory(options) {
 
   let completedBatches = 0;
   const retrySuppressedNames = new Set();
+  const needsReviewRetryStatePath = path.join(
+    levelDir,
+    ".batch",
+    "needs-review-retries.json"
+  );
+  let needsReviewRetriesUsed = retryNeedsReview
+    ? await readNeedsReviewRetryState(needsReviewRetryStatePath)
+    : 0;
 
   while (true) {
-    const state = await listLevelState(dir, { retryNeedsReview });
-    const images = state.eligibleImages.filter(
+    const state = await listLevelState(dir, { retryNeedsReview: false });
+    const activeImages = state.eligibleImages.filter(
       (file) => !retrySuppressedNames.has(path.basename(file))
     );
+    const retryableHeldImages = state.needsReviewImages.filter(
+      (file) => !retrySuppressedNames.has(path.basename(file))
+    );
+    const retryPlan = planNeedsReviewRetry({
+      enabled: retryNeedsReview,
+      retriesUsed: needsReviewRetriesUsed,
+      maxRetries: needsReviewRetries,
+      heldCount: retryableHeldImages.length,
+    });
+    let images = activeImages;
+    if (retryPlan.shouldRetry) {
+      needsReviewRetriesUsed = retryPlan.retriesUsed;
+      await writeNeedsReviewRetryState(needsReviewRetryStatePath, {
+        retriesUsed: needsReviewRetriesUsed,
+        maxRetries: needsReviewRetries,
+      });
+      images = [...activeImages, ...retryableHeldImages];
+      console.log(
+        `${indent}🔁  NEEDS_REVIEW repair pass ${retryPlan.attempt}/${needsReviewRetries}: ${retryableHeldImages.length} held image(s).`
+      );
+    }
     console.log(`${indent}📊  level ${depth + 1}: ${state.allImages.length} source image(s): ${images.length} eligible, ${state.needsReviewImages.length} NEEDS_REVIEW`);
     if (images.length === 0) {
       if (state.needsReviewImages.length > 0) {
+        const pendingRetry = planNeedsReviewRetry({
+          enabled: retryNeedsReview,
+          retriesUsed: needsReviewRetriesUsed,
+          maxRetries: needsReviewRetries,
+          heldCount: state.needsReviewImages.length,
+        });
+        if (pendingRetry.shouldRetry && retrySuppressedNames.size > 0) {
+          retrySuppressedNames.clear();
+          console.log(
+            `${indent}🔁  Preparing automatic NEEDS_REVIEW repair pass ${pendingRetry.attempt}/${needsReviewRetries}.`
+          );
+          continue;
+        }
+        if (retryNeedsReview && pendingRetry.reason === "exhausted") {
+          console.warn(
+            `${indent}⚠️  NEEDS_REVIEW automatic repair budget exhausted (${needsReviewRetriesUsed}/${needsReviewRetries}) for level ${depth + 1}.`
+          );
+        }
         console.warn(`${indent}⚠️  Level blocked: ${dir} has ${state.needsReviewImages.length} image file(s) needing review. Not descending.`);
         return { blocked: true, blockedCount: state.needsReviewImages.length };
+      }
+      if (retryNeedsReview) {
+        await rm(needsReviewRetryStatePath, { force: true });
       }
       console.log(`${indent}✅  Level settled: ${dir} has 0 active image files.`);
       break;
@@ -619,6 +829,20 @@ export async function triageDirectory(options) {
       await writeFile(listPath, archiveResult.failed.join("\n"), "utf8");
       console.warn(
         `${indent}⚠️  ${archiveResult.failed.length} file(s) failed to archive; see ${listPath}`
+      );
+    }
+
+    const peopleStart = Date.now();
+    const peopleResult = provider.knowledge && !provider.supportsPeopleMetadata ? { mode: "disabled" } : await prefetchPeople(images, {
+      force: refreshPeopleIndex,
+    });
+    if (verbose && peopleResult.mode === "bulk") {
+      console.log(
+        `${indent}people-index: status=${peopleResult.indexStatus} corpus=${peopleResult.corpusSha256.slice(0, 12)} sources=${peopleResult.sourceCount} names=${peopleResult.names} elapsed=${((Date.now() - peopleStart) / 1000).toFixed(1)}s source_freshness=${peopleResult.sourceFreshness}`,
+      );
+    } else if (verbose && peopleResult.mode === "legacy-fallback") {
+      console.warn(
+        `${indent}people-index: mode=legacy-fallback reason=${peopleResult.reason ?? "unsupported"}`,
       );
     }
 
@@ -696,47 +920,71 @@ export async function triageDirectory(options) {
                   }
                 };
 
-                const names = batch.map((file) => path.basename(file));
-                const peopleLists = await Promise.all(
-                  names.map((name) => getPeople(name))
-                );
-                const photos = names.map((name, i) => ({
-                  file: name,
-                  people: sanitizePeople(peopleLists[i]),
-                }));
-                const { finalCurators, added } = finalizeCurators(curators, photos);
-                if (added.length) {
-                  log(
-                    `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
-                  );
-                }
-                const first = await buildPrompt(promptPath, {
-                  curators: finalCurators,
-                  contextPath,
-                  images: batch,
-                  hasFieldNotes: false,
-                  isSecondPass: false,
-                });
                 const meta = { model, verbosity, reasoningEffort };
+                const reconcileReply = (raw) => {
+                  const result = reconcileDecisionFilenames(
+                    raw,
+                    batch.map((file) => path.basename(file))
+                  );
+                  for (const repair of result.repairs) {
+                    log(
+                      `${indent}🔧  Reconciled response filename ${repair.returned} → ${repair.canonical}`
+                    );
+                  }
+                  return result.reply;
+                };
                 let attemptNum = 1;
-                await saveText('prompt', attemptNum, first.prompt);
-                const firstResult = await runSession({
-                  prompt: first.prompt,
-                  promptCachePrefix: first.promptCachePrefix,
-                  images: batch,
-                  model,
-                  curators: finalCurators,
-                  baseCuratorCount: curators.length,
-                  dynamicCuratorCount: added.length,
-                  verbosity,
-                  reasoningEffort,
-                  minutesMin: first.minutesMin,
-                  minutesMax: first.minutesMax,
-                  onProgress: (stage) => {
-                    bar.update(stageMap[stage] || 0, { stage });
-                  },
-                  stream: true,
-                });
+                let finalCurators = curators;
+                let added = [];
+                let photos = [];
+                const prepareFirstRequest = async () => {
+                  const names = batch.map((file) => path.basename(file));
+                  const peopleLists = await Promise.all(
+                    names.map((name) => provider.knowledge && !provider.supportsPeopleMetadata ? [] : getPeople(name))
+                  );
+                  photos = names.map((name, i) => ({
+                    file: name,
+                    people: sanitizePeople(peopleLists[i]),
+                  }));
+                  const finalized = finalizeCurators(curators, photos);
+                  finalCurators = finalized.finalCurators;
+                  added = finalized.added;
+                  if (added.length) {
+                    log(
+                      `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
+                    );
+                  }
+                  const first = await buildPrompt(promptPath, {
+                    curators: finalCurators,
+                    contextPath,
+                    contextText: provider.preservePrompt ? provider.brief : undefined,
+                    images: batch,
+                    hasFieldNotes: false,
+                    isSecondPass: false,
+                  });
+                  await saveText('prompt', attemptNum, first.prompt);
+                  return {
+                    prompt: first.prompt,
+                    promptCachePrefix: first.promptCachePrefix,
+                    images: batch,
+                    model,
+                    curators: finalCurators,
+                    photoPeople: photos,
+                    baseCuratorCount: curators.length,
+                    dynamicCuratorCount: added.length,
+                    verbosity,
+                    reasoningEffort,
+                    minutesMin: first.minutesMin,
+                    minutesMax: first.minutesMax,
+                    onProgress: (stage) => {
+                      bar.update(stageMap[stage] || 0, { stage });
+                    },
+                    stream: true,
+                  };
+                };
+                const firstResult = provider.supportsDeferredPreparation
+                  ? await runSession({ model, prepare: prepareFirstRequest })
+                  : await runSession(await prepareFirstRequest());
                 reply = firstResult.raw;
                 await saveText('response', attemptNum, reply);
                 if (looksLikeOpenAIResponseEnvelope(reply)) {
@@ -744,6 +992,7 @@ export async function triageDirectory(options) {
                   err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
                   throw err;
                 }
+                reply = reconcileReply(reply);
                 ({ keep, aside, unclassified, notes, minutes } = parseReply(
                   reply,
                   batch,
@@ -771,6 +1020,7 @@ export async function triageDirectory(options) {
                       images: batch,
                       model,
                       curators: finalCurators,
+                      photoPeople: photos,
                       baseCuratorCount: curators.length,
                       dynamicCuratorCount: added.length,
                       verbosity: "low",
@@ -789,6 +1039,7 @@ export async function triageDirectory(options) {
                       err.code = 'PROVIDER_ENVELOPE_NOT_DECISIONS';
                       throw err;
                     }
+                    reply = reconcileReply(reply);
                     ({ keep, aside, unclassified, notes } = parseReply(
                       reply,
                       batch,
@@ -873,6 +1124,9 @@ export async function triageDirectory(options) {
                   moveFiles(aside, asideDir, notes),
                 ]);
                 await clearNeedsReviewEntries(dir, [...keep, ...aside]);
+                if (await clearBillingPause()) {
+                  log(`${indent}▶️  Billing pause cleared after successful progress.`);
+                }
                   if (unclassified.length && keep.length + aside.length > 0) {
                     queue.push(...unclassified);
                   }
@@ -883,7 +1137,7 @@ export async function triageDirectory(options) {
                 if (keep.length + aside.length > 0) {
                   completedBatches++;
                   const elapsedSec = (Date.now() - levelStart) / 1000;
-                  const remainingNow = (await listLevelState(dir, { retryNeedsReview })).eligibleImages.length;
+                  const remainingNow = (await listLevelState(dir, { retryNeedsReview: false })).eligibleImages.length;
                   const remainingBatchesNow = Math.ceil(remainingNow / BATCH_SIZE);
                   const tps = completedBatches / elapsedSec;
                   const etaSec = tps > 0 ? Math.ceil(remainingBatchesNow / tps) : Infinity;
@@ -892,6 +1146,7 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
+                if (provider.knowledge) { abortProcessing = true; queue.length = 0; throw err; }
                 if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();
@@ -921,11 +1176,21 @@ export async function triageDirectory(options) {
                   log(`${indent}⚠️  Files left unmoved and added to NEEDS_REVIEW (${reason}).`);
                   return;
                 }
-                if (isBillingLimitError(err) && !abortProcessing) {
+                if (isPromptCacheSafetyError(err)) {
+                  const alreadyAborting = abortProcessing;
                   abortProcessing = true;
                   queue.length = 0;
-                  log(`${indent}🛑  Billing limit reached; stopping remaining batches.`);
-                  throw createBillingLimitError(err);
+                  if (!alreadyAborting) {
+                    log(`${indent}🛑  Prompt-cache probe missed; stopping remaining batches to prevent uncached fanout.`);
+                  }
+                  throw err;
+                }
+                if (isBillingLimitError(err)) {
+                  if (!abortProcessing) {
+                    abortProcessing = true;
+                    queue.length = 0;
+                  }
+                  throw err;
                 }
               }
             });
@@ -936,11 +1201,25 @@ export async function triageDirectory(options) {
           { length: Math.min(dynamicWorkers, Math.max(queue.length, 1)) },
           () => workerFn()
         );
-        await Promise.all(pool);
+        const outcomes = await Promise.allSettled(pool);
+        const failure = outcomes.find((outcome) => outcome.status === "rejected");
+        if (failure) {
+          if (!isBillingLimitError(failure.reason)) throw failure.reason;
+          const pause = await writeBillingPause(failure.reason);
+          log(
+            `${indent}⏸️  OpenAI API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
+          );
+          log(`${indent}   Add credits, then rerun the same command to resume.`);
+          throw createBillingLimitError(failure.reason, {
+            pausePath: billingPausePath,
+            remainingImages: pause.remainingImages,
+            remainingBatches: pause.remainingBatches,
+          });
+        }
       } finally {
         multibar.stop();
       }
-      const nextState = await listLevelState(dir, { retryNeedsReview });
+      const nextState = await listLevelState(dir, { retryNeedsReview: false });
       const remaining = nextState.eligibleImages.filter(
         (file) => !retrySuppressedNames.has(path.basename(file))
       ).length;
@@ -957,7 +1236,7 @@ export async function triageDirectory(options) {
       }
 }
 
-  // Step 5 – recurse into keepDir if both keep and aside exist
+  // Step 5 – recurse into keepDir only after a mixed completed level
   if (recurse) {
     const keepDir = path.join(dir, "_keep");
     const asideDir = path.join(dir, "_aside");
@@ -971,14 +1250,31 @@ export async function triageDirectory(options) {
       }
     };
 
-    const [keepCount, asideCount, hasDeeperKeep] = await Promise.all([
+    const [keepCount, hasDeeperKeep, hasKeep, hasAside] = await Promise.all([
       countImages(keepDir),
-      countImages(asideDir),
       dirExists(path.join(keepDir, "_keep")),
+      dirExists(keepDir),
+      dirExists(asideDir),
     ]);
 
+    const outcome = evaluateLevelOutcome({
+      complete: true,
+      hasKeep,
+      hasAside,
+      levelSize: await countImages(levelDir),
+      targetLevelSize,
+    });
     const keepHasWork = keepCount > 0 || hasDeeperKeep;
-    if (keepHasWork) {
+    if (outcome.shouldStop) {
+      if (outcome.state === "target_reached") {
+        console.log(
+          `${indent}🎯  Completed level ${depth + 1} meets target ≤ ${targetLevelSize}; stopping recursion.`
+        );
+      } else {
+        const bucket = outcome.state === "unanimous_keep" ? "kept" : "set aside";
+        console.log(`${indent}🎯  All images ${bucket} at this level; stopping recursion.`);
+      }
+    } else if (keepHasWork) {
       await triageDirectory({
         dir: keepDir,
         promptPath,
@@ -998,10 +1294,10 @@ export async function triageDirectory(options) {
         update,
         forceRebuild,
         stageConcurrency,
+        retryNeedsReview,
+        needsReviewRetries,
+        targetLevelSize,
       });
-    } else if (keepCount || asideCount) {
-      const status = keepCount ? "kept" : "set aside";
-      console.log(`${indent}🎯  All images ${status} at this level; stopping recursion.`);
     }
   }
   return { blocked: false, blockedCount: 0 };

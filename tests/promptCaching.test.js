@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCacheableResponsesPrompt } from '../src/core/promptCaching.js';
+import {
+  buildCacheableResponsesPrompt,
+  promptCacheHitFromUsage,
+  stabilizeResponseSchemaForPromptCache,
+} from '../src/core/promptCaching.js';
 
 const stable = 'Stable curatorial context. '.repeat(300);
 const input = [
@@ -10,6 +14,47 @@ const input = [
 ];
 
 describe('buildCacheableResponsesPrompt', () => {
+  it('removes only request-specific schema constraints from cached requests', () => {
+    const schema = {
+      properties: {
+        minutes: { minItems: 23, maxItems: 34 },
+        decisions: {
+          minItems: 10,
+          maxItems: 10,
+          items: {
+            properties: {
+              filename: { enum: ['a.jpg', 'b.jpg'] },
+              decision: { enum: ['keep', 'aside'] },
+            },
+          },
+        },
+      },
+    };
+    const stableSchema = stabilizeResponseSchemaForPromptCache(schema);
+    expect(stableSchema.properties.minutes).toEqual({});
+    expect(stableSchema.properties.decisions).not.toHaveProperty('minItems');
+    expect(stableSchema.properties.decisions).not.toHaveProperty('maxItems');
+    expect(stableSchema.properties.decisions.items.properties.filename).toEqual({});
+    expect(stableSchema.properties.decisions.items.properties.decision.enum)
+      .toEqual(['keep', 'aside']);
+    expect(schema.properties.minutes.minItems).toBe(23);
+    expect(schema.properties.decisions.items.properties.filename.enum)
+      .toEqual(['a.jpg', 'b.jpg']);
+  });
+
+  it('requires a reported cache read before releasing readers', () => {
+    expect(promptCacheHitFromUsage({
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 6000 },
+    })).toBe(false);
+    expect(promptCacheHitFromUsage({
+      input_tokens_details: { cached_tokens: 6000, cache_write_tokens: 0 },
+    })).toBe(true);
+    expect(promptCacheHitFromUsage({
+      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    })).toBe(false);
+    expect(promptCacheHitFromUsage()).toBe(false);
+  });
+
   it('marks the stable GPT-5.6 prefix without changing prompt text or user input', () => {
     const dynamic = 'Role play as Curator A. Review a.jpg.';
     const request = buildCacheableResponsesPrompt({
@@ -35,7 +80,7 @@ describe('buildCacheableResponsesPrompt', () => {
       mode: 'explicit',
       ttl: '30m',
     });
-    expect(request.prompt_cache_key).toMatch(/^photo-select:v1:[a-f0-9]{32}$/);
+    expect(request.prompt_cache_key).toMatch(/^photo-select:v2:[a-f0-9]{32}$/);
   });
 
   it('reuses only the stable key while retaining batch-specific curators', () => {
