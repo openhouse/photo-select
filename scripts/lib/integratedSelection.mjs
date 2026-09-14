@@ -21,6 +21,15 @@ async function inventory(directory, rows) {
     if (stat.size !== row.bytes || hash(await readFile(file)) !== row.sha256) throw new Error('Image changed from frozen hash: ' + row.filename);
   }
 }
+async function copiedInventory(directory, photos, sourceDirectory) {
+  await inventory(directory, photos);
+  for (const photo of photos) {
+    const source = await lstat(path.join(sourceDirectory(photo), photo.filename));
+    const copy = await lstat(path.join(directory, photo.filename));
+    // copyFile + Date-based utimes preserves mtime to millisecond precision.
+    if (Math.abs(copy.mtimeMs - source.mtimeMs) > 1) throw new Error('Copy modification time differs from its source: ' + photo.filename);
+  }
+}
 async function inputs(config, output) {
   const plan = planIntegratedSelection(config);
   if (path.basename(output) !== number(config.step) || (config.step > 1 && path.basename(config.previous.directory) !== number(config.step - 1))) throw new Error('Output and preceding directory must be consecutive numbered siblings.');
@@ -64,7 +73,7 @@ export async function buildIntegration(config, output) {
       await copyFile(source, target, constants.COPYFILE_EXCL);
       const stat = await lstat(source); await utimes(target, stat.atime, stat.mtime);
     }
-    await inventory(output, plan.photos);
+    await copiedInventory(output, plan.photos, photo => photo.inherited ? config.previous.directory : photo.witnesses[0].directory);
     await inputs(config, output);
     const report = { schemaVersion: 2, output, ...plan, configuration: config, configurationSha256: hash(JSON.stringify(config)) };
     await writeFile(receiptPath, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
@@ -82,7 +91,7 @@ export async function verifyIntegration(output) {
     if (report.output !== output || hash(JSON.stringify(report.configuration)) !== report.configurationSha256) throw new Error('Receipt identity or configuration hash differs.');
     const plan = await inputs(report.configuration, output);
     for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Receipt plan differs: ' + key);
-    await inventory(output, plan.photos);
+    await copiedInventory(output, plan.photos, photo => photo.inherited ? report.configuration.previous.directory : photo.witnesses[0].directory);
     return { errors: [], gameStatus: integrationGameStatus({ count: plan.count, verified: true }), sourceCounts: plan.sourceCounts, bounds: plan.bounds, count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
   } catch (error) { return { errors: [error.message] }; }
 }
@@ -124,7 +133,7 @@ export async function buildIntermediateSelection(config, output) {
       await copyFile(source, target, constants.COPYFILE_EXCL);
       const stat = await lstat(source); await utimes(target, stat.atime, stat.mtime);
     }
-    await inventory(output, plan.photos);
+    await copiedInventory(output, plan.photos, photo => photo.inherited ? config.lower.directory : config.upper.directory);
     await intermediateInputs(config, output);
     const report = { schemaVersion: 1, kind: 'intermediate-selection', output, ...plan, configuration: config, configurationSha256: hash(JSON.stringify(config)) };
     await writeFile(receiptPath, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
@@ -141,7 +150,7 @@ export async function verifyIntermediateSelection(output) {
     if (report.schemaVersion !== 1 || report.kind !== 'intermediate-selection' || report.output !== output || hash(JSON.stringify(report.configuration)) !== report.configurationSha256) throw new Error('Intermediate receipt identity or configuration differs.');
     const plan = await intermediateInputs(report.configuration, output);
     for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Intermediate receipt plan differs: ' + key);
-    await inventory(output, plan.photos);
+    await copiedInventory(output, plan.photos, photo => photo.inherited ? report.configuration.lower.directory : report.configuration.upper.directory);
     const { photos, ...counts } = plan;
     return { errors: [], ...counts };
   } catch (error) { return { errors: [error.message] }; }

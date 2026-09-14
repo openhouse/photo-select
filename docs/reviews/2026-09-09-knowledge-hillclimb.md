@@ -924,3 +924,34 @@ images. Individual readings, comparative decisions, full-frame review sheets
 and actual-file verification stay outside the public repository. Tests establish
 count and integrity; they do not certify aesthetic merit. The aggregate checks,
 final candidate fingerprint and hosted status are recorded in the PR validation.
+
+
+## Integration lessons made testable, 2026-09-14
+
+The follow-up review separated file integrity and rule compliance from editorial
+judgment. It added eight behavioral cases using synthetic files. Four exposed a
+real gap: both verifiers accepted timestamp-only changes to inherited photos
+and additions. The image bytes and counts were correct, so the earlier hash
+checks could not detect this metadata discrepancy.
+
+The repair compares copied modification times with the actual copy source,
+allowing one millisecond for Date-based timestamp precision. An inherited photo
+uses the preceding integration; a new original-run snapshot may legitimately
+have a different modification time for the same bytes. Intermediate copies use
+the lower box for inheritance and the upper box for additions. Verification
+reports discrepancies without repairing metadata, and cannot report successful
+completion after a failed copy check. No receipt schema migration is needed;
+comparison uses the existing explicit source paths.
+
+The initial focused run had **4 failures and 65 passes**. After repair, all
+**69 integration cases passed**. Positive cases check copied timestamps and the
+proper inherited source. Additional cases preserve separately named images with
+identical bytes and demonstrate a changed editorial choice in a fresh sequence
+while refusing to overwrite the completed selection or its receipt.
+
+The procedure now makes revision history explicit and distinguishes mechanical
+coverage from image-grounded judgment. A reason's presence can be checked;
+its curatorial usefulness is not established by its presence or length. No
+prompt change, automated aesthetic score, photo reselection or model request
+is part of this change. The full hill-climb results and exact candidate/hosted
+verification are recorded in the pull request.

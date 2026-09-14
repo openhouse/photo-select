@@ -138,6 +138,19 @@ later level if it remains in that level's source pool and room is available.
 The selection remains an editable curatorial judgment; passing file checks
 does not establish its aesthetic quality or authorize publication.
 
+Inheritance preserves earlier judgments as well as continuity. If a later
+reading changes an inherited choice, record the reason in a separate versioned
+sequence and rebuild from the first affected level. Preserve the prior photos,
+decisions and receipts. Changing an existing completed directory is not a
+revision workflow. Intermediate boxes follow the same principle.
+
+For editorial review, identify the visible difference between near alternatives,
+consider what the whole palette gains, and record what remains uncertain.
+Count, reason coverage and file hashes are automated checks. The usefulness of
+a gesture variation, the strength of a relationship, and the range of possible
+readings remain judgments supported by the images and comparative notes. A
+nonempty reason is a coverage check, not a quality score.
+
 ## 5. Write the private configuration and preflight it
 
 Save `NN.selection.json` beside the proposed `NN` directory. Its fields are:
@@ -186,7 +199,12 @@ witnesses, per-source counts, inclusive bounds, effective minimum, selected
 photos, inherited count and addition count.
 
 The separate verifier is read-only. It rechecks the configuration, predecessor,
-sources and exact output set; it exits nonzero on failure. Missing, changed or
+sources and exact output set; it exits nonzero on failure. It also compares each
+copy's file modification time with its actual current copy source, allowing one
+millisecond for the precision of the copy operation. Inherited copies are
+compared with the preceding integration; additions use their chosen source
+witness. These are filesystem modification times, not EXIF capture dates. A
+timestamp discrepancy is reported without rewriting the photo or its metadata. Missing, changed or
 unexpected photos and a missing receipt prevent a passing result. Sources must
 remain available. This is an integrity check, not a cryptographic signature.
 
@@ -274,7 +292,9 @@ Both endpoint integrations must pass their existing verifier. The builder checks
 receipt hashes, consecutive siblings, exact subset membership, decisions and
 count before writing. It copies exclusively into a new directory, preserving
 filenames, bytes and modification times, then rechecks all inputs and output.
-The separate `NN.5.interpolation.json` receipt records rounding, endpoint bindings,
+Both build and verification compare output modification times with the lower
+box for inherited files and the upper box for additions, using the same
+one-millisecond allowance. The separate `NN.5.interpolation.json` receipt records rounding, endpoint bindings,
 all copied hashes and decisions. Verification requires the endpoint sources to
 remain available. Existing outputs and receipts are refused. A failed build
 cleans up only its own newly created image directory; interrupted partial copies

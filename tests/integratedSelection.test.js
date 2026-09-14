@@ -1,5 +1,5 @@
 import { it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, lstat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -325,3 +325,57 @@ it('runs the intermediate CLI and returns failure for a tampered copy', async ()
   await writeFile(path.join(out, 'a.jpg'), 'bad');
   expect(() => execFileSync(process.execPath, [cli, 'verify', out], { stdio: 'pipe' })).toThrow();
 });
+
+// Lessons from the integration game: identity, explicit revision and copy evidence.
+it('keeps distinct filenames as separate candidates even when their image bytes match', () => {
+  const files = ['gesture-a.jpg', 'gesture-b.jpg'].map(filename => ({ filename, sha256: digest('same'), bytes: 4 }));
+  const plan = planIntegratedSelection({ step: 1,
+    sources: ['A', 'B'].map(id => ({ id, terminalLevel: 1, level: 1, files })),
+    decisions: files.map(({ filename }) => ({ filename, decision: 'add', reason: 'Retain this separately identified source image.' })) });
+  expect(plan.count).toBe(2);
+  expect(plan.photos.map(p => p.filename)).toEqual(['gesture-a.jpg', 'gesture-b.jpg']);
+  expect(plan.photos.map(p => p.witnesses.length)).toEqual([2, 2]);
+});
+it('records a changed editorial choice in a separate sequence without rewriting the completed midpoint', async () => {
+  const first = await midpointFixture(); await midpointIO.buildIntermediateSelection(first.config, first.out);
+  const receiptBefore = await readFile(first.out + '.interpolation.json');
+  const revised = structuredClone(first.config);
+  revised.decisions[0] = { ...revised.decisions[0], decision: 'aside', reason: 'Retain in the upper source for this revision.' };
+  revised.decisions[1] = { ...revised.decisions[1], decision: 'add', reason: 'Reconsidered as a different useful relationship.' };
+  await expect(midpointIO.buildIntermediateSelection(revised, first.out)).rejects.toThrow(/exists/i);
+  const second = await midpointFixture(); second.config.decisions = revised.decisions;
+  const report = await midpointIO.buildIntermediateSelection(second.config, second.out);
+  expect(report.count).toBe(2); expect(report.previousCount).toBe(1);
+  expect((await readdir(first.out)).sort()).toEqual(['a.jpg', 'old.jpg']);
+  expect((await readdir(second.out)).sort()).toEqual(['b.jpg', 'old.jpg']);
+  expect(await readFile(first.out + '.interpolation.json')).toEqual(receiptBefore);
+  expect(report.configuration.decisions[1].reason).toBe('Reconsidered as a different useful relationship.');
+});
+for (const mode of ['integration', 'midpoint']) {
+  const setup = mode === 'integration' ? fixture : midpointFixture;
+  const build = mode === 'integration' ? buildIntegration : midpointIO.buildIntermediateSelection;
+  const verify = mode === 'integration' ? verifyIntegration : midpointIO.verifyIntermediateSelection;
+  it.each(['old.jpg', 'a.jpg'])(`${mode} verification detects timestamp-only drift of %s without repairing it`, async filename => {
+    const { config, out } = await setup(); await build(config, out);
+    const file = path.join(out, filename); const before = await lstat(file); const contents = await readFile(file);
+    await utimes(file, before.atime, before.mtimeMs / 1000 + 60);
+    const changed = (await lstat(file)).mtimeMs;
+    const report = await verify(out);
+    expect(report.errors.join(' ')).toMatch(/modification time/i);
+    expect(report.gameStatus).toBeUndefined();
+    expect(await readFile(file)).toEqual(contents);
+    expect((await lstat(file)).mtimeMs).toBe(changed);
+  });
+  it(`${mode} copies modification times from the actual source of inherited photos and additions`, async () => {
+    const { config, out } = await setup();
+    const inherited = path.join(mode === 'integration' ? config.previous.directory : config.lower.directory, 'old.jpg');
+    const addition = path.join(mode === 'integration' ? config.sources[0].directory : config.upper.directory, 'a.jpg');
+    // The next original snapshot legitimately has a different mtime for identical inherited bytes.
+    if (mode === 'integration') await utimes(path.join(config.sources[0].directory, 'old.jpg'), 1000000000, 1000000000);
+    const oldTime = (await lstat(inherited)).mtimeMs; const newTime = (await lstat(addition)).mtimeMs;
+    await build(config, out);
+    expect(Math.abs((await lstat(path.join(out, 'old.jpg'))).mtimeMs - oldTime)).toBeLessThanOrEqual(1);
+    expect(Math.abs((await lstat(path.join(out, 'a.jpg'))).mtimeMs - newTime)).toBeLessThanOrEqual(1);
+    expect((await verify(out)).errors).toEqual([]);
+  });
+}
