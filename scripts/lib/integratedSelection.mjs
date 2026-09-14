@@ -23,21 +23,21 @@ async function inventory(directory, rows) {
 }
 async function inputs(config, output) {
   const plan = planIntegratedSelection(config);
-  if (path.basename(output) !== number(config.step) || path.basename(config.previous.directory) !== number(config.step - 1)) throw new Error('Output and preceding directory must be consecutive numbered siblings.');
+  if (path.basename(output) !== number(config.step) || (config.step > 1 && path.basename(config.previous.directory) !== number(config.step - 1))) throw new Error('Output and preceding directory must be consecutive numbered siblings.');
   const parent = await realpath(path.dirname(output));
-  if (parent !== await realpath(path.dirname(config.previous.directory))) throw new Error('Output must be a sibling of the preceding directory.');
-  if (config.step > 2) {
+  if (config.step > 1 && parent !== await realpath(path.dirname(config.previous.directory))) throw new Error('Output must be a sibling of the preceding directory.');
+  if (config.step > 1) {
     try {
       const previous = JSON.parse(await readFile(config.previous.directory + '.integration.json', 'utf8'));
       const prior = previous.configuration;
       const planned = planIntegratedSelection(prior);
-      if (previous.schemaVersion !== 1 || previous.output !== path.resolve(config.previous.directory) || prior.step !== config.step - 1 || hash(JSON.stringify(prior)) !== previous.configurationSha256 || !same(planned.photos, previous.photos)) throw new Error('identity');
+      if (previous.schemaVersion !== 2 || previous.output !== path.resolve(config.previous.directory) || prior.step !== config.step - 1 || hash(JSON.stringify(prior)) !== previous.configurationSha256 || !same(planned.photos, previous.photos)) throw new Error('identity');
       const records = rows => rows.map(({ filename, sha256, bytes }) => ({ filename, sha256, bytes })).sort((a, b) => a.filename.localeCompare(b.filename));
       if (!same(records(config.previous.files), records(planned.photos))) throw new Error('inherited inventory');
       if (prior.sources.length !== config.sources.length || config.sources.some(source => !prior.sources.some(old => old.id === source.id && old.terminalLevel === source.terminalLevel && old.level === source.level + 1))) throw new Error('source level continuity');
     } catch (error) { throw new Error('Preceding integration receipt missing or invalid: ' + error.message); }
   }
-  await inventory(config.previous.directory, config.previous.files);
+  if (config.step > 1) await inventory(config.previous.directory, config.previous.files);
   for (const source of config.sources) {
     if (path.basename(source.directory) !== `_level-${String(source.level).padStart(3, '0')}`) throw new Error('Source directory does not match declared level.');
     const root = await realpath(source.directory);
@@ -63,7 +63,7 @@ export async function buildIntegration(config, output) {
     }
     await inventory(output, plan.photos);
     await inputs(config, output);
-    const report = { schemaVersion: 1, output, ...plan, configuration: config, configurationSha256: hash(JSON.stringify(config)) };
+    const report = { schemaVersion: 2, output, ...plan, configuration: config, configurationSha256: hash(JSON.stringify(config)) };
     await writeFile(receiptPath, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
     return report;
   } catch (error) {
@@ -75,10 +75,11 @@ export async function verifyIntegration(output) {
   output = path.resolve(output);
   try {
     const report = JSON.parse(await readFile(output + '.integration.json', 'utf8'));
-    if (report.schemaVersion !== 1 || report.output !== output || hash(JSON.stringify(report.configuration)) !== report.configurationSha256) throw new Error('Receipt identity or configuration hash differs.');
+    if (report.schemaVersion !== 2) throw new Error('Legacy or unsupported receipt schema; a reviewed rebuild is required for the bounded-count procedure.');
+    if (report.output !== output || hash(JSON.stringify(report.configuration)) !== report.configurationSha256) throw new Error('Receipt identity or configuration hash differs.');
     const plan = await inputs(report.configuration, output);
     for (const key of Object.keys(plan)) if (!same(plan[key], report[key])) throw new Error('Receipt plan differs: ' + key);
     await inventory(output, plan.photos);
-    return { errors: [], count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
+    return { errors: [], sourceCounts: plan.sourceCounts, bounds: plan.bounds, count: plan.count, previousCount: plan.previousCount, addedCount: plan.addedCount, candidateCount: plan.candidateCount };
   } catch (error) { return { errors: [error.message] }; }
 }

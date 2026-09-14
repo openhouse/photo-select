@@ -4,7 +4,7 @@ const [command, input, output] = process.argv.slice(2);
 try {
   if (command === 'build' && input && output) {
     const report = await buildIntegration(JSON.parse(await readFile(input, 'utf8')), output);
-    console.log(JSON.stringify({ output: report.output, count: report.count, inherited: report.previousCount, added: report.addedCount }, null, 2));
+    console.log(JSON.stringify({ output: report.output, count: report.count, bounds: report.bounds, inherited: report.previousCount, added: report.addedCount }, null, 2));
   } else if (command === 'verify' && input && !output) {
     const report = await verifyIntegration(input); console.log(JSON.stringify(report, null, 2));
     if (report.errors.length) process.exitCode = 1;

@@ -826,3 +826,33 @@ regressions. No model call, new curation run, or aesthetic-quality score is
 produced by this helper. The additive changes exceed 300 lines; the existing
 large-PR review marker remains `--mechanical`, without describing the logic as
 a mechanical change. No auto-merge is requested.
+
+
+## Bounded integration counts and complete procedure, 2026-09-14
+
+The user added inclusive bounds to every numbered integration: the entire
+selection must contain at least the smallest source count and no more than the
+largest. Inherited photos occupy part of that allowance. Source counts come
+from each complete frozen inventory; neither the union nor the addition count
+can substitute for them. An inherited count above the maximum is an explicit
+infeasibility error before copying.
+
+The full procedure in `docs/integrated-selections.md` now covers terminal-relative
+level mapping, initial selection, complete candidate reading, count feasibility,
+mandatory inheritance, disposition records, exclusive copying, receipts and
+iteration. It preserves the distinction between a photographic palette and a
+composed animation. Existing oversized selections must remain historical records
+until a revision is chosen; the helper never silently prunes them.
+
+| Candidate/check | Observation | Bounded response |
+| --- | --- | --- |
+| New regressions against the previous helper | 9 failed, 26 passed | Enforce both count bounds and impossible inheritance; report source counts and effective minimum. |
+| Receipt and first-level review | The previous helper could not build `01`, and accepted an unreceipted initial selection at `02` | Support `01` with no predecessor and apply the same count rule; require version-2 receipts beginning at `02`. Reject legacy receipts without rewriting them. |
+| First implementation | 34 passed, 1 failed | Correct a test's spelling of “predecessor” in its error matcher; production behavior already rejected the invalid first-level predecessor. |
+| Focused final candidate | All 35 behavioral cases passed | Preserve complete inventory/hash, collision, CLI and non-overwrite coverage; add inclusive boundaries, overlap counting and cumulative allowance cases. |
+
+These are deterministic filesystem evaluations with synthetic bytes. They do
+not call a model, run photo curation, or award an aesthetic score. The existing
+large-PR marker remains `--mechanical`; this is a substantive rule change and
+full procedure documentation, with no auto-merge. The aggregate hill-climb and
+final candidate receipt are recorded with the updated PR validation.
