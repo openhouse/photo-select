@@ -5,7 +5,8 @@ import { credentialLike, redactCredentialContent } from './githubBridge.js';
 
 export const DEEPINFRA_MODEL = 'XiaomiMiMo/MiMo-V2.6-Pro';
 export const DEEPINFRA_BASE_URL = 'https://api.deepinfra.com/v1/openai';
-export const DEEPINFRA_PROFILE = 'deepinfra-mimo-v2.6-pro-2026-10-26-v1';
+export const DEEPINFRA_PROFILE = 'deepinfra-mimo-v2.6-pro-2026-10-26-v2';
+export const DEEPINFRA_MAX_IMAGES = 4;
 export const hostedSha256 = value => crypto.createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex');
 export function deepinfraHeld(message, extra = {}) { return Object.assign(new Error(message), { code: 'DEEPINFRA_HELD', ...extra }); }
 
@@ -23,6 +24,8 @@ export function buildDeepInfraRequest({ messages, filenames = [], curators = [],
   if (verbosity !== undefined && verbosity !== null) throw deepinfraHeld('MiMo verbosity controls are unverified; omit verbosity.');
   if (!Array.isArray(messages) || messages.length !== 2 || messages[0].role !== 'system' || messages[1].role !== 'user') throw deepinfraHeld('DeepInfra requires the ordinary system and user messages.');
   if (!filenames.length || new Set(filenames).size !== filenames.length) throw deepinfraHeld('DeepInfra requires a unique nonempty filename whitelist.');
+  const imageCount = messages.reduce((count, message) => count + (Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').length : 0), 0);
+  if (filenames.length > DEEPINFRA_MAX_IMAGES || imageCount > DEEPINFRA_MAX_IMAGES) throw deepinfraHeld(`DeepInfra MiMo accepts at most ${DEEPINFRA_MAX_IMAGES} images per request; split the complete batch before submission.`);
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 32768) throw deepinfraHeld('DeepInfra output budget must be between 1 and 32768 tokens.');
   const schema = expectFieldNotesMd ? { type: 'object', additionalProperties: false, required: ['field_notes_md'], properties: { field_notes_md: { type: 'string' } } } : buildReplySchema({ images: filenames, minutesMin: Math.max(1, minutesMin), minutesMax: Math.max(1, minutesMax) });
   if (expectFieldNotesDiff && !expectFieldNotesMd) { schema.properties.field_notes_diff = { type: 'string' }; schema.required.push('field_notes_diff'); }

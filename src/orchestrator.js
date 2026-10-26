@@ -17,6 +17,7 @@ import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js
 import { planNeedsReviewRetry } from "./core/planNeedsReviewRetry.js";
 import { CURATORS } from "./core/knowledgeLive.js";
 import { credentialLike } from "./core/githubBridge.js";
+import { DEEPINFRA_MAX_IMAGES } from "./core/deepinfra.js";
 import {
   createBillingLimitError,
   isBillingLimitError,
@@ -594,6 +595,7 @@ export async function triageDirectory(options) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
+  const batchSize = provider.name === 'deepinfra' ? Math.min(BATCH_SIZE, DEEPINFRA_MAX_IMAGES) : BATCH_SIZE;
   if (provider.preventAutomaticResubmit && retryNeedsReview) {
     throw new Error('Hosted receipts require plain resume; omit --retry-needs-review.');
   }
@@ -699,7 +701,7 @@ export async function triageDirectory(options) {
       level: depth + 1,
       source: dir,
       remainingImages,
-      remainingBatches: Math.ceil(remainingImages / BATCH_SIZE),
+      remainingBatches: Math.ceil(remainingImages / batchSize),
       cause: providerErrorSummary(err),
     };
     await mkdir(path.dirname(billingPausePath), { recursive: true });
@@ -861,6 +863,7 @@ export async function triageDirectory(options) {
         filename: path.basename(file), sha256: crypto.createHash('sha256').update(await readFile(file)).digest('hex'),
       })));
       const binding = { levelDir, corpus, model, verbosity, reasoningEffort, fieldNotes, curators,
+        ...(provider.name === 'deepinfra' ? { batchSize } : {}),
         identityPolicy: process.env.PHOTO_SELECT_IDENTITY_POLICY || 'passthrough',
         prompt: await readFile(promptPath, 'utf8'), context: contextPath ? await readFile(contextPath, 'utf8') : '',
         code: provider.journal.identity };
@@ -870,7 +873,7 @@ export async function triageDirectory(options) {
       }
       hostedPlanKey = crypto.createHash('sha256').update(bindingText).digest('hex');
       const batches = [];
-      for (let i = 0; i < queue.length; i += BATCH_SIZE) batches.push(queue.slice(i, i + BATCH_SIZE));
+      for (let i = 0; i < queue.length; i += batchSize) batches.push(queue.slice(i, i + batchSize));
       const plan = await provider.journal.workflowSnapshot(`plan-${hostedPlanKey}`, { batches, binding });
       const eligible = new Set(images);
       const pending = plan.batches.filter(batch => batch.some(file => eligible.has(file)));
@@ -903,7 +906,7 @@ export async function triageDirectory(options) {
         let batchIdx = 0;
         let abortProcessing = false;
         const nextBatch = () =>
-          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
+          !abortProcessing && queue.length ? queue.splice(0, batchSize) : null;
 
         async function workerFn() {
           while (true) {
@@ -1208,7 +1211,7 @@ export async function triageDirectory(options) {
                   completedBatches++;
                   const elapsedSec = (Date.now() - levelStart) / 1000;
                   const remainingNow = (await listLevelState(dir, { retryNeedsReview: false })).eligibleImages.length;
-                  const remainingBatchesNow = Math.ceil(remainingNow / BATCH_SIZE);
+                  const remainingBatchesNow = Math.ceil(remainingNow / batchSize);
                   const tps = completedBatches / elapsedSec;
                   const etaSec = tps > 0 ? Math.ceil(remainingBatchesNow / tps) : Infinity;
                   log(
@@ -1293,7 +1296,7 @@ export async function triageDirectory(options) {
       const remaining = nextState.eligibleImages.filter(
         (file) => !retrySuppressedNames.has(path.basename(file))
       ).length;
-      const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+      const remainingBatches = Math.ceil(remaining / batchSize);
       console.log(`${indent}🔎  level drain check: level=${depth + 1} source=${dir} eligible=${remaining}`);
       if (remaining > 0) console.log(`${indent}🔁  level still has eligible files; repeating level=${depth + 1}`);
       if (completedBatches) {

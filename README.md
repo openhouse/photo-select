@@ -1,10 +1,10 @@
 # photo‑select
 
 Read the [Knowledge Wiki](wiki/index.md) and [RFC 0013](docs/rfcs/0013-hosted-open-weights.md)
-for the MiMo/DeepInfra adapter, its synthetic evals, and the proposed live pilot.
-Live model acceptance and measured savings remain pending.
+for the MiMo/DeepInfra adapter, its synthetic evals, and the bounded live pilot.
+Broader editorial reliability and measured savings remain pending.
 
-A command‑line workflow that **selects 10 random images, asks a vision model which to “keep” or “set aside,”
+A command‑line workflow that **selects up to 10 random images (four for DeepInfra), asks a vision model which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
 You can run sessions through these hosted providers:
@@ -101,7 +101,11 @@ the official HTTPS endpoint, strict JSON Schema, local validation and one JSON
 repair. `auto` preserves the provider's default reasoning behavior; explicit
 effort settings are rejected until MiMo support is verified. DeepInfra does not
 support this project's `--github-all` or `--knowledge-*` modes. The adapter has
-synthetic tests; live image/schema acceptance and cost savings remain unmeasured.
+synthetic tests and a [six-photo live pilot](evals/reports/deepinfra-real-photo-pilot-2026-10-26.json).
+DeepInfra accepts at most four images per request; the CLI splits larger sets
+into complete batches. The pilot completed with one contract repair and exposed
+unsupported narrative claims and broken notebook links. Review its output before
+using selections. Comparative cost savings remain unmeasured.
 
 The private journal persists across runs. For photos on a macOS external volume,
 it defaults to `<volume>/.photo-select/hosted/source-<hash>`; otherwise it uses

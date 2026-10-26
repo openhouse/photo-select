@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = mkdtempSync(path.join(tmpdir(), 'hosted-weights-eval-'));
 const json = file => JSON.parse(readFileSync(path.join(root, file), 'utf8'));
 const testFiles = ['tests/hostedOpenWeights.test.js', 'tests/deepinfraProvider.test.js',
-  'tests/deepinfraCli.test.js', 'tests/deepinfraWorkflow.test.js', 'tests/hostedRun.test.js'];
+  'tests/deepinfraErrors.test.js', 'tests/deepinfraCli.test.js', 'tests/deepinfraWorkflow.test.js', 'tests/hostedRun.test.js'];
 try {
   const proposal = json('evals/hosted-open-weights.json'), graph = json('wiki/graph.json');
   const files = execFileSync('git', ['-c', 'core.excludesFile=/dev/null', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0').filter(file => file && existsSync(path.join(root, file)));
@@ -39,7 +39,7 @@ try {
     json_validity_rate: null, retry_recovery_rate: null, visualUsefulness: 'unmeasured',
     illustrativeCost: { provider: proposal.provider, model: proposal.model, usage, ...estimateHostedCost({ ...proposal, usage }) },
     actualUsage: null, actualCostUsd: null,
-    limitation: 'Named synthetic contract checks exercise local runtime behavior. Their pass counts are not model JSON-validity or retry-recovery samples. Live provider acceptance, cache behavior, visual usefulness and savings remain unmeasured.' };
+    limitation: 'Named synthetic contract checks exercise local runtime behavior. Their pass counts are not model JSON-validity or retry-recovery samples. This offline receipt does not measure live acceptance, cache behavior, visual usefulness or savings; bounded live results are recorded separately.' };
   mkdirSync(path.join(root, 'evals/reports'), { recursive: true });
   writeFileSync(path.join(root, 'evals/reports/hosted-open-weights.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify(report, null, 2));

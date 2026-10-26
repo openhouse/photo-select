@@ -21,8 +21,21 @@ image identity, decisions and revision history.
 [RFC 0013](../docs/rfcs/0013-hosted-open-weights.md) proposes DeepInfra's hosted
 MiMo V2.6 Pro as the first case. A dedicated adapter has synthetic transport and
 workflow tests; published capabilities motivate a pilot.
-The actual image/schema combination, reasoning controls, cache behavior and cost
-remain unverified. A hosted alias does not prove a weights revision.
+Live authentication and synthetic image/schema checks passed on 2026-10-26.
+A synthetic decision contradicted its reason, so structured replies alone do not
+establish reliable selection. Real-photo usefulness, reasoning controls, cache
+behavior and cost savings remain unverified. A hosted alias does not prove a
+weights revision.
+
+The real-photo pilot received HTTP 400: `Too many images in request: 6 > 4`.
+Use batches of at most four images for this model. Reject larger direct requests
+before upload, and preserve that limit in repair and field-note passes.
+Smaller image dimensions do not remove this limit. After the batching fix, a
+[six-photo pilot](../evals/reports/deepinfra-real-photo-pilot-2026-10-26.json)
+completed as four plus two, with one recovered contract repair. The final
+selections agreed with reasons and file moves, but the review found unsupported
+motion/time claims and broken notebook links. Keep this small custom-prompt
+result separate from general acceptance, Jamie's judgment and savings.
 
 The [evaluation profile](../evals/hosted-open-weights.json) retains dated sources
 and unknown measurements. Run `npm run evals:hosted-open-weights` for graph

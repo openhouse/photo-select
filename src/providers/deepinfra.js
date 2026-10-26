@@ -61,7 +61,15 @@ export default class DeepInfraProvider {
               if (!Number.isFinite(wait) || wait < 0 || wait > 30) throw deepinfraHeld('DeepInfra rate limit requires a billing or capacity pause.');
               await this.sleep(wait * 1000); continue;
             }
-            if (!received.ok) { record.attempts.push({ request_sha256: hostedSha256(submitted), startedAt, status: received.status, outcome: [402, 429].includes(received.status) ? 'rejected' : 'unknown', usage: null }); throw deepinfraHeld(`DeepInfra HTTP ${received.status}; request held without automatic resubmission.`, received.status === 402 ? { code: 'BILLING_LIMIT' } : {}); }
+            if (!received.ok) {
+              const attempt = { request_sha256: hostedSha256(submitted), startedAt, status: received.status, outcome: [402, 429].includes(received.status) ? 'rejected' : 'unknown', usage: null };
+              try {
+                const body = await received.json(), safe = redactDeepInfraResponse(body, apiKey);
+                Object.assign(attempt, { response_sha256: hostedSha256(body), response: safe.value }, safe.findings.length ? { redacted: true, credentialFindings: safe.findings } : {});
+              } catch { attempt.responseBodyUnreadable = true; }
+              record.attempts.push(attempt);
+              throw deepinfraHeld(`DeepInfra HTTP ${received.status}; request held without automatic resubmission.`, received.status === 402 ? { code: 'BILLING_LIMIT' } : {});
+            }
             try { response = await received.json(); }
             catch { record.attempts.push({ request_sha256: hostedSha256(submitted), startedAt, status: received.status, outcome: 'invalid-envelope', usage: null }); throw deepinfraHeld('DeepInfra response envelope was unreadable; no automatic resubmission.'); }
             const safe = redactDeepInfraResponse(response, apiKey);

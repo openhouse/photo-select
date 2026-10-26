@@ -101,13 +101,34 @@ it('shared image construction uses supplied frozen people without re-reading mut
 
 function snapshotJournal() {
   const snapshots = new Map();
-  return { identity: { codeRevision: 'synthetic-revision', codeSha256: 'a'.repeat(64) },
+  return { snapshots, identity: { codeRevision: 'synthetic-revision', codeSha256: 'a'.repeat(64) },
     workflowSnapshot: async (key, initial) => {
       if (!snapshots.has(key)) snapshots.set(key, structuredClone(initial));
       return structuredClone(snapshots.get(key));
     },
   };
 }
+it.each([
+  ['deepinfra', [4, 2]],
+  ['openai', [6]],
+])('batches all six photos for %s without losing images or changing other providers', async (name, sizes) => {
+  await Promise.all(['three.jpg', 'four.jpg', 'five.jpg', 'six.jpg'].map(file => fs.writeFile(path.join(root, file), file)));
+  const driver = provider(options => { const json = valid(options); return { raw: JSON.stringify(json), json }; });
+  driver.name = name;
+  driver.journal = snapshotJournal();
+  await triage(driver);
+  const batches = driver.submit.mock.calls.map(([options]) => options.images);
+  expect(batches.map(batch => batch.length)).toEqual(sizes);
+  expect(batches.flat().map(file => path.basename(file)).sort()).toEqual(['five.jpg', 'four.jpg', 'one.jpg', 'six.jpg', 'three.jpg', 'two.jpg']);
+  expect((await fs.readdir(root)).filter(file => file.endsWith('.jpg'))).toEqual([]);
+  expect((await fs.readdir(path.join(root, '_keep'))).filter(file => file.endsWith('.jpg'))).toHaveLength(sizes.length);
+  expect((await fs.readdir(path.join(root, '_aside'))).filter(file => file.endsWith('.jpg'))).toHaveLength(6 - sizes.length);
+  if (name === 'deepinfra') {
+    const plan = [...driver.journal.snapshots.entries()].find(([key]) => key.startsWith('plan-'))[1];
+    expect(plan.binding.batchSize).toBe(4);
+    expect(plan.batches.map(batch => batch.length)).toEqual([4, 2]);
+  }
+});
 it('holds a partially moved hosted batch before another submission on restart', async () => {
   const driver = provider(async options => {
     await fs.mkdir(path.join(root, '_keep'), { recursive: true });

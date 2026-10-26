@@ -4,7 +4,7 @@
   "status": "passed",
   "inputSha256": {
     "AGENTS.md": "4191930343fcddbaa1b8c7557cc72ae2ef1be26268d1e197c41529d9f0f15a4c",
-    "docs/rfcs/0013-hosted-open-weights.md": "fbaf0b1071daf494ff779baebdbbc9d63e1244a6ab9a26967590c48c80da456e",
+    "docs/rfcs/0013-hosted-open-weights.md": "6f9696eb86e4a73afdce769b249c1b8697f45cf71ebd846db0b8a0d04eb0b74f",
     "evals/hosted-open-weights.json": "c45e1da58a7b3f7a38aad703b88c79c290effd64e389c443453c00ddd373a075",
     "package-lock.json": "a67cad0265af8cfc0bbadb3ae02ed33fada7067fb6ee8667e589cb5200efdea5",
     "package.json": "a460311fdf379eef4e1423b80746ceea6a3c6c60be5d56c2be4390ae51bbd8cf",
@@ -13,7 +13,7 @@
     "prompts/default_prompt_olympia.txt": "eae668be8281a775e39cacf992d5098e922d8753fbdfdbf4b01bac73d6fb7134",
     "prompts/github_prompt.hbs": "96268c149a6773fa44b6675bed8a1b254275c0f4ad749387f34ce81b2c3350d5",
     "prompts/knowledge_prompt.hbs": "8d53b86c6d2818385736f167048546497c292d299ee8312a9ff14bc0036495b6",
-    "scripts/eval-hosted-open-weights.mjs": "d571ef567e15ca7d4bd20598078ccb598bd6ce33fb4e57525d044ecb1e45fe87",
+    "scripts/eval-hosted-open-weights.mjs": "704350397bf9352d0c4f2af0cdb8989518a72bc27044d0176517df41f7dee1ff",
     "src/archive/ensureArchiveLevel.js": "29f8f7309808f79616e3b12e9c912cec2c824c502c9bcd25e0577f69843672af",
     "src/archive/ensureClone.js": "f3590147a8c384b5ec58fa35674b91adfb247c931851f092e74644155f9fb7f9",
     "src/archive/manifest.js": "d13215734c49342384ceb0ce5049c1df83b6e1a85b0b3c1f0b5674260acfa5b3",
@@ -26,7 +26,7 @@
     "src/core/contextLinks.js": "eaddaefdfaa5b97975ca3eb1f8c5322cf737cec907c618e74d72e2181890d44d",
     "src/core/curatorialContext.js": "9a06e0731bee28ab0e7ab47b10299ec7f02c3390a86984483f259410420c8246",
     "src/core/curatorialPacket.js": "ff9b760c5348cc8a3856afce268d9d86fd4e76b3a7ec8bf151d4003541ab569c",
-    "src/core/deepinfra.js": "591887429ab5b9aebbb3756111a9feb528628dc5062898dbbf84ba5ae68a037f",
+    "src/core/deepinfra.js": "61f587ec7394dcaa3b4b4852b982cdeb717385dad0b637b39f2f6be190895d25",
     "src/core/evaluateLevelOutcome.js": "8fbe15ac3fe8c4342381de01ce5111b3f3f8bcfff8d4ed856643495e47f29987",
     "src/core/finalizeCurators.js": "0aaca3d97bf479966d6c9c26574e80c74365c235e722b0a04366ceadfc345d07",
     "src/core/finalizeCurators.js.js": "1062b03ddf9484198e7b99d441d4b24bfdb4d349e189bd73287c45f96f408503",
@@ -69,9 +69,9 @@
     "src/lib/semaphore.js": "2699dd98bff0e5ab81e78a83953d744013ceaa520d3fe81d595623a4fab97933",
     "src/net 2.js": "3fd434986a6cf974b767f5c8adac99b664587a779118c53411ca00b0b6a8a7f3",
     "src/net.js": "02c1ecb637f6506865fc767878fdaf7d0a5f6ea48cf52fd5b3c1d9b2ef49d021",
-    "src/orchestrator.js": "c52c978b60a0b1b3f40a819eced9d26d7d2a6a80d104017a250ef49abca854e2",
+    "src/orchestrator.js": "f2ff158e1e48ef6bab391384c4f40fb0472a80a4ccda773ea679933ebf992c24",
     "src/peoplePrefetch.js": "babc17f4846179dfe18a073ac0f6ff668e863e785b0a250cd5cc16a03ebfd501",
-    "src/providers/deepinfra.js": "3a1ef302339d501f91a9378e3b400a1bb0333c6de809cbc7360c4a55b9667841",
+    "src/providers/deepinfra.js": "07359d91b1556f5d5c2c81fd7d9232da9362097ea6acd3ebb2e75ae3d060dc08",
     "src/providers/github.js": "59ae2b4ca6c55422b928bda126b37a8a9c896a14f91f8c72af4aed02943f1ca8",
     "src/providers/index.js": "bb1304e2bf8b7988340ce1f0df13a9b83f64b2ada430aaba7df3fcc99243aacc",
     "src/providers/knowledge.js": "722e1b168229f42a2decc9757b89583ecbbf0de59a6028532d25460c1c628e45",
@@ -85,12 +85,13 @@
     "src/tokenEstimate 2.js": "261ac538d29e8db071e086f62d4b9217556e06026fda04669fa292eeed54015a",
     "src/tokenEstimate.js": "db4baa104138a6b57480a267172d0f78a67c250534f8f2d2c9053e501448d395",
     "tests/deepinfraCli.test.js": "0e71853caa2f749a52275148c224138cbd855daea36d5a2b25397e6059c8c8e4",
-    "tests/deepinfraProvider.test.js": "d792d4a6f77194f8d9abea5159781e0bd9f786def11ce678189a05049d687f7b",
-    "tests/deepinfraWorkflow.test.js": "2325512def0be6cad4e586637272560c4332702fcb574ee751ec0f007a328f07",
+    "tests/deepinfraErrors.test.js": "33528a23ca34230c874962510118876ec16fc65ab313633b899767ba26f6ac8b",
+    "tests/deepinfraProvider.test.js": "2a681444ae47a9475e24567669f7bdc024218a0d21d857559ab0015c9fe46fbc",
+    "tests/deepinfraWorkflow.test.js": "6e9123bd1a71a72ba1bbd25aea90f2f83f0ce0cdcd711f74d98f191e3cf40cf5",
     "tests/hostedOpenWeights.test.js": "89cd0515c339f9e6c2fd9c24be61bbbd4fa4c3cd7ade3bba149b1d90e61c00b4",
     "tests/hostedRun.test.js": "020d891a77703bd6686316a029bff7c50757b574a52182f91e935fbf7f7119b6",
     "wiki/graph.json": "0e0a27281e3b13e61cf0c0a7f34e83771592716a03c3af1a8c09543e1ab59f20",
-    "wiki/hosted-open-weights.md": "92aa4cf48c213e063f6eb45beb3f9695ad75da91925041dd4e6e64df1090fbb1",
+    "wiki/hosted-open-weights.md": "dc087e8dfd03355817ffa156ee9af5fde9132444361d973407eb27a47cfeabce",
     "wiki/index.md": "1595142064047c8bb33e3c1b9cf44fa6a9a9f85ae3ab62de36efb6702728d5fa"
   },
   "graph": {
@@ -98,7 +99,7 @@
     "edges": 14
   },
   "tests": {
-    "passed": 159,
+    "passed": 171,
     "failed": 0,
     "skipped": 0
   },
@@ -118,8 +119,13 @@
       "jsonAndRepairCases": []
     },
     {
+      "file": "tests/deepinfraErrors.test.js",
+      "passed": 6,
+      "jsonAndRepairCases": []
+    },
+    {
       "file": "tests/deepinfraProvider.test.js",
-      "passed": 43,
+      "passed": 47,
       "jsonAndRepairCases": [
         " DeepInfra submission and resumable holds repairs a malformed JSON reply once with frozen images, roster and targeted diagnostics",
         " DeepInfra submission and resumable holds emits a terminal repair suggestion and never retries the held result on restart",
@@ -130,7 +136,7 @@
     },
     {
       "file": "tests/deepinfraWorkflow.test.js",
-      "passed": 14,
+      "passed": 16,
       "jsonAndRepairCases": [
         " hosted workflow isolation and safe stopping does not run the generic decisions-only paid repair after a hosted validation failure"
       ]
@@ -165,5 +171,5 @@
   },
   "actualUsage": null,
   "actualCostUsd": null,
-  "limitation": "Named synthetic contract checks exercise local runtime behavior. Their pass counts are not model JSON-validity or retry-recovery samples. Live provider acceptance, cache behavior, visual usefulness and savings remain unmeasured."
+  "limitation": "Named synthetic contract checks exercise local runtime behavior. Their pass counts are not model JSON-validity or retry-recovery samples. This offline receipt does not measure live acceptance, cache behavior, visual usefulness or savings; bounded live results are recorded separately."
 }

@@ -30,8 +30,10 @@ provider contract that can accommodate other hosted open-weight services.
 Keep the existing photographic workflow and let a measured comparison determine
 whether a provider is useful. This RFC remains **proposed**. The dedicated
 provider is implemented with synthetic transport and workflow tests. Account
-authorization, the actual model/image/schema combination, usefulness and savings
-remain unverified; no paid pilot or default switch is established.
+authorization and synthetic image/schema requests have since passed live checks.
+A real-photo pilot found a four-image request limit and completed after the
+batching fix. Broader photographic usefulness and savings remain unverified;
+no default switch is established.
 
 Enter through the [Knowledge Wiki](../../wiki/index.md) and its
 [hosted-provider method](../../wiki/hosted-open-weights.md). The
@@ -66,14 +68,36 @@ not successful API tests. Source IDs and URLs live in the
 | Topic | Documented claim | Acceptance boundary |
 | --- | --- | --- |
 | Identity | DeepInfra alias `XiaomiMiMo/MiMo-V2.6-Pro`; advertised FP8 | Hosted weights revision and hash unknown. |
-| API | `https://api.deepinfra.com/v1/openai/chat/completions` | Full photo request remains untested. |
+| API | `https://api.deepinfra.com/v1/openai/chat/completions` | Authentication and a bounded six-photo pilot completed; general acceptance remains pending. |
 | Context | 1,048,576 tokens; multimodal input | Tokenizer, effective image budget and output limits need verification. |
-| Images | Multiple base64/URL images; JPG/PNG/WebP, 20 MB/image | `image_url.detail` is unsupported; omit it explicitly. |
-| Output | JSON mode and strict `json_schema` documented | MiMo plus our exact schema and images remains untested. |
+| Images | Multiple base64/URL images; JPG/PNG/WebP, 20 MB/image | Live API reports at most four images per request. Omit unsupported `image_url.detail`. |
+| Output | JSON mode and strict `json_schema` documented | Live image/schema requests completed, including one contract repair; editorial reliability remains unverified. |
 | Thinking | General reasoning controls and output billing documented | No verified MiMo mapping for `minimal` or `xhigh`. |
 | Cache | Automatic prefix reuse and cached-token reporting | No guaranteed MiMo hit rate or explicit retention support. |
 | Batch | Chat Completions batch documented, 20% below realtime | Application support deferred; Responses batches are unsupported. |
 | Privacy | Inference/no-training policy; separate metadata and bulk retention | Record the policy for the actual mode and date. |
+
+Live checks on **2026-10-26** exercised authentication, synthetic images, strict
+JSON, field notes and private receipts. A valid selection still contradicted its
+own reason, so these checks did not establish reliable photographic judgment.
+A real-photo follow-up returned HTTP 400 with
+`Too many images in request: 6 > 4` at a 768-pixel maximum image edge.
+The capability profile now caps batches at four images and rejects larger direct
+provider requests before upload. Reducing image dimensions does not remove this
+image-count limit.
+
+The [bounded real-photo report](../../evals/reports/deepinfra-real-photo-pilot-2026-10-26.json)
+records six reviewed copies processed as four plus two. Five responses parsed;
+one omitted the closing question and recovered with the single repair. The final
+five keeps and one aside agreed with their reasons, discussion, notebook and file
+moves. Independent assistant review found specific correct visible detail for all
+six, alongside unsupported motion/time claims and broken notebook photo links.
+Reported cost was about $0.01665 for the five successful requests, including the
+repair; the two preceding HTTP 400 rejections reported no usage or cost.
+This custom-prompt, vision-only pilot is not Jamie's editorial approval or
+evidence of unattended readiness or comparative savings. The original proposal
+profile and offline receipt retain their unexecuted acceptance boundary; this
+separate live report names its actual sample and limitations.
 
 The model page embeds RL material while its Project link currently resolves to
 [MiMo-V2.6-Pro-MOPD](https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD).
@@ -96,7 +120,8 @@ checkpoint or precision.
 3. **Request construction:** render the same default/custom prompt and complete
    context. Preserve filename order, per-image metadata, repeated-tag curator
    additions, identity policy, and the frozen per-batch roster. Use standard strict
-   JSON Schema wrapping and retain local validation. Treat source text as data.
+   JSON Schema wrapping and retain local validation. Limit each MiMo request to
+   four images, including repair and field-note passes. Treat source text as data.
 4. **Results and repair:** preserve phase-specific keys, exact filename coverage,
    the final question, and all valid minutes. Distinguish provider failure from a
    valid `aside`. Preserve the contract's single JSON repair, `retry_recovered`,
@@ -166,7 +191,7 @@ reject unsupported reasoning and knowledge modes before photo processing.
 Mock transport checks establish local behavior; they do not establish successful
 vendor acceptance or measure the model's photographic judgment.
 
-Then use a user-started, explicitly budgeted live pilot on copied photographs.
+Continue with a user-started, explicitly budgeted live pilot on copied photographs.
 Freeze prompt, context, images, roster, order and model/tier settings. Hold out
 events and photo bursts from tuning. Compare useful-positive and adverse cases,
 including subtle near alternatives, reordered images and unsupported social claims.
@@ -174,7 +199,8 @@ Jamie reviews visible grounding, interpretation, disagreements and editorial use
 No aggregate score compensates for invented attribution or invalid file decisions.
 
 Track `json_validity_rate`, `retry_recovery_rate`, latency, filename fidelity,
-order sensitivity, and cost per accepted batch. Live metrics remain **unmeasured**.
+order sensitivity, and cost per accepted batch. Real-photo editorial metrics
+remain **unmeasured**.
 Any synthetic JSON/retry measurements in the receipt name their fixture population
 and remain separate from live rates.
 Run focused tests, inspect failures, improve the candidate, then run

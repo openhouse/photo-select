@@ -12,11 +12,26 @@ const messages = [{ role: 'system', content: 'Original custom prompt {{curators}
 ] }];
 const reply = { minutes: [{ speaker: 'A (exact)', text: 'What should we examine next?' }], decisions: [{ filename: 'one.jpg', decision: 'keep', reason: 'Visible shape.' }] };
 const requestOptions = { messages, model, filenames: ['one.jpg'], curators: ['A (exact)'], photoPeople: [{ file: 'one.jpg', people: ['Fresh'] }] };
+const imageRequest = count => ({ ...requestOptions,
+  filenames: Array.from({ length: count }, (_, index) => `${index + 1}.jpg`),
+  messages: [messages[0], { role: 'user', content: Array.from({ length: count }, () => messages[1].content[1]) }],
+});
 const result = (content = JSON.stringify(reply), extra = {}) => ({ id: 'reply-1', model, choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content, reasoning_content: 'Provider reasoning.' } }], usage: { prompt_tokens: 100, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 20 }, completion_tokens_details: { reasoning_tokens: 10 }, estimated_cost: 0.001 }, ...extra });
 const http = (body, status = 200, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body });
 function memoryJournal() { const values = new Map(); return { values, load: async key => values.get(key), save: async (key, value) => values.set(key, structuredClone(value)) }; }
 
 describe('dedicated DeepInfra request contract', () => {
+  it('retains every image at the verified four-image boundary', () => {
+    const request = buildDeepInfraRequest(imageRequest(4));
+    expect(request.messages[1].content.filter(part => part.type === 'image_url')).toHaveLength(4);
+    expect(request.response_format.json_schema.schema.properties.decisions.items.properties.filename.enum).toEqual(['1.jpg', '2.jpg', '3.jpg', '4.jpg']);
+  });
+  it('holds an oversized whitelist before constructing a paid request', () => {
+    expect(() => buildDeepInfraRequest(imageRequest(5))).toThrow(/at most 4 images/i);
+  });
+  it('holds excess image parts even when the whitelist claims only four photos', () => {
+    expect(() => buildDeepInfraRequest({ ...imageRequest(5), filenames: ['1.jpg', '2.jpg', '3.jpg', '4.jpg'] })).toThrow(/at most 4 images/i);
+  });
   it('preserves original prompt and ordered metadata while removing unsupported image detail', () => {
     const request = buildDeepInfraRequest(requestOptions);
     expect(request.model).toBe(model); expect(request.stream).toBe(false);
@@ -91,6 +106,16 @@ describe('DeepInfra submission and resumable holds', () => {
     vi.stubEnv('DEEPINFRA_API_KEY', 'dedicated-test-key'); vi.stubEnv('OPENAI_API_KEY', 'openai-secret-must-not-be-sent');
   });
   const provider = (requests, responses, settings = {}) => new DeepInfraProvider({ buildMessages: async () => ({ messages: structuredClone(messages), used: [settings.image] }), fetch: async (url, init) => { requests.push({ url, init, request: JSON.parse(init.body) }); const response = responses.shift(); if (response instanceof Error) throw response; return response; }, sleep: async () => {}, ...settings });
+  it('rejects five prepared images without any upload or paid receipt', async () => {
+    const images = Array.from({ length: 5 }, (_, index) => path.join(directory, `${index + 1}.jpg`));
+    await Promise.all(images.map(file => writeFile(file, 'original image bytes')));
+    const p = provider(requests, [], { buildMessages: async () => ({ messages: imageRequest(5).messages, used: images }) });
+    try {
+      await expect(p.chat({ ...options, images })).rejects.toMatchObject({ code: 'DEEPINFRA_HELD' });
+      expect(requests).toEqual([]);
+      expect(journal.values.size).toBe(0);
+    } finally { await rm(directory, { recursive: true, force: true }); vi.unstubAllEnvs(); }
+  });
   it('uses only dedicated credentials and persists raw response, usage and provenance before returning', async () => {
     const p = provider(requests, [http(result())], { image });
     try {
