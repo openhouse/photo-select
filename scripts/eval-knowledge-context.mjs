@@ -23,7 +23,16 @@ try {
   const jsonPath = path.join(scratch, 'vitest.json');
   const run = spawnSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...testFiles, '--maxWorkers=2', '--minWorkers=2', '--reporter=json', `--outputFile=${jsonPath}`], { cwd: root, encoding: 'utf8' });
   if (run.error || run.status !== 0) {
-    console.error((run.stderr || run.stdout || String(run.error)).slice(-6000));
+    let failedSuites = [];
+    try {
+      failedSuites = JSON.parse(readFileSync(jsonPath, 'utf8')).testResults.filter(suite => suite.status === 'failed')
+        .map(suite => ({ file: path.relative(root, suite.name), message: suite.message,
+          failures: suite.assertionResults.filter(test => test.status === 'failed')
+            .map(test => ({ name: test.fullName, messages: test.failureMessages })) }));
+    } catch { /* A killed child may not have produced its report. */ }
+    console.error(JSON.stringify({ status: run.status, signal: run.signal,
+      error: run.error?.message || null, failedSuites }, null, 2).slice(-12000));
+    console.error((run.stderr || run.stdout || '').slice(-2000));
     throw new Error('Focused eval failed; inspect the failing suite above.');
   }
   const result = JSON.parse(readFileSync(jsonPath, 'utf8'));

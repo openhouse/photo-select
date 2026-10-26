@@ -54,6 +54,7 @@ describe('hosted inference cost accounting', () => {
 
 const source = { id: 'deepinfra-api', url: 'https://deepinfra.com/XiaomiMiMo/MiMo-V2.6-Pro/api', checkedOn: '2026-10-26' };
 const proposal = { schemaVersion: 1, stage: 'proposed', status: 'proposed', ready: false, modelRequests: 0,
+  implementation: { status: 'implemented', verification: 'mock-tested', liveAcceptance: 'pending' },
   provider: base.provider, model: base.model, endpoint: 'https://api.deepinfra.com/v1/openai', precision: 'fp8', checkpoint: null,
   evidence: { visualUsefulness: 'unmeasured', jsonValidityRate: null, retryRecoveryRate: null },
   liveAcceptance: { authorization: 'unverified', strictSchemaWithImages: 'unverified', thinkingControls: 'unverified',
@@ -80,7 +81,7 @@ visibility: public-safe
 sensitivity: low
 canonical_path: docs/rfcs/0013-hosted-open-weights.md
 stage: proposed
-implementation: Offline design evaluator only; provider implementation and live acceptance pending.
+implementation: Dedicated DeepInfra provider implemented and mock-tested; live acceptance pending.
 ---
 `,
   'wiki/hosted-open-weights.md': `---
@@ -116,8 +117,12 @@ describe('hosted proposal graph acceptance', () => {
     ['invented cache acceptance', x => { x.proposal.liveAcceptance.cacheReuse = 'verified'; }],
     ['invented measured usefulness', x => { x.proposal.liveAcceptance.editorialUsefulness = 'measured'; }],
     ['invented measured savings', x => { x.proposal.liveAcceptance.costSavings = 'measured'; }],
+    ['missing implementation boundary', x => { delete x.proposal.implementation; }],
+    ['invented live implementation evidence', x => { x.proposal.implementation.verification = 'live-tested'; }],
+    ['invented accepted implementation', x => { x.proposal.implementation.liveAcceptance = 'passed'; }],
+    ['unimplemented runtime status', x => { x.proposal.implementation.status = 'pending'; }],
     ['adopted RFC stage', x => { x.documents[x.files[0]] = x.documents[x.files[0]].replace('stage: proposed', 'stage: operational'); }],
-    ['RFC implementation claim', x => { x.documents[x.files[0]] = x.documents[x.files[0]].replace('implementation: Offline design evaluator only; provider implementation and live acceptance pending.', 'implementation: Provider operational and live acceptance passed.'); }],
+    ['RFC implementation claim', x => { x.documents[x.files[0]] = x.documents[x.files[0]].replace('implementation: Dedicated DeepInfra provider implemented and mock-tested; live acceptance pending.', 'implementation: Provider operational and live acceptance passed.'); }],
     ['invented requests', x => { x.proposal.modelRequests = 1; }],
     ['invented quality', x => { x.proposal.evidence.jsonValidityRate = 1; }],
     ['wrong provider', x => { x.proposal.provider = 'openai'; }],

@@ -19,13 +19,15 @@ bindings. A provider change must preserve the brief, curator roster, metadata,
 image identity, decisions and revision history.
 
 [RFC 0013](../docs/rfcs/0013-hosted-open-weights.md) proposes DeepInfra's hosted
-MiMo V2.6 Pro as the first case. Its published capabilities motivate a pilot;
-the actual image/schema combination, reasoning controls, cache behavior and cost
+MiMo V2.6 Pro as the first case. A dedicated adapter has synthetic transport and
+workflow tests; published capabilities motivate a pilot.
+The actual image/schema combination, reasoning controls, cache behavior and cost
 remain unverified. A hosted alias does not prove a weights revision.
 
 The [evaluation profile](../evals/hosted-open-weights.json) retains dated sources
-and unknown measurements. Run `npm run evals:hosted-open-weights` for local graph
-integrity and cost scenarios, then `npm run hillclimb` for repository checks.
+and unknown measurements. Run `npm run evals:hosted-open-weights` for graph
+integrity, cost scenarios and synthetic provider checks, then `npm run hillclimb`
+for repository checks.
 These checks make no model requests and evaluate no actual photographic edit.
 
 Future providers should reuse the capability/audit contract and add their own

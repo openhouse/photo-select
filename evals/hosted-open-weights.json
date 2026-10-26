@@ -4,6 +4,11 @@
   "status": "proposed",
   "ready": false,
   "modelRequests": 0,
+  "implementation": {
+    "status": "implemented",
+    "verification": "mock-tested",
+    "liveAcceptance": "pending"
+  },
   "provider": "deepinfra",
   "model": "XiaomiMiMo/MiMo-V2.6-Pro",
   "endpoint": "https://api.deepinfra.com/v1/openai",

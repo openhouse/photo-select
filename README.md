@@ -1,15 +1,17 @@
 # photo‑select
 
 Read the [Knowledge Wiki](wiki/index.md) and [RFC 0013](docs/rfcs/0013-hosted-open-weights.md)
-for the proposed MiMo/DeepInfra hosted-provider contract and its offline evals.
-The provider is not implemented or live-validated by that proposal.
+for the MiMo/DeepInfra adapter, its synthetic evals, and the proposed live pilot.
+Live model acceptance and measured savings remain pending.
 
-A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
+A command‑line workflow that **selects 10 random images, asks a vision model which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
-You can run sessions in two “gears”:
+You can run sessions through these hosted providers:
 
 - **Realtime (`openai`)** – submit a request and stream the reply immediately.
+- **Hosted open weights (`deepinfra`)** – submit a validated MiMo request with a
+  private journal and conservative holds when a request's outcome is uncertain.
 - **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
   then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
   Batch offers separate rate limits and lower per-token pricing than realtime calls.
@@ -19,7 +21,9 @@ You can run sessions in two “gears”:
 ## Requirements
 
 - Node 20+
-- An OpenAI API key (via `OPENAI_API_KEY` or the `--api-key` flag)
+- Git for the DeepInfra provider's private receipt journal.
+- A credential for the selected hosted provider: `OPENAI_API_KEY` for OpenAI,
+  or `DEEPINFRA_API_KEY` for DeepInfra. `--api-key` is OpenAI-only.
   ```bash
   export OPENAI_API_KEY="sk‑..."
   ```
@@ -62,7 +66,7 @@ Invoke the CLI from the project directory using `npx`:
 ```bash
 npx photo-select \
   [--dir /path/to/images] \
-  [--provider openai|openai-batch|ollama] \
+  [--provider openai|openai-batch|ollama|deepinfra] \
   [--model qwen2.5vl:32b] \
   [--api-key sk-...] \
   [--context /path/to/context.txt]
@@ -80,6 +84,38 @@ npx photo-select --provider openai-batch --model gpt-5 [other flags]
 # or, if installed globally:
 photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
+
+### MiMo V2.6 Pro on DeepInfra
+
+With `DEEPINFRA_API_KEY` already set in your shell, run:
+
+```bash
+node src/index.js --provider deepinfra \
+  --model XiaomiMiMo/MiMo-V2.6-Pro \
+  --reasoning-effort auto --workers 1 \
+  --dir "/path/to/copied-photos" --no-recurse
+```
+
+This submits photographs to DeepInfra and may incur charges. The adapter uses
+the official HTTPS endpoint, strict JSON Schema, local validation and one JSON
+repair. `auto` preserves the provider's default reasoning behavior; explicit
+effort settings are rejected until MiMo support is verified. DeepInfra does not
+support this project's `--github-all` or `--knowledge-*` modes. The adapter has
+synthetic tests; live image/schema acceptance and cost savings remain unmeasured.
+
+The private journal persists across runs. For photos on a macOS external volume,
+it defaults to `<volume>/.photo-select/hosted/source-<hash>`; otherwise it uses
+`~/.photo-select/hosted/source-<hash>`. The hash identifies the canonical source
+directory path. Set `PHOTO_SELECT_HOSTED_BASE` to choose a private base directory
+outside any Git checkout. The CLI prints the journal's location. Each terminal
+receipt commits response JSON and the updated notebook together in its private
+Git repository.
+
+Resume by rerunning against the same source directory and settings. Held or
+incomplete requests stop for review; completed receipts are reused without a new
+submission. Partial file moves require reconciliation with the private receipt.
+DeepInfra currently requires one worker and fixed concurrency. Adaptive workers,
+`--retry-needs-review`, and explicit verbosity settings are unsupported.
 
 Run `photo-select --help` to see all options.
 
@@ -153,14 +189,14 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
-| `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
+| `--provider` | `openai` | `openai`, `openai-batch`, `ollama`, or `deepinfra` |
+| `--model`  | *(auto)* | Model id for the provider. DeepInfra defaults to `XiaomiMiMo/MiMo-V2.6-Pro`. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
-| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
+| `--reasoning-effort` | provider default | OpenAI reasoning effort; DeepInfra currently accepts `auto` only. |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
 | `--retry-needs-review` | `false` | Automatically retry held `NEEDS_REVIEW` files without restarting the CLI |

@@ -38,12 +38,12 @@ program
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
   .option(
     "--provider <name>",
-    "openai or ollama",
+    "openai, openai-batch, deepinfra or ollama",
     process.env.PHOTO_SELECT_PROVIDER || "openai"
   )
   .option(
     "-m, --model <id>",
-    "Model id (OpenAI or Ollama)",
+    "Model id for the selected provider",
     process.env.PHOTO_SELECT_MODEL
   )
   .option(
@@ -203,6 +203,9 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
 if (!workers) workers = 1;
+if (providerName === 'deepinfra' && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
+  program.error('DeepInfra currently requires one worker, fixed concurrency and plain resume; omit --adaptive-workers and --retry-needs-review.');
+}
 if (adaptiveWorkers && adaptiveMinWorkers > workers) {
   program.error("--adaptive-min-workers cannot exceed --workers");
 }
@@ -281,7 +284,16 @@ if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
 }
 
-if (apiKey) {
+if (providerName === 'deepinfra') {
+  if (program.getOptionValueSource('apiKey') === 'cli') {
+    program.error('--api-key is OpenAI-only; set DEEPINFRA_API_KEY in your environment.');
+  }
+  if (!process.env.DEEPINFRA_API_KEY) program.error('DEEPINFRA_API_KEY is missing.');
+  if (program.getOptionValueSource('verbosity') === 'cli' || process.env.PHOTO_SELECT_VERBOSITY) {
+    program.error('DeepInfra does not support the requested verbosity setting.');
+  }
+  verbosity = undefined;
+} else if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
 }
 if (ollamaBaseUrl) {
@@ -294,12 +306,19 @@ if (disablePhotoFilter) {
 const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
-  finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+  finalModel = provider === 'deepinfra' ? 'XiaomiMiMo/MiMo-V2.6-Pro' : provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
 }
 
 let finalReasoningEffort = reasoningEffort?.toLowerCase();
 if (!finalReasoningEffort) {
-  finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+  finalReasoningEffort = provider === 'deepinfra' ? 'auto' : /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+}
+if (provider === 'deepinfra') {
+  const { validateDeepInfraConfiguration, DEEPINFRA_BASE_URL } = await import('./core/deepinfra.js');
+  try {
+    validateDeepInfraConfiguration({ endpoint: process.env.DEEPINFRA_BASE_URL || DEEPINFRA_BASE_URL,
+      model: finalModel, reasoningEffort: finalReasoningEffort, apiKey: process.env.DEEPINFRA_API_KEY });
+  } catch (error) { program.error(error.message); }
 }
 process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
@@ -350,7 +369,13 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     try {
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
-    const driver = liveRun?.provider || await getProvider(provider);
+    let journal;
+    if (provider === 'deepinfra') {
+      const { createHostedJournal } = await import('./hostedRun.js');
+      journal = await createHostedJournal({ source: absDir, base: process.env.PHOTO_SELECT_HOSTED_BASE });
+      console.log(`deepinfra: private audit saved in ${journal.root}`);
+    }
+    const driver = liveRun?.provider || await getProvider(provider, { journal });
     await triageDirectory({
       dir: absDir,
       promptPath,
@@ -379,7 +404,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
-        `⏸️  OpenAI API credits exhausted. Run paused${
+        `⏸️  ${provider === 'deepinfra' ? 'DeepInfra' : 'OpenAI'} API credits exhausted. Run paused${
           Number.isInteger(err?.remainingImages)
             ? ` with ${err.remainingImages} image(s) remaining`
             : ""
@@ -390,6 +415,11 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
         console.error("  ↳ cause:", err.cause);
       }
       process.exitCode = err?.exitCode || 75;
+      return;
+    }
+    if (err?.repairSuggestion) {
+      console.error(JSON.stringify(err.repairSuggestion));
+      process.exitCode = 1;
       return;
     }
     console.error("❌  Error:", err);

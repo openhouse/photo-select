@@ -32,6 +32,7 @@ const scalar = (body, key) => {
 export function evaluateHostedProposal({ proposal: p = {}, graph: g = {}, files = [], documents = {} } = {}) {
   const failures = new Set(), fail = code => failures.add(code), knownFiles = new Set(files);
   if (p.schemaVersion !== 1 || p.stage !== 'proposed' || p.status !== 'proposed' || p.ready !== false || p.modelRequests !== 0) fail('proposal-state');
+  if (p.implementation?.status !== 'implemented' || p.implementation?.verification !== 'mock-tested' || p.implementation?.liveAcceptance !== 'pending') fail('implementation-boundary');
   if (p.provider !== 'deepinfra' || p.model !== 'XiaomiMiMo/MiMo-V2.6-Pro' || p.endpoint !== 'https://api.deepinfra.com/v1/openai' || p.precision !== 'fp8' || p.checkpoint !== null) fail('provider-identity');
   if (p.evidence?.visualUsefulness !== 'unmeasured' || p.evidence?.jsonValidityRate !== null || p.evidence?.retryRecoveryRate !== null) fail('unmeasured-evidence');
   const acceptance = { authorization: 'unverified', strictSchemaWithImages: 'unverified', thinkingControls: 'unverified',
@@ -58,7 +59,7 @@ export function evaluateHostedProposal({ proposal: p = {}, graph: g = {}, files 
   const inquiry = byId.get(p.graph?.proposalId), method = byId.get(p.graph?.conceptId);
   if (inquiry?.id !== 'photo-select-rfc-0013' || inquiry?.kind !== 'research-inquiry' || inquiry?.status !== 'draft' || inquiry?.path !== 'docs/rfcs/0013-hosted-open-weights.md' || method?.id !== 'photo-select-hosted-open-weights' || method?.kind !== 'method' || method?.status !== 'draft' || method?.path !== 'wiki/hosted-open-weights.md') fail('proposal-registration');
   const rfc = metadata(documents[inquiry?.path]);
-  if (scalar(rfc, 'stage') !== 'proposed' || scalar(rfc, 'implementation') !== 'Offline design evaluator only; provider implementation and live acceptance pending.') fail('rfc-decision-state');
+  if (scalar(rfc, 'stage') !== 'proposed' || scalar(rfc, 'implementation') !== 'Dedicated DeepInfra provider implemented and mock-tested; live acceptance pending.') fail('rfc-decision-state');
   for (const e of edges) {
     const from = byId.get(e.from), to = byId.get(e.to), href = typeof e.href === 'string' ? e.href.split('#')[0] : '';
     if (!from || !to || !types.has(e.type) || !['semantic', 'evidence'].includes(e.layer) || typeof e.context !== 'string' || !e.context.trim()) { fail('edge-metadata'); continue; }

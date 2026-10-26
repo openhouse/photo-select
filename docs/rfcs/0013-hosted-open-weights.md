@@ -7,7 +7,7 @@ visibility: public-safe
 sensitivity: low
 last_reviewed: 2026-10-26
 canonical_path: docs/rfcs/0013-hosted-open-weights.md
-summary: Propose a reusable provider boundary and evidence-led comparison for hosted open weights.
+summary: Implement a reusable hosted-provider boundary while retaining separate live acceptance and editorial review.
 rfc: 0013
 stage: proposed
 start_date: 2026-10-26
@@ -15,7 +15,7 @@ authors: [Jamie Burkart, Codex]
 champion: Jamie Burkart
 decision_owner: Jamie Burkart
 review_areas: [provider compatibility, photographic usefulness, cost accounting, source custody]
-implementation: Offline design evaluator only; provider implementation and live acceptance pending.
+implementation: Dedicated DeepInfra provider implemented and mock-tested; live acceptance pending.
 supersedes: []
 superseded_by: []
 relations: [{type: uses_method, target: photo-select-hosted-open-weights, href: ../../wiki/hosted-open-weights.md, context: Reusable hosted-provider method.}]
@@ -28,8 +28,10 @@ relations: [{type: uses_method, target: photo-select-hosted-open-weights, href: 
 Add a dedicated `deepinfra` provider for `XiaomiMiMo/MiMo-V2.6-Pro`, using a
 provider contract that can accommodate other hosted open-weight services.
 Keep the existing photographic workflow and let a measured comparison determine
-whether a provider is useful. This RFC is **proposed**. This change implements
-an offline graph/accounting evaluator, not a provider, paid pilot, or default switch.
+whether a provider is useful. This RFC remains **proposed**. The dedicated
+provider is implemented with synthetic transport and workflow tests. Account
+authorization, the actual model/image/schema combination, usefulness and savings
+remain unverified; no paid pilot or default switch is established.
 
 Enter through the [Knowledge Wiki](../../wiki/index.md) and its
 [hosted-provider method](../../wiki/hosted-open-weights.md). The
@@ -47,12 +49,13 @@ image handling, caching, tools, billing, or retention. Separate model capability
 hosting service, API transport, account authorization, and editorial judgment.
 Open weights can still be served remotely; sending a photograph is a provider upload.
 
-Today `src/providers/index.js` exposes `openai`, `openai-batch`, and `ollama`.
-The ordinary OpenAI shim honors `OPENAI_BASE_URL`, but sends a schema-bearing
+At proposal time the providers were `openai`, `openai-batch`, and `ollama`.
+The ordinary OpenAI shim honored `OPENAI_BASE_URL`, but sent a schema-bearing
 `json_object`, attaches unsupported DeepInfra image `detail`, and does not forward
 MiMo reasoning settings. Its streaming path does not retain detailed billed usage.
-The existing cache identity omits endpoint and some settings. Thus the command
-preview discussed in this chat remains experimental, not supported acceptance evidence.
+The existing cache identity omitted endpoint and some settings. The dedicated
+adapter now supplies its own request, credential, usage and cache boundaries.
+The earlier endpoint-override preview is not evidence of live compatibility.
 
 ## Dated provider evidence
 
@@ -79,7 +82,7 @@ advertised precision, returned model ID, and attested revision separate.
 The RL/MXFP label visible in OpenCode does not establish the hosted deployment's
 checkpoint or precision.
 
-## Proposed reusable contract
+## Reusable contract
 
 1. **Identity and credentials:** bind provider ID, HTTPS origin, API transport,
    model alias, precision, requested settings, and capability-profile revision.
@@ -110,7 +113,7 @@ checkpoint or precision.
    Begin with one worker, then evaluate bounded adaptive concurrency, 429 handling,
    billing pauses, timeout ambiguity and resume without duplicate paid work.
 
-This proposal preserves AGENTS v2.0.0, prompt text, image selection, recursive
+The implementation preserves AGENTS v2.0.0, prompt text, image selection, recursive
 stopping, source snapshots and output placement. All named voices remain fictional
 lenses. See [RFC 0010](0010-content-addressed-people-prefetch.md) for metadata
 identity and [RFC 0012](0012-live-knowledge-exploration.md) for prompt preservation.
@@ -152,17 +155,16 @@ completed level. Cheaper tokens alone do not prove cheaper useful work.
 
 ## Evaluation and hill climb
 
-This change's `evals:hosted-open-weights` checks the actual graph/profile, source
-joins, proposal lifecycle and conservative cost arithmetic. Mutation tests must
-reject false readiness, wrong model/rate binding, broken links, missing evidence,
-invalid usage and double-counted reasoning. These are offline design checks;
-they do not test an implemented provider or estimate live model quality.
-
-Implementation gates follow: strict-schema/images request fixtures; filename and
-roster isolation; malformed/extra/truncated replies; bounded repair and safe holds;
-credential destination; cache isolation; usage capture; restart and ambiguous
-timeout behavior; and explicit GitHub-mode rejection. Add those regressions when
-the adapter exists. Do not label this RFC's reference checks as those runtime tests.
+`evals:hosted-open-weights` checks the graph/profile, source joins, proposal
+lifecycle, conservative cost arithmetic, and the implemented provider's synthetic
+request and workflow cases. It binds the evaluated source and test bytes.
+Mutation tests reject false readiness, invented live evidence, wrong model/rate
+binding, broken links, missing evidence, invalid usage and double-counted reasoning.
+Transport fixtures cover strict-schema/image requests, credential destination,
+cache isolation, usage capture, bounded repair and terminal failures. CLI tests
+reject unsupported reasoning and knowledge modes before photo processing.
+Mock transport checks establish local behavior; they do not establish successful
+vendor acceptance or measure the model's photographic judgment.
 
 Then use a user-started, explicitly budgeted live pilot on copied photographs.
 Freeze prompt, context, images, roster, order and model/tier settings. Hold out
@@ -172,15 +174,17 @@ Jamie reviews visible grounding, interpretation, disagreements and editorial use
 No aggregate score compensates for invented attribution or invalid file decisions.
 
 Track `json_validity_rate`, `retry_recovery_rate`, latency, filename fidelity,
-order sensitivity, and cost per accepted batch. They remain **unmeasured** here.
+order sensitivity, and cost per accepted batch. Live metrics remain **unmeasured**.
+Any synthetic JSON/retry measurements in the receipt name their fixture population
+and remain separate from live rates.
 Run focused tests, inspect failures, improve the candidate, then run
 `npm run hillclimb` and `git diff --check`. The receipt binds candidate bytes and
 keeps offline results separate from provider authorization, live acceptance and CI.
 
 ## Rollout and open decisions
 
-After proposal review: implement one dedicated provider; pass offline runtime
-gates; run the bounded pilot; review usefulness/cost; then expand provider profiles.
+The dedicated provider and offline runtime gates precede a bounded pilot.
+After pilot review, compare usefulness/cost before expanding provider profiles.
 DeepInfra Batch and GitHub tools each need their own implementation and acceptance.
 Keep the current provider available. Rollback disables the new provider, preserves
 completed results and marks affected receipts stale; it never relabels failed work.
