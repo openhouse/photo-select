@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "scope": "offline-proposal-graph-and-cost-contract",
+  "status": "passed",
+  "inputSha256": {
+    "docs/rfcs/0013-hosted-open-weights.md": "8953e8542887ae5a0a951a595efa5018b777710265a0807313767c58c8667d70",
+    "evals/hosted-open-weights.json": "008686552245ce8d1bc836c3d71f246e8c85aa2765b658a69f9fed8df22433c9",
+    "package.json": "a460311fdf379eef4e1423b80746ceea6a3c6c60be5d56c2be4390ae51bbd8cf",
+    "scripts/eval-hosted-open-weights.mjs": "7a44117f8068c369b7b4efa447f4092b1f8c5001649b87d407f08c327e4af106",
+    "src/core/hostedOpenWeights.js": "89f72372170ac28f155b4de0f7512cf8e1232d565ad205bb0c5bbbd0ed9cfff2",
+    "tests/hostedOpenWeights.test.js": "7a28d5fb324e9d7729b9e340140a01e0b40eb79ba6a7c5713b7d7dcbb7d4d9a9",
+    "wiki/graph.json": "0e0a27281e3b13e61cf0c0a7f34e83771592716a03c3af1a8c09543e1ab59f20",
+    "wiki/hosted-open-weights.md": "cc10b733688d19e91452ef3ec6a4f0530ee4d5737d85ad9c47e10e88946019fb",
+    "wiki/index.md": "1595142064047c8bb33e3c1b9cf44fa6a9a9f85ae3ab62de36efb6702728d5fa"
+  },
+  "graph": {
+    "nodes": 13,
+    "edges": 14
+  },
+  "tests": {
+    "passed": 65,
+    "failed": 0,
+    "skipped": 0
+  },
+  "stage": "proposed",
+  "ready": false,
+  "modelRequests": 0,
+  "sourceAccess": false,
+  "json_validity_rate": null,
+  "retry_recovery_rate": null,
+  "visualUsefulness": "unmeasured",
+  "illustrativeCost": {
+    "provider": "deepinfra",
+    "model": "XiaomiMiMo/MiMo-V2.6-Pro",
+    "usage": {
+      "inputTokens": 100000,
+      "cachedInputTokens": 0,
+      "cacheWriteTokens": 0,
+      "outputTokens": 10000,
+      "reasoningTokens": null,
+      "outputIncludesReasoning": true
+    },
+    "usd": 0.0517,
+    "unknown": []
+  },
+  "actualUsage": null,
+  "actualCostUsd": null,
+  "limitation": "Synthetic contract tests and an authored graph do not establish provider compatibility, live JSON validity, visual usefulness, cache behavior, or measured savings."
+}

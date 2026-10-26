@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "rootId": "photo-select-wiki",
+  "registry": "authored-local-adaptation",
+  "nodes": [
+    {"id":"photo-select-hosted-open-weights","kind":"method","status":"draft","path":"wiki/hosted-open-weights.md","visibility":"public-safe","sensitivity":"low"},
+    {"id":"photo-select-rfc-0013","kind":"research-inquiry","status":"draft","path":"docs/rfcs/0013-hosted-open-weights.md","visibility":"public-safe","sensitivity":"low"},
+    {"id":"photo-select-wiki","kind":"index","status":"maintained","path":"wiki/index.md","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-batch","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/batch/introduction","title":"DeepInfra Batch transport","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-cache","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/prompt-caching","title":"DeepInfra automatic prompt caching","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-json","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/structured-outputs","title":"DeepInfra structured outputs","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-model","kind":"source","status":"maintained","url":"https://deepinfra.com/XiaomiMiMo/MiMo-V2.6-Pro/api","title":"DeepInfra model alias, pricing and API","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-model-card","kind":"source","status":"maintained","url":"https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD","title":"Publisher checkpoint linked by DeepInfra","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-privacy","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/account/data-privacy","title":"DeepInfra data policy","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-reasoning","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/reasoning","title":"DeepInfra reasoning and billing","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-retention","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/prompt-cache-retention","title":"DeepInfra explicit cache retention","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.deepinfra-vision","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/vision","title":"DeepInfra image inputs","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.wiki-schema","kind":"source","status":"maintained","url":"https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md","title":"Pinned public record vocabulary","visibility":"public-safe","sensitivity":"low"}
+  ],
+  "edges": [
+    {"from":"photo-select-hosted-open-weights","type":"related_to","to":"photo-select-rfc-0013","layer":"semantic","href":"../docs/rfcs/0013-hosted-open-weights.md","context":"Inspect the MiMo and DeepInfra proposal."},
+    {"from":"photo-select-rfc-0013","type":"uses_method","to":"photo-select-hosted-open-weights","layer":"semantic","href":"../../wiki/hosted-open-weights.md","context":"Apply the reusable provider boundary."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-batch","layer":"evidence","href":"https://docs.deepinfra.com/batch/introduction","context":"DeepInfra Batch transport; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-cache","layer":"evidence","href":"https://docs.deepinfra.com/chat/prompt-caching","context":"DeepInfra automatic prompt caching; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-json","layer":"evidence","href":"https://docs.deepinfra.com/chat/structured-outputs","context":"DeepInfra structured outputs; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-model","layer":"evidence","href":"https://deepinfra.com/XiaomiMiMo/MiMo-V2.6-Pro/api","context":"DeepInfra model alias, pricing and API; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-model-card","layer":"evidence","href":"https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD","context":"Publisher checkpoint linked by DeepInfra; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-privacy","layer":"evidence","href":"https://docs.deepinfra.com/account/data-privacy","context":"DeepInfra data policy; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-reasoning","layer":"evidence","href":"https://docs.deepinfra.com/chat/reasoning","context":"DeepInfra reasoning and billing; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-retention","layer":"evidence","href":"https://docs.deepinfra.com/chat/prompt-cache-retention","context":"DeepInfra explicit cache retention; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-vision","layer":"evidence","href":"https://docs.deepinfra.com/chat/vision","context":"DeepInfra image inputs; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.wiki-schema","layer":"evidence","href":"https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md","context":"Pinned public record vocabulary; checked 2026-10-26, not live inference evidence."},
+    {"from":"photo-select-wiki","type":"related_to","to":"photo-select-rfc-0013","layer":"semantic","href":"../docs/rfcs/0013-hosted-open-weights.md","context":"Read the first provider proposal."},
+    {"from":"photo-select-wiki","type":"uses_method","to":"photo-select-hosted-open-weights","layer":"semantic","href":"hosted-open-weights.md","context":"Start with the reusable method."}
+  ]
+}

@@ -1,5 +1,9 @@
 # photo‑select
 
+Read the [Knowledge Wiki](wiki/index.md) and [RFC 0013](docs/rfcs/0013-hosted-open-weights.md)
+for the proposed MiMo/DeepInfra hosted-provider contract and its offline evals.
+The provider is not implemented or live-validated by that proposal.
+
 A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
