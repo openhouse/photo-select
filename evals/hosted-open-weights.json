@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "stage": "proposed",
+  "status": "proposed",
+  "ready": false,
+  "modelRequests": 0,
+  "implementation": {
+    "status": "implemented",
+    "verification": "mock-tested",
+    "liveAcceptance": "pending"
+  },
+  "provider": "deepinfra",
+  "model": "XiaomiMiMo/MiMo-V2.6-Pro",
+  "endpoint": "https://api.deepinfra.com/v1/openai",
+  "precision": "fp8",
+  "checkpoint": null,
+  "graph": {
+    "proposalId": "photo-select-rfc-0013",
+    "conceptId": "photo-select-hosted-open-weights"
+  },
+  "evidence": {
+    "visualUsefulness": "unmeasured",
+    "jsonValidityRate": null,
+    "retryRecoveryRate": null
+  },
+  "rates": {
+    "provider": "deepinfra",
+    "model": "XiaomiMiMo/MiMo-V2.6-Pro",
+    "unit": "USD_per_million_tokens",
+    "input": 0.43,
+    "cachedInput": 0.004,
+    "output": 0.87,
+    "cacheWrite": null,
+    "observedAt": "2026-10-26",
+    "source": "https://deepinfra.com/XiaomiMiMo/MiMo-V2.6-Pro/api"
+  },
+  "sources": [
+    {
+      "id": "source.deepinfra-model",
+      "url": "https://deepinfra.com/XiaomiMiMo/MiMo-V2.6-Pro/api",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-vision",
+      "url": "https://docs.deepinfra.com/chat/vision",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-json",
+      "url": "https://docs.deepinfra.com/chat/structured-outputs",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-reasoning",
+      "url": "https://docs.deepinfra.com/chat/reasoning",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-cache",
+      "url": "https://docs.deepinfra.com/chat/prompt-caching",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-retention",
+      "url": "https://docs.deepinfra.com/chat/prompt-cache-retention",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-batch",
+      "url": "https://docs.deepinfra.com/batch/introduction",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-privacy",
+      "url": "https://docs.deepinfra.com/account/data-privacy",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.deepinfra-model-card",
+      "url": "https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD",
+      "checkedOn": "2026-10-26"
+    },
+    {
+      "id": "source.wiki-schema",
+      "url": "https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md",
+      "checkedOn": "2026-10-26"
+    }
+  ],
+  "liveAcceptance": {
+    "authorization": "unverified",
+    "strictSchemaWithImages": "unverified",
+    "thinkingControls": "unverified",
+    "cacheReuse": "unverified",
+    "editorialUsefulness": "unmeasured",
+    "costSavings": "unmeasured"
+  }
+}

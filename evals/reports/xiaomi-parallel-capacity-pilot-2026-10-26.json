@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-normal-launcher-parallel-and-adaptive-capacity-evidence",
+  "provider": "xiaomi",
+  "model": "mimo-v2.6-pro",
+  "capabilityProfile": "xiaomi-mimo-v2.6-pro-2026-10-26-v3",
+  "status": "completed",
+  "runs": {
+    "adaptive": {
+      "schemaVersion": 1,
+      "scope": "bounded-hosted-capacity-test-with-repeated-inspected-derivatives",
+      "status": "completed",
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-pro",
+      "capabilityProfile": "xiaomi-mimo-v2.6-pro-2026-10-26-v3",
+      "productionCLIIntegration": true,
+      "adaptive": true,
+      "configuredMinimum": 1,
+      "configuredCeiling": 2,
+      "workingPhotoCopies": 40,
+      "distinctPreviouslyInspectedDerivatives": 10,
+      "curatorCount": 17,
+      "context": "short capacity-test brief, not the exhibition brief",
+      "fieldNotes": false,
+      "recursive": false,
+      "peopleLookup": false,
+      "controlledSelectionOrder": false,
+      "completedBatches": 4,
+      "HTTP200Replies": 6,
+      "imagesPerPOST": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "maximumObservedOverlappingHTTPRequests": 1,
+      "admissionTargets": [
+        1,
+        2
+      ],
+      "jsonParsed": {
+        "passed": 6,
+        "total": 6
+      },
+      "contractValidOnArrival": {
+        "passed": 4,
+        "total": 6
+      },
+      "json_validity_rate": 1.0,
+      "contract_validity_rate": 0.6666666666666666,
+      "recoveredRepairs": 2,
+      "retry_recovery_rate": 1,
+      "sortedWorkingCopies": {
+        "keep": 26,
+        "aside": 14
+      },
+      "hashesAndFrozenInputsVerified": true,
+      "responseAndAggregateNotebookCommittedTogether": true,
+      "privateAuditClean": true,
+      "privateAuditCommit": "295d5d198f603cd1fd60846b2b8a88849d4e1bda",
+      "codeIdentity": {
+        "codeRevision": "d2957fddcf646b71f20e74dd3aaffd0a2c6ce914",
+        "codeSha256": "cfaeae6151260775a815e28a40939326b02948afe4c81bd851f582ee45183ee7"
+      },
+      "executionIncludedUncommittedChanges": true,
+      "sourceHashMatchesExecutionAtVerification": true,
+      "observerSha256": "3dc007b646fdac2622e3d97a44cb9d9d520b8281cd04b2385986a263923727d3",
+      "runnerSha256": "55eee68084d2b68447bc17fa2083b0b7d5d22c207b9d3ec8b5057200eb1fd5a4",
+      "usage": [
+        {
+          "promptTokens": 13947,
+          "cachedPromptTokens": 0,
+          "completionTokens": 3480,
+          "imageTokens": 11640,
+          "reasoningTokens": 563,
+          "estimatedUsd": 0.009094545
+        },
+        {
+          "promptTokens": 14187,
+          "cachedPromptTokens": 0,
+          "completionTokens": 4060,
+          "imageTokens": 11880,
+          "reasoningTokens": 1516,
+          "estimatedUsd": 0.009703545000000001
+        },
+        {
+          "promptTokens": 17496,
+          "cachedPromptTokens": 14080,
+          "completionTokens": 2564,
+          "imageTokens": 11880,
+          "reasoningTokens": 22,
+          "estimatedUsd": 0.003767328
+        },
+        {
+          "promptTokens": 13707,
+          "cachedPromptTokens": 0,
+          "completionTokens": 4719,
+          "imageTokens": 11400,
+          "reasoningTokens": 2064,
+          "estimatedUsd": 0.010068075000000001
+        },
+        {
+          "promptTokens": 17126,
+          "cachedPromptTokens": 13696,
+          "completionTokens": 2710,
+          "imageTokens": 11400,
+          "reasoningTokens": 36,
+          "estimatedUsd": 0.0038990555999999996
+        },
+        {
+          "promptTokens": 13947,
+          "cachedPromptTokens": 0,
+          "completionTokens": 2930,
+          "imageTokens": 11640,
+          "reasoningTokens": 377,
+          "estimatedUsd": 0.008616045
+        }
+      ],
+      "estimatedCostUsd": 0.04514859360000001,
+      "billingReconciled": false,
+      "pricingSource": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "pricingCheckedOn": "2026-10-26",
+      "hostedConcurrencyOfFifty": "unverified",
+      "editorialUsefulness": "unmeasured",
+      "readyForUnattendedCuration": false,
+      "originalPhotosLibraryChanged": false,
+      "limitation": "Repeated private working copies measure transport and concurrency behavior only. This is not a corpus of forty/twenty unique photos, an exhibition-brief test, a blind editorial benchmark, a large-library recursion test, or verification of a fifty-request hosted quota. Fixed mode controls selection order with a test-only Math.random override."
+    },
+    "fixedTwo": {
+      "schemaVersion": 1,
+      "scope": "bounded-hosted-capacity-test-with-repeated-inspected-derivatives",
+      "status": "completed",
+      "provider": "xiaomi",
+      "model": "mimo-v2.6-pro",
+      "capabilityProfile": "xiaomi-mimo-v2.6-pro-2026-10-26-v3",
+      "productionCLIIntegration": true,
+      "adaptive": false,
+      "configuredMinimum": null,
+      "configuredCeiling": 2,
+      "workingPhotoCopies": 20,
+      "distinctPreviouslyInspectedDerivatives": 10,
+      "curatorCount": 17,
+      "context": "short capacity-test brief, not the exhibition brief",
+      "fieldNotes": false,
+      "recursive": false,
+      "peopleLookup": false,
+      "controlledSelectionOrder": true,
+      "completedBatches": 2,
+      "HTTP200Replies": 2,
+      "imagesPerPOST": [
+        10,
+        10
+      ],
+      "maximumObservedOverlappingHTTPRequests": 2,
+      "admissionTargets": [
+        2
+      ],
+      "jsonParsed": {
+        "passed": 2,
+        "total": 2
+      },
+      "contractValidOnArrival": {
+        "passed": 2,
+        "total": 2
+      },
+      "json_validity_rate": 1.0,
+      "contract_validity_rate": 1.0,
+      "recoveredRepairs": 0,
+      "retry_recovery_rate": null,
+      "sortedWorkingCopies": {
+        "keep": 15,
+        "aside": 5
+      },
+      "hashesAndFrozenInputsVerified": true,
+      "responseAndAggregateNotebookCommittedTogether": true,
+      "privateAuditClean": true,
+      "privateAuditCommit": "a98a0ef86e9696425a895b6809724d698c315e2a",
+      "codeIdentity": {
+        "codeRevision": "d2957fddcf646b71f20e74dd3aaffd0a2c6ce914",
+        "codeSha256": "cfaeae6151260775a815e28a40939326b02948afe4c81bd851f582ee45183ee7"
+      },
+      "executionIncludedUncommittedChanges": true,
+      "sourceHashMatchesExecutionAtVerification": true,
+      "observerSha256": "402fc496b9c0cea06ef83313a4c190f3df5ad426c65422abbdde3ce747037a5b",
+      "runnerSha256": "4e5f0d7c01b1023a84a170fb56d77929ebb14d910fbc03b0c4c2b9535e4ca5d4",
+      "usage": [
+        {
+          "promptTokens": 13947,
+          "cachedPromptTokens": 0,
+          "completionTokens": 3214,
+          "imageTokens": 11640,
+          "reasoningTokens": 379,
+          "estimatedUsd": 0.008863125
+        },
+        {
+          "promptTokens": 13947,
+          "cachedPromptTokens": 0,
+          "completionTokens": 4419,
+          "imageTokens": 11640,
+          "reasoningTokens": 2099,
+          "estimatedUsd": 0.009911475000000001
+        }
+      ],
+      "estimatedCostUsd": 0.018774600000000002,
+      "billingReconciled": false,
+      "pricingSource": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "pricingCheckedOn": "2026-10-26",
+      "hostedConcurrencyOfFifty": "unverified",
+      "editorialUsefulness": "unmeasured",
+      "readyForUnattendedCuration": false,
+      "originalPhotosLibraryChanged": false,
+      "limitation": "Repeated private working copies measure transport and concurrency behavior only. This is not a corpus of forty/twenty unique photos, an exhibition-brief test, a blind editorial benchmark, a large-library recursion test, or verification of a fifty-request hosted quota. Fixed mode controls selection order with a test-only Math.random override."
+    }
+  },
+  "combinedEstimatedCostUsd": 0.06392319360000001,
+  "billingReconciled": false,
+  "uniqueSourceDerivativesAcrossBothRuns": 10,
+  "fiftyRequestCeiling": "enforced by local tests; hosted quota unverified",
+  "readyForUnattendedCuration": false,
+  "limitation": "These controlled transport tests reused the same ten previously inspected derivatives as forty and twenty working copies. They verify adaptive admission and two overlapping hosted ten-image requests, not sixty unique photos, photographic judgment, comparative savings, a fifty-request hosted quota or large-library recursion."
+}

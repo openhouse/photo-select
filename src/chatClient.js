@@ -73,11 +73,14 @@ if (!USE_UNDICI) {
   });
 }
 
-const openai = new OpenAI({
+let openai;
+function getOpenAIClient() {
+  return openai ??= new OpenAI({
   ...(httpsAgent ? { httpAgent: httpsAgent } : {}),
   timeout: DEFAULT_TIMEOUT,
   maxRetries: MAX_RETRIES,
-});
+  });
+}
 const PEOPLE_API_BASE =
   process.env.PHOTO_FILTER_API_BASE || "http://localhost:3000";
 const PEOPLE_CONCURRENCY = numEnv("PHOTO_SELECT_PEOPLE_CONCURRENCY", 2);
@@ -406,7 +409,7 @@ export async function cacheKey({
  * Builds the array of message objects for the Chat Completion API.
  * Encodes each image as a base64 data‑URL so it can be inspected by vision models.
  */
-export async function buildMessages(prompt, images, curators = []) {
+export async function buildMessages(prompt, images, curators = [], { photoPeople } = {}) {
   let content = prompt;
   if (curators.length) {
     const names = curators.join(", ");
@@ -428,7 +431,7 @@ export async function buildMessages(prompt, images, curators = []) {
     const dataUrl = buildImageDataUrl({ buffer, file });
     used.push(file);
     const name = path.basename(file);
-    const peopleRaw = await getPeople(name);
+    const peopleRaw = photoPeople ? (photoPeople.find(photo => (photo.file || photo.filename) === name)?.people || []) : await getPeople(name);
     const people = sanitizePeople(peopleRaw);
     const dropped = peopleRaw.filter((p) => isPlaceholder(p));
     if (dropped.length && process.env.PHOTO_SELECT_VERBOSE === "1") {
@@ -698,7 +701,7 @@ export async function chatCompletion({
         onProgress("waiting");
         let rsp;
         try {
-          rsp = await openai.responses.create(baseOpts, { headers });
+          rsp = await getOpenAIClient().responses.create(baseOpts, { headers });
           const usage = rsp?.usage;
           const actual =
             Number(usage?.total_tokens) ||
@@ -723,7 +726,7 @@ export async function chatCompletion({
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {
-            rsp = await openai.responses.create(
+            rsp = await getOpenAIClient().responses.create(
               { ...baseOpts, max_output_tokens },
               { headers: { "Idempotency-Key": crypto.randomUUID() } },
             );
@@ -808,7 +811,7 @@ export async function chatCompletion({
       let text;
       try {
         if (stream) {
-          const streamResp = await openai.chat.completions.create({
+          const streamResp = await getOpenAIClient().chat.completions.create({
             ...baseParams,
             stream: true,
           });
@@ -822,7 +825,7 @@ export async function chatCompletion({
           }
           scheduler.commit(handle, estTokens);
         } else {
-          const { choices, usage } = await openai.chat.completions.create(
+          const { choices, usage } = await getOpenAIClient().chat.completions.create(
             baseParams,
           );
           text = choices[0].message.content;
@@ -944,7 +947,7 @@ export async function chatCompletion({
         onProgress("waiting");
         let rsp;
         try {
-          rsp = await openai.responses.create(baseOpts, { headers });
+          rsp = await getOpenAIClient().responses.create(baseOpts, { headers });
           const usage = rsp?.usage;
           const actual =
             Number(usage?.total_tokens) ||
@@ -969,7 +972,7 @@ export async function chatCompletion({
           const estTokens2 = estInputTokens + max_output_tokens;
           const handle2 = await scheduler.reserve({ model, estTokens: estTokens2 });
           try {
-            rsp = await openai.responses.create(
+            rsp = await getOpenAIClient().responses.create(
               { ...baseOpts, max_output_tokens },
               { headers: { "Idempotency-Key": crypto.randomUUID() } },
             );

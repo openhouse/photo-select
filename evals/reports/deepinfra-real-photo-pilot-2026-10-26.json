@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-user-authorized-real-photo-pilot",
+  "testedOn": "2026-10-26",
+  "provider": "deepinfra",
+  "model": "XiaomiMiMo/MiMo-V2.6-Pro",
+  "capabilityProfile": "deepinfra-mimo-v2.6-pro-2026-10-26-v2",
+  "sample": {
+    "photos": 6,
+    "source": "Apple Photos locally present originals",
+    "exports": "1280px JPEG working copies; embedded source metadata removed; neutral filenames",
+    "currentEditedVariantsVerified": false,
+    "peopleLookup": false,
+    "customPrompt": true,
+    "fictionalCuratorVoices": 6,
+    "humanLabeledHoldout": false
+  },
+  "earlierRejections": [
+    {
+      "images": 6,
+      "maxEdge": 1280,
+      "httpStatus": 400,
+      "errorBodyRecorded": false,
+      "usage": null,
+      "costUSD": null
+    },
+    {
+      "images": 6,
+      "maxEdge": 768,
+      "httpStatus": 400,
+      "error": "Too many images in request: 6 > 4",
+      "usage": null,
+      "costUSD": null
+    }
+  ],
+  "finalRun": {
+    "cliExitCode": 0,
+    "triageBatchSizes": [
+      4,
+      2,
+      2
+    ],
+    "modelRequests": 5,
+    "phases": {
+      "triage": 2,
+      "actII": 2,
+      "repair": 1
+    },
+    "kept": 5,
+    "aside": 1,
+    "parsedReplies": 5,
+    "totalReplies": 5,
+    "json_validity_rate": 1,
+    "contractValidReplies": 4,
+    "contract_validity_rate": 0.8,
+    "firstAttemptTriageContractValid": 1,
+    "triageBatches": 2,
+    "repairCount": 1,
+    "recoveredRepairs": 1,
+    "retry_recovery_rate": 1,
+    "providerEstimatedCostUSD": 0.016653648594103204,
+    "wallTimeSeconds": 292,
+    "allFileMovesMatchStructuredDecisions": true,
+    "privateAuditClean": true,
+    "reviewer": "independent assistant visual review; not Jamie approval",
+    "reviewedImages": 6,
+    "specificCorrectVisibleGrounding": 6,
+    "finalDecisionReasonMinutesConsistent": 6,
+    "finalNotebookDecisionsPreserved": 6,
+    "allClaimsAccurate": false,
+    "caveats": [
+      "Truck called stopped/roadside stop despite motion not established by the still photograph.",
+      "Exact noon and chronology inferred from appearance.",
+      "Water called still despite visible ripples.",
+      "Lily described as having no depth despite visible subject/background separation; compositional judgment overstated.",
+      "Final notebook adds six relative photo links that do not resolve beside the notebook."
+    ],
+    "humanEditorialAgreement": "unmeasured"
+  },
+  "verification": {
+    "originalImageBytesUnchanged": true,
+    "workingCopyHashesMatch": true,
+    "requestBindingsMatch": true,
+    "submittedImagesMatch": true,
+    "credentialInReceipts": false,
+    "photosCatalogWrites": 0
+  },
+  "limitations": [
+    "Six selected outdoor photographs are not representative of the library or a blind photographic-quality benchmark.",
+    "Custom brief and test-only 6144-output-token cap; ordinary prompt, People metadata and production output defaults were not tested.",
+    "PhotoKit helper and one-record osxphotos probe timed out; read-only per-asset catalog lookup plus local original files were used. Whole-library count/digest freshness was not established.",
+    "Two rejected requests reported no usage or cost; do not count their missing usage as zero.",
+    "Comparative cost savings, general reliability, checkpoint identity and explicit reasoning controls remain unmeasured."
+  ],
+  "readyForUnattendedCuration": false
+}

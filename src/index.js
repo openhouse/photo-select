@@ -30,6 +30,7 @@ const disablePhotoFilterDefault = parseEnvFlag(
   false
 );
 
+let rawWorkers, rawConcurrency;
 const program = new Command();
 program
   .name("photo-select")
@@ -38,12 +39,12 @@ program
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
   .option(
     "--provider <name>",
-    "openai or ollama",
+    "openai, openai-batch, deepinfra, xiaomi or ollama",
     process.env.PHOTO_SELECT_PROVIDER || "openai"
   )
   .option(
     "-m, --model <id>",
-    "Model id (OpenAI or Ollama)",
+    "Model id for the selected provider",
     process.env.PHOTO_SELECT_MODEL
   )
   .option(
@@ -123,14 +124,15 @@ program
     "Maximum concurrent archive clones",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option("--batch-size <n>", "Images per model request (1-10; DeepInfra at most 4)", parsePositiveInteger)
   .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
-    (v) => Math.max(1, parseInt(v, 10))
+    (v) => { rawWorkers = v; return Math.max(1, parseInt(v, 10)); }
   )
   .option(
     "--adaptive-workers",
-    "Dynamically tune OpenAI request concurrency; --workers is the ceiling",
+    "Dynamically tune OpenAI request concurrency and Xiaomi concurrency; --workers is the ceiling",
     parseEnvFlag(process.env.PHOTO_SELECT_ADAPTIVE_WORKERS, false)
   )
   .option(
@@ -143,8 +145,8 @@ program
   )
   .option(
     "--concurrency <n>",
-    "Maximum in-flight OpenAI requests",
-    (v) => Math.max(1, parseInt(v, 10))
+    "Maximum in-flight requests for the selected provider",
+    (v) => { rawConcurrency = v; return Math.max(1, parseInt(v, 10)); }
   )
   .option(
     "--disable-photo-filter",
@@ -175,6 +177,7 @@ let {
   forceRebuild,
   stageConcurrency,
   workers,
+  batchSize,
   verbosity,
   reasoningEffort,
   ollamaBaseUrl,
@@ -188,6 +191,13 @@ let {
   refreshPeopleIndex,
   knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief, githubAll,
 } = program.opts();
+const hostedSpec = {
+  deepinfra: { label: 'DeepInfra', credentialEnv: 'DEEPINFRA_API_KEY', endpointEnv: 'DEEPINFRA_BASE_URL', model: 'XiaomiMiMo/MiMo-V2.6-Pro', maxImages: 4, module: './core/deepinfra.js', validator: 'validateDeepInfraConfiguration', endpointExport: 'DEEPINFRA_BASE_URL' },
+  xiaomi: { label: 'Xiaomi', credentialEnv: 'MIMO_API_KEY', endpointEnv: 'MIMO_BASE_URL', model: 'mimo-v2.6-pro', maxImages: 10, module: './core/xiaomi.js', validator: 'validateXiaomiConfiguration', endpointExport: 'XIAOMI_BASE_URL' },
+}[providerName];
+if (batchSize > 10) program.error('--batch-size must be at most 10 images.');
+if (hostedSpec && batchSize > hostedSpec.maxImages) program.error(`${hostedSpec.label} accepts at most ${hostedSpec.maxImages} images per request.`);
+if (batchSize === undefined && providerName === 'xiaomi') batchSize = 10;
 const liveEnabled = Boolean(knowledgeLive || knowledgeDiscover || knowledgeResearchOnly);
 const privateEnabled = liveEnabled || githubAll;
 const liveAbort = new AbortController();
@@ -202,7 +212,19 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   if (!workers) workers = n;
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
+if (providerName === 'xiaomi') {
+  try {
+    if (rawWorkers !== undefined) workers = parsePositiveInteger(rawWorkers);
+    if (rawConcurrency !== undefined) concurrencyFlag = parsePositiveInteger(rawConcurrency);
+  } catch { program.error('Xiaomi workers and concurrency must be positive integers.'); }
+}
 if (!workers) workers = 1;
+if (providerName === 'xiaomi' && (!Number.isInteger(workers) || workers < 1 || workers > 50)) program.error('Xiaomi --workers must be between 1 and 50.');
+if (providerName === 'xiaomi' && retryNeedsReview) program.error('Xiaomi uses durable receipts; omit --retry-needs-review and resume the same command.');
+if (providerName === 'xiaomi' && concurrencyFlag > workers) program.error('Xiaomi --concurrency cannot exceed --workers.');
+if (providerName === 'deepinfra' && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
+  program.error(`${hostedSpec.label} currently requires one worker, fixed concurrency and plain resume; omit --adaptive-workers and --retry-needs-review.`);
+}
 if (adaptiveWorkers && adaptiveMinWorkers > workers) {
   program.error("--adaptive-min-workers cannot exceed --workers");
 }
@@ -221,6 +243,10 @@ let concurrency = Number.isFinite(envConc)
   ? concurrencyFlag
   : workers;
 if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+if (providerName === 'xiaomi') {
+  concurrency = Math.min(workers, concurrencyFlag ?? (Number.isInteger(envConc) && envConc > 0 ? envConc : workers));
+  if (adaptiveWorkers && adaptiveMinWorkers > concurrency) program.error('Xiaomi --adaptive-min-workers cannot exceed the request concurrency ceiling.');
+}
 
 // Scale transport, filesystem, and batching with worker count
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
@@ -236,7 +262,7 @@ process.env.PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS = "60000";
 process.env.PHOTO_SELECT_RETRY_BASE_MS = String(500 + 50 * workers);
 process.env.UV_THREADPOOL_SIZE = String(Math.min(64, 8 + 4 * workers));
 process.env.PHOTO_SELECT_BATCH_SIZE = String(
-  clamp(8 + Math.floor(workers / 2), 8, 10)
+  batchSize ?? clamp(8 + Math.floor(workers / 2), 8, 10)
 );
 process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
   clamp(2 * workers, 2, 16)
@@ -281,7 +307,16 @@ if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
 }
 
-if (apiKey) {
+if (hostedSpec) {
+  if (program.getOptionValueSource('apiKey') === 'cli') {
+    program.error(`--api-key is OpenAI-only; set ${hostedSpec.credentialEnv} in your environment.`);
+  }
+  if (!process.env[hostedSpec.credentialEnv]) program.error(`${hostedSpec.credentialEnv} is missing.`);
+  if (program.getOptionValueSource('verbosity') === 'cli' || process.env.PHOTO_SELECT_VERBOSITY) {
+    program.error(`${hostedSpec.label} does not support the requested verbosity setting.`);
+  }
+  verbosity = undefined;
+} else if (apiKey) {
   process.env.OPENAI_API_KEY = apiKey;
 }
 if (ollamaBaseUrl) {
@@ -294,12 +329,19 @@ if (disablePhotoFilter) {
 const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
-  finalModel = provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+  finalModel = hostedSpec?.model ?? (provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o');
 }
 
 let finalReasoningEffort = reasoningEffort?.toLowerCase();
 if (!finalReasoningEffort) {
-  finalReasoningEffort = /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+  finalReasoningEffort = hostedSpec ? 'auto' : /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+}
+if (hostedSpec) {
+  const configuration = await import(hostedSpec.module);
+  try {
+    configuration[hostedSpec.validator]({ endpoint: process.env[hostedSpec.endpointEnv] || configuration[hostedSpec.endpointExport],
+      model: finalModel, reasoningEffort: finalReasoningEffort, apiKey: process.env[hostedSpec.credentialEnv] });
+  } catch (error) { program.error(error.message); }
 }
 process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
 
@@ -350,7 +392,18 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     try {
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
-    const driver = liveRun?.provider || await getProvider(provider);
+    let journal;
+    let requestController;
+    if (provider === 'xiaomi') {
+      const { HostedConcurrencyController } = await import('./core/hostedConcurrency.js');
+      requestController = new HostedConcurrencyController({ maxConcurrency: concurrency, minConcurrency: adaptiveWorkers ? adaptiveMinWorkers : 1, adaptive: adaptiveWorkers });
+    }
+    if (hostedSpec) {
+      const { createHostedJournal } = await import('./hostedRun.js');
+      journal = await createHostedJournal({ source: absDir, base: process.env.PHOTO_SELECT_HOSTED_BASE, ...(provider === 'xiaomi' ? { provider } : {}) });
+      console.log(`${provider}: private audit saved in ${journal.root}`);
+    }
+    const driver = liveRun?.provider || await getProvider(provider, { journal, requestController });
     await triageDirectory({
       dir: absDir,
       promptPath,
@@ -366,6 +419,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       forceRebuild,
       stageConcurrency,
       workers,
+      batchSize,
       verbosity,
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
@@ -379,7 +433,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
-        `⏸️  OpenAI API credits exhausted. Run paused${
+        `⏸️  ${hostedSpec?.label || 'OpenAI'} API credits exhausted. Run paused${
           Number.isInteger(err?.remainingImages)
             ? ` with ${err.remainingImages} image(s) remaining`
             : ""
@@ -390,6 +444,11 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
         console.error("  ↳ cause:", err.cause);
       }
       process.exitCode = err?.exitCode || 75;
+      return;
+    }
+    if (err?.repairSuggestion) {
+      console.error(JSON.stringify(err.repairSuggestion));
+      process.exitCode = 1;
       return;
     }
     console.error("❌  Error:", err);

@@ -1,11 +1,19 @@
 # photo‑select
 
-A command‑line workflow that **selects 10 random images, asks ChatGPT which to “keep” or “set aside,”
+Read the [Knowledge Wiki](wiki/index.md) and [RFC 0013](docs/rfcs/0013-hosted-open-weights.md)
+for the MiMo providers, their synthetic evals, and bounded live evidence.
+Broader editorial reliability and measured savings remain pending.
+
+A command‑line workflow that **selects up to 10 random images (four for DeepInfra), asks a vision model which to “keep” or “set aside,”
 moves the files accordingly, and then recurses until a directory is fully triaged.**
 
-You can run sessions in two “gears”:
+You can run sessions through these hosted providers:
 
 - **Realtime (`openai`)** – submit a request and stream the reply immediately.
+- **Hosted open weights (`deepinfra`)** – submit a validated MiMo request with a
+  private journal and conservative holds when a request's outcome is uncertain.
+- **Xiaomi direct (`xiaomi`)** – use MiMo V2.6 Pro with up to ten images per
+  request, JSON object mode and the same local reply checks and private journal.
 - **Batch (`openai-batch`)** – enqueue the session as a single JSONL line for the OpenAI Batch API,
   then collect the minutes/decisions once the job completes (typically inside the 24‑hour window).
   Batch offers separate rate limits and lower per-token pricing than realtime calls.
@@ -15,7 +23,10 @@ You can run sessions in two “gears”:
 ## Requirements
 
 - Node 20+
-- An OpenAI API key (via `OPENAI_API_KEY` or the `--api-key` flag)
+- Git for the DeepInfra and Xiaomi providers' private receipt journals.
+- A credential for the selected hosted provider: `OPENAI_API_KEY` for OpenAI,
+  `DEEPINFRA_API_KEY` for DeepInfra, or `MIMO_API_KEY` for Xiaomi.
+  `--api-key` is OpenAI-only.
   ```bash
   export OPENAI_API_KEY="sk‑..."
   ```
@@ -58,7 +69,7 @@ Invoke the CLI from the project directory using `npx`:
 ```bash
 npx photo-select \
   [--dir /path/to/images] \
-  [--provider openai|openai-batch|ollama] \
+  [--provider openai|openai-batch|ollama|deepinfra|xiaomi] \
   [--model qwen2.5vl:32b] \
   [--api-key sk-...] \
   [--context /path/to/context.txt]
@@ -76,6 +87,108 @@ npx photo-select --provider openai-batch --model gpt-5 [other flags]
 # or, if installed globally:
 photo-select --provider ollama --model qwen2.5vl:32b [other flags]
 ```
+
+### MiMo V2.6 Pro on DeepInfra
+
+With `DEEPINFRA_API_KEY` already set in your shell, run:
+
+```bash
+node src/index.js --provider deepinfra \
+  --model XiaomiMiMo/MiMo-V2.6-Pro \
+  --reasoning-effort auto --workers 1 \
+  --dir "/path/to/copied-photos" --no-recurse
+```
+
+This submits photographs to DeepInfra and may incur charges. The adapter uses
+the official HTTPS endpoint, strict JSON Schema, local validation and one JSON
+repair. `auto` preserves the provider's default reasoning behavior; explicit
+effort settings are rejected until MiMo support is verified. DeepInfra does not
+support this project's `--github-all` or `--knowledge-*` modes. The adapter has
+synthetic tests and a [six-photo live pilot](evals/reports/deepinfra-real-photo-pilot-2026-10-26.json).
+DeepInfra accepts at most four images per request; the CLI splits larger sets
+into complete batches. The pilot completed with one contract repair and exposed
+unsupported narrative claims and broken notebook links. Review its output before
+using selections. Comparative cost savings remain unmeasured.
+
+The private journal persists across runs. For photos on a macOS external volume,
+it defaults to `<volume>/.photo-select/hosted/source-<hash>`; otherwise it uses
+`~/.photo-select/hosted/source-<hash>`. The hash identifies the canonical source
+directory path. Set `PHOTO_SELECT_HOSTED_BASE` to choose a private base directory
+outside any Git checkout. The CLI prints the journal's location. Each terminal
+receipt commits response JSON and the updated notebook together in its private
+Git repository.
+
+Resume by rerunning against the same source directory and settings. Held or
+incomplete requests stop for review; completed receipts are reused without a new
+submission. Partial file moves require reconciliation with the private receipt.
+DeepInfra currently requires one worker and fixed concurrency. Adaptive workers,
+`--retry-needs-review`, and explicit verbosity settings are unsupported.
+
+### MiMo V2.6 Pro directly from Xiaomi
+
+Set `MIMO_API_KEY` in your shell or repository `.env`. Keep `CURATORS` set to
+your existing comma-separated list of 17 names, without changing their spelling.
+From your image directory, run:
+
+```bash
+"/path/to/photo-select/photo-select-here.sh" --provider xiaomi --model mimo-v2.6-pro \
+  --batch-size 10 --workers 1 --reasoning-effort auto \
+  --curators "$CURATORS" --field-notes --target-level-size 10
+```
+
+The launcher loads the repository `.env` while retaining your current directory
+as the photo source. `--dir "/path/to/photos"` selects another directory.
+An installed `photo-select` command also works when `MIMO_API_KEY` is exported
+in your shell. Add your existing `--context` and `--prompt` flags
+when you use them. `--batch-size 10` controls images per request independently
+of workers. `--target-level-size 10` retains its existing meaning: finish each
+level and continue refinement until a completed level has at most ten photos.
+Repeated photo tags can append additional fictional curator lenses to a batch.
+
+This provider submits photographs to `https://api.xiaomimimo.com/v1` using only
+`MIMO_API_KEY`. It uses `json_object` with local validation and one repair;
+server-side JSON Schema enforcement is not requested. It supports `auto`
+reasoning and the normal image/field-note workflow. GitHub tools, knowledge modes,
+automatic `--retry-needs-review` and explicit verbosity are unsupported.
+The journal and conservative resume holds described above apply, with separate
+provider identity. The earlier [private-harness pilot](evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json)
+remains historical compatibility evidence; it is not a live test of this CLI
+implementation. See the [Xiaomi runtime profile](evals/xiaomi-open-weights.json).
+A separate v2 [normal-launcher test](evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
+completed ten-photo triage and field notes with all 17 supplied names: two valid
+replies without repair, eight keeps and two asides. Working-copy moves, notebook
+links and the private audit commit were verified. An earlier candidate was held
+after two invalid replies; its receipt is preserved. This bounded test used a
+short test brief and one nonrecursive level; broader editorial acceptance remains
+pending.
+
+For parallel selection with an adaptive ceiling of 50 workers, omit `--field-notes`:
+
+```bash
+"/path/to/photo-select/photo-select-here.sh" --provider xiaomi --model mimo-v2.6-pro \
+  --batch-size 10 --workers 50 --adaptive-workers --adaptive-min-workers 1 \
+  --reasoning-effort auto --curators "$CURATORS" --target-level-size 10
+```
+
+Adaptive mode starts at the selected minimum and grows after two consecutive
+valid replies, up to `--workers`. Omit `--adaptive-workers` for a fixed ceiling.
+Worker bounds are 1–50. One shared admission pool covers every request, including
+repairs and Act II. These are local limits; actual Xiaomi account capacity at
+50 simultaneous requests has not been verified. Rate-limit, billing and ambiguous
+transport failures hold the run without automatic resubmission. Fatal holds stop
+queued requests while active requests finish preserving their receipts.
+
+With `--field-notes`, whole batch sessions run serially to preserve cumulative
+notebook updates. The CLI logs this constraint even when you request more workers.
+The earlier one-worker live test does not establish parallel reliability or
+capacity; parallel behavior is checked with substituted transport in local tests.
+
+A [bounded capacity test](evals/reports/xiaomi-parallel-capacity-pilot-2026-10-26.json)
+verified two overlapping hosted requests with ten images each and no repair.
+A separate adaptive run grew its target from one to two and recovered two
+contract repairs. These runs reused ten inspected derivatives as 20 and 40
+working copies, with 17 exact curator names and a short test brief. They do not
+verify a hosted quota of fifty or editorial reliability.
 
 Run `photo-select --help` to see all options.
 
@@ -149,14 +262,15 @@ through to the script unchanged.
 | ---------- | ---------------------------- | ----------------------------------------------- |
 | `--dir`    | current directory            | Source directory containing images              |
 | `--prompt` | `prompts/default_prompt.txt` | Path to a custom prompt file                    |
-| `--provider` | `openai` | `openai`, `openai-batch`, or `ollama` |
-| `--model`  | *(auto)* | Model id for the chosen provider. Defaults to `gpt-4o` or `qwen2.5vl:32b`. |
+| `--provider` | `openai` | `openai`, `openai-batch`, `ollama`, `deepinfra`, or `xiaomi` |
+| `--model`  | *(auto)* | Model id for the provider. DeepInfra defaults to `XiaomiMiMo/MiMo-V2.6-Pro`; Xiaomi to `mimo-v2.6-pro`. |
+| `--batch-size` | provider default | Images per request, independent of workers. Xiaomi accepts 1–10; DeepInfra accepts 1–4. |
 | `--api-key` | *(unset)*                  | OpenAI API key. Overrides `$OPENAI_API_KEY`. |
 | `--ollama-base-url` | `http://localhost:11434` | Ollama host URL |
 | `--curators` | *(unset)* | Comma-separated list of curator names used in the group transcript |
 | `--context` | *(unset)* | Text file with exhibition context for the curators |
 | `--verbosity` | `high` | Verbosity for GPT-5 models (`low`, `medium`, `high`) |
-| `--reasoning-effort` | `high` | Reasoning effort for GPT-5 models (`minimal`, `low`, `medium`, `high`, `auto`) |
+| `--reasoning-effort` | provider default | OpenAI reasoning effort; DeepInfra and Xiaomi currently accept `auto` only. |
 | `--no-recurse` | `false` | Process only the given directory without descending into `_keep` |
 | `--target-level-size` | *(unset)* | Continue recursive refinement until a completed `_level-*` contains at most this many source photos |
 | `--retry-needs-review` | `false` | Automatically retry held `NEEDS_REVIEW` files without restarting the CLI |

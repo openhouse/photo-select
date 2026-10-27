@@ -15,6 +15,9 @@ import { finalizeCurators } from "./core/finalizeCurators.js";
 import { evaluateLevelOutcome } from "./core/evaluateLevelOutcome.js";
 import { reconcileDecisionFilenames } from "./core/reconcileDecisionFilenames.js";
 import { planNeedsReviewRetry } from "./core/planNeedsReviewRetry.js";
+import { CURATORS } from "./core/knowledgeLive.js";
+import { credentialLike } from "./core/githubBridge.js";
+import { DEEPINFRA_MAX_IMAGES } from "./core/deepinfra.js";
 import {
   createBillingLimitError,
   isBillingLimitError,
@@ -571,6 +574,7 @@ export async function triageDirectory(options) {
     verbose = false,
     saveIo = false,
     workers = 1,
+    batchSize: requestedBatchSize,
     verbosity,
     reasoningEffort,
     depth = 0,
@@ -592,6 +596,23 @@ export async function triageDirectory(options) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
+  const hosted = provider.hostedCuration || (provider.name === 'deepinfra' ? {
+    provider: 'deepinfra', maxImages: DEEPINFRA_MAX_IMAGES, credentialEnv: 'DEEPINFRA_API_KEY', label: 'DeepInfra',
+  } : null);
+  if (requestedBatchSize !== undefined && (!Number.isInteger(requestedBatchSize) || requestedBatchSize < 1 || requestedBatchSize > BATCH_CAP)) {
+    throw new Error('--batch-size must be a positive integer at most 10.');
+  }
+  if (requestedBatchSize !== undefined && hosted && requestedBatchSize > hosted.maxImages) {
+    throw new Error(`${hosted.label} accepts at most ${hosted.maxImages} images per request.`);
+  }
+  const batchSize = requestedBatchSize ?? (hosted?.provider === 'xiaomi' ? hosted.maxImages : hosted ? Math.min(BATCH_SIZE, hosted.maxImages) : BATCH_SIZE);
+  const hostedCredential = hosted?.provider === 'xiaomi' ? process.env[hosted.credentialEnv]?.trim() : hosted ? process.env[hosted.credentialEnv] : undefined;
+  const hostedHoldCode = hosted?.provider === 'xiaomi' ? 'XIAOMI_HELD' : 'DEEPINFRA_HELD';
+  if (hosted?.provider === 'xiaomi' && (!Number.isInteger(workers) || workers < 1 || workers > 50)) throw new Error('Xiaomi workers must be between 1 and 50.');
+  if (provider.preventAutomaticResubmit && retryNeedsReview) {
+    throw new Error('Hosted receipts require plain resume; omit --retry-needs-review.');
+  }
+  if (hosted && curators.length === 0) curators = [...CURATORS];
   if (provider.knowledge) {
     curators = [...provider.curators];
     if (!provider.preservePrompt) promptPath = provider.promptPath;
@@ -615,7 +636,10 @@ export async function triageDirectory(options) {
     return err?.code === "PROMPT_CACHE_PROBE_MISS";
   }
 
-  let dynamicWorkers = workers;
+  let dynamicWorkers = hosted?.provider === 'xiaomi' && fieldNotes ? 1 : workers;
+  if (hosted?.provider === 'xiaomi' && fieldNotes && workers > 1) {
+    console.log(`${indent}📝  Notebook sessions are serialized to preserve every update; requested worker ceiling=${workers}.`);
+  }
   let consecutiveGatewayErrors = 0;
   function isGatewayError(e) {
     const s = e?.status || e?.code;
@@ -663,7 +687,7 @@ export async function triageDirectory(options) {
     }
   }
 
-  if (fieldNotes && depth === 0) {
+  if (fieldNotes && depth === 0 && !hosted) {
     await ensureGitRepo(gitRoot);
   }
 
@@ -693,7 +717,7 @@ export async function triageDirectory(options) {
       level: depth + 1,
       source: dir,
       remainingImages,
-      remainingBatches: Math.ceil(remainingImages / BATCH_SIZE),
+      remainingBatches: Math.ceil(remainingImages / batchSize),
       cause: providerErrorSummary(err),
     };
     await mkdir(path.dirname(billingPausePath), { recursive: true });
@@ -847,7 +871,36 @@ export async function triageDirectory(options) {
     }
 
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
-    const queue = pickRandom(images, images.length);
+    let queue = pickRandom(images, images.length);
+    let hostedPlanKey;
+    let hostedPlanBinding;
+    if (provider.journal?.workflowSnapshot) {
+      const archiveImages = (await listImages(levelDir)).sort();
+      const corpus = await Promise.all(archiveImages.map(async file => ({
+        filename: path.basename(file), sha256: crypto.createHash('sha256').update(await readFile(file)).digest('hex'),
+      })));
+      const binding = { levelDir, corpus, model, verbosity, reasoningEffort, fieldNotes, curators,
+        ...(hosted ? { batchSize } : {}),
+        ...(hosted?.provider === 'xiaomi' ? { provider: 'xiaomi', capabilityProfile: hosted.profile } : {}),
+        identityPolicy: process.env.PHOTO_SELECT_IDENTITY_POLICY || 'passthrough',
+        prompt: await readFile(promptPath, 'utf8'), context: contextPath ? await readFile(contextPath, 'utf8') : '',
+        code: provider.journal.identity };
+      const bindingText = JSON.stringify(binding), key = hostedCredential;
+      if (credentialLike(binding) || (key && bindingText.includes(key))) {
+        throw Object.assign(new Error('Credential-like workflow input held before private persistence.'), { code: hostedHoldCode });
+      }
+      hostedPlanKey = crypto.createHash('sha256').update(bindingText).digest('hex');
+      const batches = [];
+      for (let i = 0; i < queue.length; i += batchSize) batches.push(queue.slice(i, i + batchSize));
+      const plan = await provider.journal.workflowSnapshot(`plan-${hostedPlanKey}`, { batches, binding });
+      if (hosted?.provider === 'xiaomi') hostedPlanBinding = plan.binding;
+      const eligible = new Set(images);
+      const pending = plan.batches.filter(batch => batch.some(file => eligible.has(file)));
+      if (pending.some(batch => batch.some(file => !eligible.has(file)))) {
+        throw Object.assign(new Error('A hosted batch was partially moved; reconcile its completed receipt before resuming.'), { code: 'HOSTED_PARTIAL_MOVE' });
+      }
+      queue = pending.flat();
+    }
     console.log(
       `${indent}⏳  Processing ${queue.length} image(s) with ${dynamicWorkers} worker(s)…`
     );
@@ -872,7 +925,7 @@ export async function triageDirectory(options) {
         let batchIdx = 0;
         let abortProcessing = false;
         const nextBatch = () =>
-          !abortProcessing && queue.length ? queue.splice(0, BATCH_SIZE) : null;
+          !abortProcessing && queue.length ? queue.splice(0, batchSize) : null;
 
         async function workerFn() {
           while (true) {
@@ -937,6 +990,22 @@ export async function triageDirectory(options) {
                 let finalCurators = curators;
                 let added = [];
                 let photos = [];
+                let preparedRequest;
+                let fieldNotesText;
+                let frozenInputs;
+                const verifyInputs = async () => {
+                  if (hosted?.provider !== 'xiaomi') return;
+                  try {
+                    if (!frozenInputs || frozenInputs.expectedSourceHashes.length !== batch.length) throw new Error('Missing frozen source hashes.');
+                    const actual = await Promise.all(batch.map(async file => ({ filename: path.basename(file), sha256: crypto.createHash('sha256').update(await readFile(file)).digest('hex') })));
+                    if (actual.some((entry, index) => entry.filename !== frozenInputs.expectedSourceHashes[index].filename || entry.sha256 !== frozenInputs.expectedSourceHashes[index].sha256)) throw new Error('Image changed.');
+                    const currentContext = contextPath ? await readFile(contextPath, 'utf8') : '';
+                    const currentTemplate = await readFile(promptPath, 'utf8');
+                    if (crypto.createHash('sha256').update(currentContext).digest('hex') !== frozenInputs.contextSha256 || crypto.createHash('sha256').update(currentTemplate).digest('hex') !== frozenInputs.templateSha256) throw new Error('Context or template changed.');
+                  } catch {
+                    throw Object.assign(new Error('Frozen Xiaomi image, context or template inputs changed; review the completed receipt before resuming.'), { code: hostedHoldCode });
+                  }
+                };
                 const prepareFirstRequest = async () => {
                   const names = batch.map((file) => path.basename(file));
                   const peopleLists = await Promise.all(
@@ -947,8 +1016,34 @@ export async function triageDirectory(options) {
                     people: sanitizePeople(peopleLists[i]),
                   }));
                   const finalized = finalizeCurators(curators, photos);
-                  finalCurators = finalized.finalCurators;
-                  added = finalized.added;
+                  let inputBinding;
+                  if (hosted?.provider === 'xiaomi') {
+                    const contextText = hostedPlanBinding?.context ?? (contextPath ? await readFile(contextPath, 'utf8') : '');
+                    const templateText = hostedPlanBinding?.prompt ?? await readFile(promptPath, 'utf8');
+                    const expectedSourceHashes = await Promise.all(batch.map(async file => {
+                      const filename = path.basename(file), archived = hostedPlanBinding?.corpus.find(entry => entry.filename === filename);
+                      if (hostedPlanBinding && !archived) throw Object.assign(new Error('Xiaomi source is absent from the frozen archive.'), { code: hostedHoldCode });
+                      return { filename, sha256: archived?.sha256 ?? crypto.createHash('sha256').update(await readFile(file)).digest('hex') };
+                    }));
+                    inputBinding = { expectedSourceHashes, contextText, contextSha256: crypto.createHash('sha256').update(contextText).digest('hex'), templateSha256: crypto.createHash('sha256').update(templateText).digest('hex') };
+                  }
+                  const initial = { photos, finalCurators: finalized.finalCurators, added: finalized.added,
+                    fieldNotesText: hosted && fieldNotes ? await notesWriter.read() : undefined,
+                    ...(inputBinding ? { inputBinding } : {}) };
+                  if (hosted && (credentialLike(initial) || (hostedCredential && JSON.stringify(initial).includes(hostedCredential)))) {
+                    throw Object.assign(new Error('Credential-like batch input held before private persistence.'), { code: hostedHoldCode });
+                  }
+                  const batchKey = crypto.createHash('sha256').update(JSON.stringify({ hostedPlanKey, names })).digest('hex');
+                  const frozen = provider.journal?.workflowSnapshot
+                    ? await provider.journal.workflowSnapshot(`batch-${batchKey}`, initial) : initial;
+                  if (hosted && (credentialLike(frozen) || (hostedCredential && JSON.stringify(frozen).includes(hostedCredential)))) {
+                    throw Object.assign(new Error('Credential-like saved workflow input held before submission.'), { code: hostedHoldCode });
+                  }
+                  photos = frozen.photos;
+                  finalCurators = frozen.finalCurators;
+                  added = frozen.added;
+                  fieldNotesText = frozen.fieldNotesText;
+                  if (hosted?.provider === 'xiaomi') { frozenInputs = frozen.inputBinding; await verifyInputs(); }
                   if (added.length) {
                     log(
                       `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
@@ -957,13 +1052,14 @@ export async function triageDirectory(options) {
                   const first = await buildPrompt(promptPath, {
                     curators: finalCurators,
                     contextPath,
-                    contextText: provider.preservePrompt ? provider.brief : undefined,
+                    contextText: provider.preservePrompt ? provider.brief : hosted?.provider === 'xiaomi' ? frozenInputs.contextText : undefined,
                     images: batch,
-                    hasFieldNotes: false,
+                    hasFieldNotes: hosted && fieldNotes,
+                    fieldNotes: fieldNotesText,
                     isSecondPass: false,
                   });
                   await saveText('prompt', attemptNum, first.prompt);
-                  return {
+                  preparedRequest = {
                     prompt: first.prompt,
                     promptCachePrefix: first.promptCachePrefix,
                     images: batch,
@@ -980,7 +1076,10 @@ export async function triageDirectory(options) {
                       bar.update(stageMap[stage] || 0, { stage });
                     },
                     stream: true,
+                    ...(hosted ? { expectFieldNotesDiff: Boolean(fieldNotes), fieldNotesText } : {}),
+                    ...(hosted?.provider === 'xiaomi' ? { expectedSourceHashes: frozenInputs.expectedSourceHashes, verifyInputs } : {}),
                   };
+                  return preparedRequest;
                 };
                 const firstResult = provider.supportsDeferredPreparation
                   ? await runSession({ model, prepare: prepareFirstRequest })
@@ -999,6 +1098,9 @@ export async function triageDirectory(options) {
                   meta
                 ));
                 if (keep.length + aside.length === 0) {
+                  if (provider.preventAutomaticResubmit) {
+                    throw Object.assign(new Error('Hosted response has no valid file decisions; receipt held without another submission.'), { code: 'INVALID_DECISIONS' });
+                  }
                   attempts++;
                   if (attempts <= maxStreak) {
                     const repair = [
@@ -1062,6 +1164,28 @@ export async function triageDirectory(options) {
                   batch,
                   requireComplete: Boolean(firstResult?.json),
                 });
+                if (hosted && fieldNotes) {
+                  const triageJson = firstResult.json || extractJsonBlock(reply);
+                  if (typeof triageJson?.field_notes_diff === 'string' && triageJson.field_notes_diff.trim()) {
+                    await verifyInputs();
+                    const second = await buildPrompt(promptPath, {
+                      curators: finalCurators, contextPath, images: batch,
+                      ...(hosted?.provider === 'xiaomi' ? { contextText: frozenInputs.contextText } : {}),
+                      hasFieldNotes: true, fieldNotes: fieldNotesText, isSecondPass: true,
+                    });
+                    const notesResult = await runSession({ ...preparedRequest, prompt: second.prompt,
+                      promptCachePrefix: second.promptCachePrefix,
+                      expectFieldNotesDiff: false, expectFieldNotesMd: true,
+                      fieldNotesDiff: triageJson.field_notes_diff, fieldNotesText });
+                    const notesJson = notesResult.json || extractJsonBlock(notesResult.raw);
+                    if (typeof notesJson?.field_notes_md !== 'string') {
+                      throw Object.assign(new Error('Act II did not return field_notes_md.'), { code: 'INVALID_FIELD_NOTES' });
+                    }
+                    await verifyInputs();
+                    await notesWriter.writeFull(notesJson.field_notes_md);
+                  }
+                }
+                await verifyInputs();
                 const ms = Date.now() - batchStart;
                 bar.update(4, { stage: "done" });
                 bar.stop();
@@ -1119,6 +1243,7 @@ export async function triageDirectory(options) {
                 }
                 const keepDir = path.join(dir, "_keep");
                 const asideDir = path.join(dir, "_aside");
+                await verifyInputs();
                 await Promise.all([
                   moveFiles(keep, keepDir, notes),
                   moveFiles(aside, asideDir, notes),
@@ -1138,7 +1263,7 @@ export async function triageDirectory(options) {
                   completedBatches++;
                   const elapsedSec = (Date.now() - levelStart) / 1000;
                   const remainingNow = (await listLevelState(dir, { retryNeedsReview: false })).eligibleImages.length;
-                  const remainingBatchesNow = Math.ceil(remainingNow / BATCH_SIZE);
+                  const remainingBatchesNow = Math.ceil(remainingNow / batchSize);
                   const tps = completedBatches / elapsedSec;
                   const etaSec = tps > 0 ? Math.ceil(remainingBatchesNow / tps) : Infinity;
                   log(
@@ -1146,7 +1271,7 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
-                if (provider.knowledge) { abortProcessing = true; queue.length = 0; throw err; }
+                if (provider.knowledge || provider.preventAutomaticResubmit) { abortProcessing = true; queue.length = 0; if (hosted?.provider === 'xiaomi') provider.requestController?.stop(err); throw err; }
                 if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();
@@ -1202,12 +1327,12 @@ export async function triageDirectory(options) {
           () => workerFn()
         );
         const outcomes = await Promise.allSettled(pool);
-        const failure = outcomes.find((outcome) => outcome.status === "rejected");
+        const failure = (hosted?.provider === 'xiaomi' && outcomes.find(outcome => outcome.status === 'rejected' && (outcome.reason?.code === 'BILLING_LIMIT' || isBillingLimitError(outcome.reason)))) || outcomes.find((outcome) => outcome.status === "rejected");
         if (failure) {
-          if (!isBillingLimitError(failure.reason)) throw failure.reason;
+          if (failure.reason?.code !== "BILLING_LIMIT" && !isBillingLimitError(failure.reason)) throw failure.reason;
           const pause = await writeBillingPause(failure.reason);
           log(
-            `${indent}⏸️  OpenAI API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
+            `${indent}⏸️  ${hosted?.label || "OpenAI"} API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
           );
           log(`${indent}   Add credits, then rerun the same command to resume.`);
           throw createBillingLimitError(failure.reason, {
@@ -1223,7 +1348,7 @@ export async function triageDirectory(options) {
       const remaining = nextState.eligibleImages.filter(
         (file) => !retrySuppressedNames.has(path.basename(file))
       ).length;
-      const remainingBatches = Math.ceil(remaining / BATCH_SIZE);
+      const remainingBatches = Math.ceil(remaining / batchSize);
       console.log(`${indent}🔎  level drain check: level=${depth + 1} source=${dir} eligible=${remaining}`);
       if (remaining > 0) console.log(`${indent}🔁  level still has eligible files; repeating level=${depth + 1}`);
       if (completedBatches) {
@@ -1287,6 +1412,7 @@ export async function triageDirectory(options) {
         verbose,
         saveIo,
         workers,
+        batchSize: requestedBatchSize,
         verbosity,
         reasoningEffort,
         depth: depth + 1,
