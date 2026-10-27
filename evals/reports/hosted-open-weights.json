@@ -4,7 +4,7 @@
   "status": "passed",
   "inputSha256": {
     "AGENTS.md": "4191930343fcddbaa1b8c7557cc72ae2ef1be26268d1e197c41529d9f0f15a4c",
-    "docs/rfcs/0013-hosted-open-weights.md": "6f9696eb86e4a73afdce769b249c1b8697f45cf71ebd846db0b8a0d04eb0b74f",
+    "docs/rfcs/0013-hosted-open-weights.md": "ef2958f6e061f57ac9c688a31f2cc67350e66abbf2fe5bd8502eecafdd669ac2",
     "evals/hosted-open-weights.json": "c45e1da58a7b3f7a38aad703b88c79c290effd64e389c443453c00ddd373a075",
     "package-lock.json": "a67cad0265af8cfc0bbadb3ae02ed33fada7067fb6ee8667e589cb5200efdea5",
     "package.json": "a460311fdf379eef4e1423b80746ceea6a3c6c60be5d56c2be4390ae51bbd8cf",
@@ -91,7 +91,7 @@
     "tests/hostedOpenWeights.test.js": "89cd0515c339f9e6c2fd9c24be61bbbd4fa4c3cd7ade3bba149b1d90e61c00b4",
     "tests/hostedRun.test.js": "020d891a77703bd6686316a029bff7c50757b574a52182f91e935fbf7f7119b6",
     "wiki/graph.json": "0e0a27281e3b13e61cf0c0a7f34e83771592716a03c3af1a8c09543e1ab59f20",
-    "wiki/hosted-open-weights.md": "dc087e8dfd03355817ffa156ee9af5fde9132444361d973407eb27a47cfeabce",
+    "wiki/hosted-open-weights.md": "d9499cb828c00bd8bd33e685e2238a3c9c03cb0f87cdcdc041f00c77dbb9273a",
     "wiki/index.md": "1595142064047c8bb33e3c1b9cf44fa6a9a9f85ae3ab62de36efb6702728d5fa"
   },
   "graph": {

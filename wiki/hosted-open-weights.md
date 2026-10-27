@@ -28,7 +28,7 @@ behavior and cost savings remain unverified. A hosted alias does not prove a
 weights revision.
 
 The real-photo pilot received HTTP 400: `Too many images in request: 6 > 4`.
-Use batches of at most four images for this model. Reject larger direct requests
+Use batches of at most four images on DeepInfra. Reject larger direct requests
 before upload, and preserve that limit in repair and field-note passes.
 Smaller image dimensions do not remove this limit. After the batching fix, a
 [six-photo pilot](../evals/reports/deepinfra-real-photo-pilot-2026-10-26.json)
@@ -36,6 +36,16 @@ completed as four plus two, with one recovered contract repair. The final
 selections agreed with reasons and file moves, but the review found unsupported
 motion/time claims and broken notebook links. Keep this small custom-prompt
 result separate from general acceptance, Jamie's judgment and savings.
+
+A separate [Xiaomi direct compatibility pilot](../evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json)
+completed triage, one closing-question repair, and field notes with ten independent
+image inputs in every request. All three replies parsed as JSON; two passed the
+contract on arrival. Usage-based estimated cost was $0.01485, including repair.
+Assistant visual review found correct image mapping alongside unsupported count,
+orientation, time and season claims. This private harness test does not add a
+production Xiaomi CLI provider or change DeepInfra's four-image cap. Keep its
+JSON-mode/local-validation result separate from strict server-side schema support,
+unattended readiness and comparative savings.
 
 The [evaluation profile](../evals/hosted-open-weights.json) retains dated sources
 and unknown measurements. Run `npm run evals:hosted-open-weights` for graph

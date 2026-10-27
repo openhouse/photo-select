@@ -99,6 +99,20 @@ evidence of unattended readiness or comparative savings. The original proposal
 profile and offline receipt retain their unexecuted acceptance boundary; this
 separate live report names its actual sample and limitations.
 
+A separate [Xiaomi direct compatibility report](../../evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json)
+records one ten-photo group in a private harness using the shared image builder
+and reply validation. Triage, one closing-question repair, and Act II each sent
+ten independent images and returned HTTP 200. All three replies parsed; the two
+final phases passed local validation. The run took about 123 seconds and its
+usage-based estimated cost was $0.01485 including repair, before billing
+reconciliation. Assistant visual review found correct image mapping and useful
+visible details, alongside a wrong bud count, overstated bird orientation and
+unsupported time/season claims. JSON mode with local validation does not prove
+strict server-side schema support. This is compatibility evidence for another
+host, not production Xiaomi CLI integration, unattended readiness, comparative
+savings or a reason to raise DeepInfra's four-image cap. An earlier HTTP 402
+request reported no usage or cost and remains a separate historical receipt.
+
 The model page embeds RL material while its Project link currently resolves to
 [MiMo-V2.6-Pro-MOPD](https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD).
 Neither establishes DeepInfra's deployed revision. Keep the served alias,

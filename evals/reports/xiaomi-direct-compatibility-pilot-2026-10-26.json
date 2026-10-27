@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "scope": "bounded-user-authorized-private-harness-compatibility-pilot",
+  "testedOn": "2026-10-26",
+  "provider": "xiaomi-direct",
+  "endpoint": "https://api.xiaomimimo.com/v1/chat/completions",
+  "model": "mimo-v2.6-pro",
+  "codeRevision": "8a700881b9ccc5f42f1696a90ecc14b6cd26fe03",
+  "harnessSHA256": "6cdabcbdffad03e6d682a9dec73b995c3a97b3bd785b52a7823dec69bfa069a8",
+  "modelWeightsRevision": "unverified",
+  "sample": {
+    "photos": 10,
+    "source": "Apple Photos locally present originals",
+    "workingCopies": "1280px JPEGs with neutral filenames and embedded source metadata removed",
+    "submittedImages": "1200px maximum edge, JPEG quality 75, ten independent image inputs per request",
+    "currentEditedVariantsVerified": false,
+    "peopleLookup": false,
+    "customPrompt": true,
+    "fictionalCuratorVoices": 6,
+    "humanLabeledHoldout": false
+  },
+  "localHarnessChecks": { "passed": 15, "failed": 0, "transport": "substituted" },
+  "earlierBillingRejection": { "httpStatus": 402, "modelRequests": 1, "usage": null, "costUSD": null },
+  "finalRun": {
+    "status": "completed",
+    "authenticationStatus": 200,
+    "exactModelListed": true,
+    "maximumModelRequests": 3,
+    "maximumCompletionTokensPerRequest": 8192,
+    "modelRequests": 3,
+    "imageInputsPerAttempt": [10, 10, 10],
+    "phases": { "triage": 1, "actII": 1, "repair": 1 },
+    "responseMode": "json_object with local Photo-Select validation; server-side JSON Schema not claimed",
+    "httpStatuses": [200, 200, 200],
+    "parsedReplies": 3,
+    "totalReplies": 3,
+    "json_validity_rate": 1,
+    "contractValidReplies": 2,
+    "contract_validity_rate": 0.6666666666666666,
+    "finalValidatedPhases": 2,
+    "repairCause": "FINAL_QUESTION",
+    "repairCount": 1,
+    "recoveredRepairs": 1,
+    "retry_recovery_rate": 1,
+    "kept": 8,
+    "aside": 2,
+    "minutes": 12,
+    "wallTimeSeconds": 123.096,
+    "usage": [
+      { "phase": "triage", "attempt": 1, "promptTokens": 11442, "cachedTokens": 0, "completionTokens": 1666, "imageTokens": 10298, "reasoningTokens": 292, "estimatedUSD": 0.00642669 },
+      { "phase": "triage", "attempt": 2, "promptTokens": 12856, "cachedTokens": 11392, "completionTokens": 1497, "imageTokens": 10298, "reasoningTokens": 88, "estimatedUSD": 0.0019802412 },
+      { "phase": "actII", "attempt": 1, "promptTokens": 11132, "cachedTokens": 0, "completionTokens": 1845, "imageTokens": 10298, "reasoningTokens": 40, "estimatedUSD": 0.00644757 }
+    ],
+    "usageBasedEstimatedCostUSD": 0.0148545012,
+    "billingReconciled": false,
+    "privateAuditClean": true
+  },
+  "pricing": {
+    "checkedOn": "2026-10-26",
+    "source": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+    "usdPerMillion": { "inputCacheMiss": 0.435, "inputCacheHit": 0.0036, "output": 0.87 },
+    "formula": "((promptTokens - cachedTokens) * inputCacheMiss + cachedTokens * inputCacheHit + completionTokens * output) / 1000000",
+    "note": "Image tokens are included in prompt tokens; reasoning tokens are included in completion tokens. Neither breakdown is added twice. All three attempts, including the invalid reply, are included."
+  },
+  "verification": {
+    "originalImageBytesUnchanged": true,
+    "workingCopyHashesMatch": true,
+    "submittedImageHashesMatch": true,
+    "requestHashesMatch": true,
+    "codeAndHarnessIdentityMatch": true,
+    "sourceManifestHashMatches": true,
+    "priorNotebookPreserved": true,
+    "notebookMatchesResponse": true,
+    "credentialInReceipts": false,
+    "photosCatalogWrites": 0,
+    "fileMoves": 0
+  },
+  "visualReview": {
+    "reviewer": "independent assistant visual review; not Jamie approval",
+    "reviewedImages": 10,
+    "correctImageMapping": 10,
+    "specificCorrectVisibleGrounding": 10,
+    "decisionReasonContradictionsFound": 0,
+    "allClaimsAccurate": false,
+    "caveats": [
+      "An exact closed-flower-bud count is wrong and omits a partially cropped additional bloom.",
+      "Bird orientation is overstated; bare branches and dried pods do not establish an off-season capture.",
+      "Exact midday and seasonal continuity are inferred from appearance.",
+      "The notebook changes an ambiguous description of the truck's state into an unreadable state/plate marking, adding an unsupported interpretation."
+    ],
+    "humanEditorialAgreement": "unmeasured"
+  },
+  "limitations": [
+    "This tests a separate private compatibility harness using the shared image builder and reply validation, not a production Xiaomi CLI provider.",
+    "A single selected ten-photo group with a custom brief is not a representative or blind photographic-quality benchmark.",
+    "JSON parsing succeeded for all replies, but one reply needed a closing-question repair; this is not general contract reliability evidence.",
+    "The earlier HTTP 402 request returned no usage or cost; missing usage is unknown, not zero.",
+    "Comparative savings, human editorial agreement, hosted weights identity and general reliability remain unmeasured."
+  ],
+  "productionXiaomiCLIIntegration": false,
+  "readyForUnattendedCuration": false
+}
