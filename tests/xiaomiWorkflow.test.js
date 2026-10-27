@@ -42,8 +42,8 @@ describe('Xiaomi ordinary photographic workflow',()=>{
     await images(2);const driver=provider();await triage(driver);
     expect(driver.submit.mock.calls[0][0].curators).toEqual(['Ingeborg Gerdes','Alexandra Munroe','Deborah Treisman','Warren Sack','Tagged Guest']);
   });
-  it('holds direct Xiaomi orchestration with multiple workers before archiving or submission',async()=>{
-    await images(2);const driver=provider();await expect(triage(driver,{workers:2})).rejects.toThrow(/one worker/);expect(driver.submit).not.toHaveBeenCalled();await expect(fs.stat(path.join(root,'_level-001'))).rejects.toThrow();
+  it('holds direct Xiaomi orchestration above the fifty-worker ceiling before archiving or submission',async()=>{
+    await images(2);const driver=provider();await expect(triage(driver,{workers:51})).rejects.toThrow(/50/);expect(driver.submit).not.toHaveBeenCalled();await expect(fs.stat(path.join(root,'_level-001'))).rejects.toThrow();
   });
   it('holds an explicit batch size above the Xiaomi ten-image capability before archiving or submission',async()=>{
     await images(11);const driver=provider();await expect(triage(driver,{batchSize:11})).rejects.toThrow(/10/);expect(driver.submit).not.toHaveBeenCalled();await expect(fs.stat(path.join(root,'_level-001'))).rejects.toThrow();
@@ -60,4 +60,22 @@ describe('Xiaomi ordinary photographic workflow',()=>{
     await images(10);const driver=provider();driver.name='deepinfra';delete driver.hostedCuration;await triage(driver,{model:'XiaomiMiMo/MiMo-V2.6-Pro'});
     expect(driver.submit.mock.calls.map(([options])=>options.images.length)).toEqual([4,4,2]);
   });
+});
+
+it('prioritizes a Xiaomi billing pause when another in-flight batch also fails',async()=>{
+  await images(20);let ordinal=0;const driver=provider(async()=>{const current=++ordinal;await new Promise(resolve=>setTimeout(resolve,20));throw Object.assign(new Error(current===1?'Synthetic held response.':'Synthetic credit limit.'),{code:current===1?'XIAOMI_HELD':'BILLING_LIMIT'});});
+  driver.requestController={stop:vi.fn()};await expect(triage(driver,{workers:2})).rejects.toMatchObject({code:'BILLING_LIMIT',exitCode:75});expect(ordinal).toBe(2);expect(await fs.readFile(path.join(root,'_level-001','.batch','billing-pause.json'),'utf8')).toContain('billing_exhausted');
+});
+
+it('isolates repeated-tag curator additions between two interleaved Xiaomi batches',async()=>{
+  await images(20);vi.spyOn(Math,'random').mockReturnValue(0.5);getPeople.mockImplementation(async filename=>{const groupA=Number(filename.match(/(\d+)\.jpg$/)[1])<10;if(groupA)await new Promise(resolve=>setTimeout(resolve,200));return [groupA?'Guest A (artist)':'Guest B (neighbor)'];});
+  const curators=Array.from({length:17},(_,index)=>`Base Curator ${index+1} (exact)`);let arrived=0,release;const barrier=new Promise(resolve=>{release=resolve;});
+  const driver=provider(async options=>{if(++arrived===2)release();await barrier;if(options.curators.includes('Guest A (artist)'))await new Promise(resolve=>setTimeout(resolve,20));return valid(options);});
+  await triage(driver,{workers:2,curators});expect(driver.submit).toHaveBeenCalledTimes(2);
+  const requests=driver.submit.mock.calls.map(([options])=>options);
+  const groupA=requests.find(options=>options.images.some(file=>path.basename(file)==='photo-00.jpg'));
+  const groupB=requests.find(options=>options.images.some(file=>path.basename(file)==='photo-10.jpg'));
+  expect(groupA).toBeDefined();expect(groupB).toBeDefined();
+  expect(groupA.curators).toEqual([...curators,'Guest A (artist)']);expect(groupB.curators).toEqual([...curators,'Guest B (neighbor)']);
+  expect(groupA.prompt).not.toContain('Guest B (neighbor)');expect(groupB.prompt).not.toContain('Guest A (artist)');
 });

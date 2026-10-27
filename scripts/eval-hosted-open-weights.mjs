@@ -8,7 +8,8 @@ import { estimateHostedCost, evaluateHostedProposal, evaluateXiaomiProfile } fro
 
 const testFiles = ['tests/hostedOpenWeights.test.js', 'tests/hostedEvalRunner.test.js', 'tests/deepinfraProvider.test.js',
   'tests/deepinfraErrors.test.js', 'tests/deepinfraCli.test.js', 'tests/deepinfraWorkflow.test.js', 'tests/hostedRun.test.js',
-  'tests/xiaomiProvider.test.js', 'tests/xiaomiCli.test.js', 'tests/xiaomiWorkflow.test.js', 'tests/xiaomiLauncher.test.js'];
+  'tests/xiaomiProvider.test.js', 'tests/xiaomiCli.test.js', 'tests/xiaomiWorkflow.test.js', 'tests/xiaomiLauncher.test.js',
+  'tests/hostedConcurrency.test.js', 'tests/xiaomiParallelLauncher.test.js'];
 export function runFocusedHostedTests({ root, scratch, spawn = spawnSync }) {
   const testResult = path.join(scratch, 'vitest.json');
   const run = spawn(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...testFiles, '--maxWorkers=1', '--minWorkers=1', '--reporter=json', `--outputFile=${testResult}`], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
@@ -59,7 +60,8 @@ try {
     tests: { passed: result.numPassedTests, failed: result.numFailedTests, skipped: result.numPendingTests },
     stage: proposal.stage, implementation: proposal.implementation, ready: false, modelRequests: 0, sourceAccess: false,
     xiaomi: { provider: xiaomi.provider, model: xiaomi.model, implementation: xiaomi.implementation,
-      maxImages: xiaomi.maxImages, responseMode: xiaomi.responseMode, ready: xiaomi.ready, historicalPilot: xiaomi.historicalPilot },
+      maxImages: xiaomi.maxImages, responseMode: xiaomi.responseMode, concurrency: xiaomi.concurrency,
+      ready: xiaomi.ready, historicalPilot: xiaomi.historicalPilot },
     syntheticContractChecks: result.testResults.map(file => ({ file: path.relative(root, file.name),
       passed: file.assertionResults.filter(test => test.status === 'passed').length,
       jsonAndRepairCases: /(?:deepinfra|xiaomi)(?:Provider|Workflow)\.test\.js$/.test(file.name)

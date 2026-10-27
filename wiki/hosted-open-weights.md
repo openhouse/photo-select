@@ -54,8 +54,15 @@ keeps synthetic implementation checks separate from the predecessor harness and
 pending broader live acceptance. Use `--provider xiaomi --batch-size 10
 --workers 1 --reasoning-effort auto` with the same curator list and context.
 Batch size controls images per request; `--target-level-size` still controls
-when recursive refinement stops. DeepInfra retains its four-image limit.
-A [normal-launcher ten-photo test](../evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
+when recursive refinement stops. Xiaomi also accepts fixed or adaptive worker
+ceilings from one to 50. A shared request pool includes repairs and Act II;
+adaptive growth follows two valid replies. Fatal holds stop queued work while
+active requests preserve receipts. Field-note batch sessions remain serial to
+preserve cumulative notebook updates. The v3 concurrency implementation has
+local substituted-transport tests; the earlier v2 live pilot does not establish
+hosted capacity at 50 or live parallel reliability. DeepInfra retains its
+four-image limit.
+A v2 [normal-launcher ten-photo test](../evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
 then completed both phases with 17 exact curator names and two contract-valid
 replies without repair. Working-copy sorting, notebook links, frozen input hashes
 and private Git provenance were verified; estimated token cost was $0.01519.
@@ -72,3 +79,12 @@ These checks make no model requests and evaluate no actual photographic edit.
 Future providers should reuse the capability/audit contract and add their own
 source records and acceptance evidence. A source update or changed candidate
 requires a new bound receipt. Preserve older evidence as historical.
+
+A [parallel/adaptive capacity test](../evals/reports/xiaomi-parallel-capacity-pilot-2026-10-26.json)
+subsequently exercised profile v3. Fixed mode sent two overlapping ten-image
+requests; both replies passed the contract without repair. Adaptive mode grew
+its target from one to two over four batches and recovered two contract repairs,
+but that run had no HTTP overlap. The tests reused the same ten derivatives as
+20 and 40 working copies. Reported-token estimates total $0.06392; billing is
+unreconciled. The local fifty-request ceiling is tested separately from the
+unverified hosted quota, and editorial usefulness remains unmeasured.

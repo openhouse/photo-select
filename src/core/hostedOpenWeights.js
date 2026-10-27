@@ -6,10 +6,15 @@ export function evaluateXiaomiProfile({ profile: p = {}, historicalPilot: prior 
   if (p.schemaVersion !== 1 || p.stage !== 'proposed' || p.ready !== false || p.modelRequests !== 0 ||
       p.implementation?.status !== 'implemented' || p.implementation?.verification !== 'mock-tested' ||
       p.implementation?.liveAcceptance !== 'pending') fail('xiaomi-acceptance-boundary');
-  if (p.provider !== 'xiaomi' || p.model !== 'mimo-v2.6-pro' || p.capabilityProfile !== 'xiaomi-mimo-v2.6-pro-2026-10-26-v2' || p.endpoint !== 'https://api.xiaomimimo.com/v1' ||
+  if (p.provider !== 'xiaomi' || p.model !== 'mimo-v2.6-pro' || p.capabilityProfile !== 'xiaomi-mimo-v2.6-pro-2026-10-26-v3' || p.endpoint !== 'https://api.xiaomimimo.com/v1' ||
       p.transport !== 'chat-completions' || p.apiKeyEnvironment !== 'MIMO_API_KEY' || p.precision !== null || p.checkpoint !== null) fail('xiaomi-identity');
   if (p.maxImages !== 10 || p.responseMode !== 'json_object' || p.serverSchemaEnforcement !== 'not-requested' ||
       JSON.stringify(p.reasoningEfforts) !== '["auto"]' || p.defaultWorkers !== 1 || p.githubTools !== 'unsupported') fail('xiaomi-capabilities');
+  const concurrency = p.concurrency;
+  if (concurrency?.minWorkers !== 1 || concurrency.maxWorkers !== 50 || concurrency.sharedRequestPool !== true ||
+      JSON.stringify(concurrency.phases) !== '["triage","repair","actII"]' || concurrency.adaptiveGrowthAfterValid !== 2 ||
+      concurrency.fieldNotesSessions !== 'serial' || concurrency.fatalHold !== 'stop-queued-finish-active-receipts' ||
+      concurrency.transportRetries !== 0 || concurrency.verifiedHostConcurrency !== null) fail('xiaomi-concurrency-boundary');
   if (p.evidence?.visualUsefulness !== 'unmeasured' || p.evidence?.jsonValidityRate !== null || p.evidence?.retryRecoveryRate !== null) fail('xiaomi-unmeasured-evidence');
   if (p.historicalPilot?.path !== 'evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json' ||
       !/^[a-f0-9]{64}$/.test(historicalPilotSha256 || '') || p.historicalPilot?.sha256 !== historicalPilotSha256 ||

@@ -30,6 +30,7 @@ const disablePhotoFilterDefault = parseEnvFlag(
   false
 );
 
+let rawWorkers, rawConcurrency;
 const program = new Command();
 program
   .name("photo-select")
@@ -127,11 +128,11 @@ program
   .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
-    (v) => Math.max(1, parseInt(v, 10))
+    (v) => { rawWorkers = v; return Math.max(1, parseInt(v, 10)); }
   )
   .option(
     "--adaptive-workers",
-    "Dynamically tune OpenAI request concurrency; --workers is the ceiling",
+    "Dynamically tune OpenAI request concurrency and Xiaomi concurrency; --workers is the ceiling",
     parseEnvFlag(process.env.PHOTO_SELECT_ADAPTIVE_WORKERS, false)
   )
   .option(
@@ -144,8 +145,8 @@ program
   )
   .option(
     "--concurrency <n>",
-    "Maximum in-flight OpenAI requests",
-    (v) => Math.max(1, parseInt(v, 10))
+    "Maximum in-flight requests for the selected provider",
+    (v) => { rawConcurrency = v; return Math.max(1, parseInt(v, 10)); }
   )
   .option(
     "--disable-photo-filter",
@@ -211,8 +212,17 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   if (!workers) workers = n;
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
+if (providerName === 'xiaomi') {
+  try {
+    if (rawWorkers !== undefined) workers = parsePositiveInteger(rawWorkers);
+    if (rawConcurrency !== undefined) concurrencyFlag = parsePositiveInteger(rawConcurrency);
+  } catch { program.error('Xiaomi workers and concurrency must be positive integers.'); }
+}
 if (!workers) workers = 1;
-if (hostedSpec && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
+if (providerName === 'xiaomi' && (!Number.isInteger(workers) || workers < 1 || workers > 50)) program.error('Xiaomi --workers must be between 1 and 50.');
+if (providerName === 'xiaomi' && retryNeedsReview) program.error('Xiaomi uses durable receipts; omit --retry-needs-review and resume the same command.');
+if (providerName === 'xiaomi' && concurrencyFlag > workers) program.error('Xiaomi --concurrency cannot exceed --workers.');
+if (providerName === 'deepinfra' && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
   program.error(`${hostedSpec.label} currently requires one worker, fixed concurrency and plain resume; omit --adaptive-workers and --retry-needs-review.`);
 }
 if (adaptiveWorkers && adaptiveMinWorkers > workers) {
@@ -233,6 +243,10 @@ let concurrency = Number.isFinite(envConc)
   ? concurrencyFlag
   : workers;
 if (!Number.isFinite(concurrency) || concurrency <= 0) concurrency = 6;
+if (providerName === 'xiaomi') {
+  concurrency = Math.min(workers, concurrencyFlag ?? (Number.isInteger(envConc) && envConc > 0 ? envConc : workers));
+  if (adaptiveWorkers && adaptiveMinWorkers > concurrency) program.error('Xiaomi --adaptive-min-workers cannot exceed the request concurrency ceiling.');
+}
 
 // Scale transport, filesystem, and batching with worker count
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
@@ -379,12 +393,17 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
     let journal;
+    let requestController;
+    if (provider === 'xiaomi') {
+      const { HostedConcurrencyController } = await import('./core/hostedConcurrency.js');
+      requestController = new HostedConcurrencyController({ maxConcurrency: concurrency, minConcurrency: adaptiveWorkers ? adaptiveMinWorkers : 1, adaptive: adaptiveWorkers });
+    }
     if (hostedSpec) {
       const { createHostedJournal } = await import('./hostedRun.js');
       journal = await createHostedJournal({ source: absDir, base: process.env.PHOTO_SELECT_HOSTED_BASE, ...(provider === 'xiaomi' ? { provider } : {}) });
       console.log(`${provider}: private audit saved in ${journal.root}`);
     }
-    const driver = liveRun?.provider || await getProvider(provider, { journal });
+    const driver = liveRun?.provider || await getProvider(provider, { journal, requestController });
     await triageDirectory({
       dir: absDir,
       promptPath,

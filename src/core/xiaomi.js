@@ -4,7 +4,7 @@ import { hostedSha256, normalizeDeepInfraUsage, redactDeepInfraResponse } from '
 
 export const XIAOMI_MODEL = 'mimo-v2.6-pro';
 export const XIAOMI_BASE_URL = 'https://api.xiaomimimo.com/v1';
-export const XIAOMI_PROFILE = 'xiaomi-mimo-v2.6-pro-2026-10-26-v2';
+export const XIAOMI_PROFILE = 'xiaomi-mimo-v2.6-pro-2026-10-26-v3';
 export const XIAOMI_MAX_IMAGES = 10;
 export const xiaomiHeld = (message, extra = {}) => Object.assign(new Error(message), { code: 'XIAOMI_HELD', ...extra });
 
@@ -60,7 +60,7 @@ export function buildXiaomiRequest({ messages, filenames = [], curators = [], ph
 }
 
 export function xiaomiRequestIdentity({ request, originalImages = [], endpoint = XIAOMI_BASE_URL, profile = XIAOMI_PROFILE, codeIdentity = null }) {
-  return 'xiaomi-v2-' + hostedSha256({ provider: 'xiaomi', endpoint, transport: 'chat-completions', profile, codeIdentity, request, originalImages });
+  return 'xiaomi-v3-' + hostedSha256({ provider: 'xiaomi', endpoint, transport: 'chat-completions', profile, codeIdentity, request, originalImages });
 }
 export function buildXiaomiRepairRequest({ request, raw, issues }) {
   const frozenGuard = request.messages?.[1]?.content?.at(-1)?.text;

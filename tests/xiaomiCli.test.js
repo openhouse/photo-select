@@ -49,8 +49,14 @@ describe('Xiaomi through the ordinary launcher', () => {
   it('preserves the dedicated DeepInfra four-image limit', async () => {
     const result = await run(['--batch-size', '5'], { provider: 'deepinfra' }); expect(result.code).not.toBe(0); expect(result.stderr).toMatch(/4/); expect(result.stdout).not.toContain('private audit');
   });
-  it.each([{args:['--workers','2']}, {args:['--adaptive-workers']}, {args:['--concurrency','2']}, {args:['--retry-needs-review']}])('holds unsupported Xiaomi capacity or generic retries ($args)', async ({args}) => {
-    const result = await run(args); expect(result.code).not.toBe(0); expect(result.stderr).toContain('Xiaomi'); expect(result.stdout).not.toContain('private audit');
+  it.each([{args:['--workers','3']}, {args:['--workers','50','--adaptive-workers','--adaptive-min-workers','1']}, {args:['--workers','3','--concurrency','2']}])('accepts a genuine Xiaomi parallel ceiling ($args)', async ({args}) => {
+    const result = await run(args,{observe:true}); expect(result.code,result.stderr).toBe(0); expect(readObserved(result).batchSize).toBe(10);
+  });
+  it.each([{args:['--workers','51']}, {args:['--workers','0']}, {args:['--workers','1.5']}, {args:['--workers','abc']}, {args:['--workers','3','--concurrency','1.5']}, {args:['--workers','3','--adaptive-min-workers','4','--adaptive-workers']}, {args:['--workers','2','--concurrency','3']}, {args:['--retry-needs-review']}])('holds an invalid Xiaomi capacity or generic retry request ($args)', async ({args}) => {
+    const result = await run(args); expect(result.code).not.toBe(0); expect(result.stderr).toMatch(/Xiaomi|workers/); expect(result.stdout).not.toContain('private audit');
+  });
+  it('ignores an inherited adaptive minimum when fixed Xiaomi capacity is selected',async()=>{
+    const result=await run(['--workers','3'],{observe:true,env:{PHOTO_SELECT_ADAPTIVE_MIN_WORKERS:'4'}});expect(result.code,result.stderr).toBe(0);expect(readObserved(result).workers).toBe(3);
   });
   it.each(['xhigh', 'minimal', 'high'])('rejects an unverified reasoning setting (%s)', async effort => {
     const result = await run(['--reasoning-effort', effort]); expect(result.code).not.toBe(0); expect(result.stderr).toContain('auto'); expect(result.stdout).not.toContain('private audit');

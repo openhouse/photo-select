@@ -608,7 +608,7 @@ export async function triageDirectory(options) {
   const batchSize = requestedBatchSize ?? (hosted?.provider === 'xiaomi' ? hosted.maxImages : hosted ? Math.min(BATCH_SIZE, hosted.maxImages) : BATCH_SIZE);
   const hostedCredential = hosted?.provider === 'xiaomi' ? process.env[hosted.credentialEnv]?.trim() : hosted ? process.env[hosted.credentialEnv] : undefined;
   const hostedHoldCode = hosted?.provider === 'xiaomi' ? 'XIAOMI_HELD' : 'DEEPINFRA_HELD';
-  if (hosted?.provider === 'xiaomi' && workers !== 1) throw new Error('Xiaomi currently requires one worker.');
+  if (hosted?.provider === 'xiaomi' && (!Number.isInteger(workers) || workers < 1 || workers > 50)) throw new Error('Xiaomi workers must be between 1 and 50.');
   if (provider.preventAutomaticResubmit && retryNeedsReview) {
     throw new Error('Hosted receipts require plain resume; omit --retry-needs-review.');
   }
@@ -636,7 +636,10 @@ export async function triageDirectory(options) {
     return err?.code === "PROMPT_CACHE_PROBE_MISS";
   }
 
-  let dynamicWorkers = workers;
+  let dynamicWorkers = hosted?.provider === 'xiaomi' && fieldNotes ? 1 : workers;
+  if (hosted?.provider === 'xiaomi' && fieldNotes && workers > 1) {
+    console.log(`${indent}📝  Notebook sessions are serialized to preserve every update; requested worker ceiling=${workers}.`);
+  }
   let consecutiveGatewayErrors = 0;
   function isGatewayError(e) {
     const s = e?.status || e?.code;
@@ -1268,7 +1271,7 @@ export async function triageDirectory(options) {
                   );
                 }
               } catch (err) {
-                if (provider.knowledge || provider.preventAutomaticResubmit) { abortProcessing = true; queue.length = 0; throw err; }
+                if (provider.knowledge || provider.preventAutomaticResubmit) { abortProcessing = true; queue.length = 0; if (hosted?.provider === 'xiaomi') provider.requestController?.stop(err); throw err; }
                 if (isGatewayError(err)) noteGatewayError();
                 bar.update(4, { stage: "error" });
                 bar.stop();
@@ -1324,7 +1327,7 @@ export async function triageDirectory(options) {
           () => workerFn()
         );
         const outcomes = await Promise.allSettled(pool);
-        const failure = outcomes.find((outcome) => outcome.status === "rejected");
+        const failure = (hosted?.provider === 'xiaomi' && outcomes.find(outcome => outcome.status === 'rejected' && (outcome.reason?.code === 'BILLING_LIMIT' || isBillingLimitError(outcome.reason)))) || outcomes.find((outcome) => outcome.status === "rejected");
         if (failure) {
           if (failure.reason?.code !== "BILLING_LIMIT" && !isBillingLimitError(failure.reason)) throw failure.reason;
           const pause = await writeBillingPause(failure.reason);

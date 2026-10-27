@@ -127,9 +127,17 @@ Xiaomi uses `json_object` and local validation; strict server-side schema
 enforcement is not requested. Its profile caps requests at ten independent images,
 including repairs and Act II. `--batch-size 10` selects this request size explicitly
 and does not depend on worker count. `--target-level-size` remains the completed
-level stopping target. Initially the provider supports one worker and `auto`
-reasoning. Explicit verbosity, knowledge/GitHub modes, adaptive workers and
-automatic review retries remain unsupported. Preserve the user's exact curator
+level stopping target. The provider supports `auto` reasoning. Fixed and adaptive
+workers accept bounds from one to 50, using one shared admission pool for every
+POST across triage, repair and Act II. Adaptive mode starts at the requested
+minimum and grows after two consecutive valid responses, never above the worker
+ceiling. Fifty is a local safety limit, not verified hosted account capacity.
+Fatal holds reject queued work; active requests finish preserving receipts.
+Rate-limit and ambiguous transport failures are not automatically retried.
+With field notes, serialize whole batch sessions and log the constraint so
+concurrent snapshots cannot clobber cumulative notebook updates.
+Explicit verbosity, knowledge/GitHub modes and automatic review retries remain
+unsupported. Preserve the user's exact curator
 list, complete context, repeated-tag additions, ordering and frozen batch roster.
 
 The [Xiaomi profile](../../evals/xiaomi-open-weights.json) binds dated
@@ -239,13 +247,37 @@ held without moving photos; estimated token cost was $0.01161. The successor
 repeats the complete schema in repair instructions and binds both phases to the
 same source hashes, context and template. Mutation checks hold changed inputs
 before another POST, notebook update or sorting. The Xiaomi cache/profile prefix
-advanced to v2; predecessor receipts remain historical.
+advanced to v2; predecessor receipts remain historical. The later concurrency
+implementation advances the runtime profile and request identity to v3. Shared
+pool ceilings, adaptive growth, field-note serialization and fatal queue holds
+are exercised by local substituted-transport tests. The bounded v2 live result
+does not establish live parallel capacity or reliability.
 
-The live execution recorded its base revision and the candidate source digest,
-including uncommitted implementation changes. The report verifies those source
-bytes against the final candidate. This is bounded CLI compatibility evidence;
+The live execution recorded its base revision and the v2 candidate source digest,
+including uncommitted implementation changes. The report binds that recorded
+edition; its live evidence does not cover the later v3 concurrency changes.
+This is bounded CLI compatibility evidence;
 the exhibition brief, broad editorial reliability, unattended use, adaptive
 capacity, comparative savings and large-library recursion remain unmeasured.
+
+## Parallel and adaptive live capacity evidence
+
+The [profile-v3 capacity report](../../evals/reports/xiaomi-parallel-capacity-pilot-2026-10-26.json)
+keeps two bounded normal-launcher runs separate. Fixed mode verified two
+overlapping hosted requests, each with ten images and all 17 supplied names;
+both replies passed the contract without repair. Adaptive mode completed four
+batches, grew its target from one to two, and recovered two contract repairs;
+its observed HTTP peak was one. All eight HTTP replies parsed as JSON.
+
+These runs reused ten previously inspected derivatives as 20 and 40 working
+copies. The fixed test controlled selection order so each request received an
+ordered ten-image group. Working-copy sorting, frozen hashes, and atomic private
+response/aggregate-notebook commits were verified. Reported-token estimates were
+$0.01877 fixed and $0.04515 adaptive, including invalid replies and repairs;
+billing reconciliation remains pending. Source originals and the Photos catalog
+were unchanged. This establishes bounded overlap at two and adaptive admission,
+not a fifty-request hosted quota, a corpus of sixty unique photographs, editorial
+acceptance, comparative savings or large-library recursion.
 
 ## Evaluation and hill climb
 

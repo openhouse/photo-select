@@ -2,24 +2,40 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CURATORS } from '../core/knowledgeLive.js';
 import { credentialLike } from '../core/githubBridge.js';
+import { HostedConcurrencyController } from '../core/hostedConcurrency.js';
 import { deepinfraReplyIssues, deepinfraAttemptMetrics, hostedSha256 } from '../core/deepinfra.js';
 import { XIAOMI_MODEL, XIAOMI_BASE_URL, XIAOMI_PROFILE, XIAOMI_MAX_IMAGES, xiaomiHeld, buildXiaomiRequest, buildXiaomiRepairRequest, xiaomiRequestIdentity, normalizeXiaomiUsage, redactXiaomiResponse, validateXiaomiConfiguration } from '../core/xiaomi.js';
 
 const sharedMessages = async (...args) => (await import('../chatClient.js')).buildMessages(...args);
 const isHold = error => ['XIAOMI_HELD', 'BILLING_LIMIT'].includes(error?.code);
+const boundedRetryAfter = (headers, now) => {
+  const value = headers?.get?.('retry-after');
+  if (value === null || value === undefined || value === '') return undefined;
+  const seconds = Number(value), milliseconds = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - now;
+  return Number.isFinite(milliseconds) && milliseconds >= 0 ? Math.min(30000, milliseconds) : undefined;
+};
 export default class XiaomiProvider {
   name = 'xiaomi'; supportsAsync = false; preventAutomaticResubmit = true;
   hostedCuration = Object.freeze({ provider: 'xiaomi', profile: XIAOMI_PROFILE, maxImages: XIAOMI_MAX_IMAGES, credentialEnv: 'MIMO_API_KEY', label: 'Xiaomi' });
-  constructor({ fetch = globalThis.fetch, buildMessages = sharedMessages, journal, now = Date.now } = {}) { Object.assign(this, { fetch, buildMessages, journal, now }); this.pending = new Map(); }
+  constructor({ fetch = globalThis.fetch, buildMessages = sharedMessages, journal, now = Date.now, requestController = new HostedConcurrencyController() } = {}) { Object.assign(this, { fetch, buildMessages, journal, now, requestController }); this.pending = new Map(); }
   async submit(options = {}) { return { promise: this.chat(options) }; }
   async collect(handle) { const raw = await handle.promise; return { raw, json: JSON.parse(raw) }; }
   async chat(options = {}) {
+    try { return await this.#chat(options); }
+    catch (error) {
+      const held = isHold(error) ? error : xiaomiHeld('Xiaomi request held; inspect the private run before further paid work.');
+      if (typeof this.requestController?.stop === 'function') this.requestController.stop(held);
+      throw held;
+    }
+  }
+  async #chat(options) {
     const { prompt, images = [], curators = [], photoPeople, onProgress = () => {}, savePayload, verifyInputs, journal = this.journal } = options;
     const apiKey = process.env.MIMO_API_KEY?.trim();
     const configuration = validateXiaomiConfiguration({ endpoint: options.endpoint ?? (process.env.MIMO_BASE_URL || XIAOMI_BASE_URL), model: options.model ?? XIAOMI_MODEL, reasoningEffort: options.reasoningEffort ?? 'auto', apiKey });
     if (typeof prompt !== 'string' || !prompt.trim()) throw xiaomiHeld('Xiaomi requires a rendered nonempty prompt.');
     if (credentialLike(prompt) || prompt.includes(apiKey)) throw xiaomiHeld('Credential-like prompt content is held before upload.');
     if (!journal || typeof journal.load !== 'function' || typeof journal.save !== 'function' || typeof journal.verifyCodeIdentity !== 'function') throw xiaomiHeld('Xiaomi requires a code-verifiable durable private journal before submission.');
+    if (!this.requestController || ['run', 'observe', 'stop', 'snapshot', 'assertRunning'].some(method => typeof this.requestController[method] !== 'function')) throw xiaomiHeld('Xiaomi requires a shared bounded request controller.');
     if (verifyInputs !== undefined && typeof verifyInputs !== 'function') throw xiaomiHeld('The frozen-input verifier must be a function.');
     const filenames = images.map(file => path.basename(file));
     const expectedSourceHashes = options.expectedSourceHashes === undefined ? null : structuredClone(options.expectedSourceHashes);
@@ -56,46 +72,68 @@ export default class XiaomiProvider {
       let submitted = request;
       try {
         for (let repair = 0; repair < 2; repair++) {
-          await onProgress('request');
-          const attempt = { request_sha256: hostedSha256(submitted), startedAt: new Date(this.now()).toISOString(), usage: null };
+          const attempt = { request_sha256: hostedSha256(submitted), startedAt: new Date(this.now()).toISOString(), usage: null, outcome: 'not-submitted' };
           record.attempts.push(attempt);
           await this.persist(journal, key, record);
-          if (verifyInputs) { try { await verifyInputs(); attempt.frozenInputsVerified = true; } catch { throw xiaomiHeld('Frozen context or prompt inputs changed; no further paid request was submitted.'); } }
-          try { await journal.verifyCodeIdentity(); } catch { throw xiaomiHeld('Repository code identity changed; no further paid request was submitted.'); }
-          await verifySources();
-          let received;
-          try { received = await this.fetch(`${configuration.endpoint}/chat/completions`, { method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(submitted), signal: AbortSignal.timeout(180000) }); }
-          catch { attempt.outcome = 'ambiguous'; attempt.completedAt = new Date(this.now()).toISOString(); throw xiaomiHeld('Ambiguous Xiaomi transport failure; no automatic resubmission.'); }
-          attempt.status = received.status; attempt.completedAt = new Date(this.now()).toISOString();
-          let response;
-          try { response = await received.json(); }
-          catch {
-            attempt.outcome = received.ok ? 'invalid-envelope' : [402, 429].includes(received.status) ? 'rejected' : 'unknown';
-            attempt.responseBodyUnreadable = true;
-            throw xiaomiHeld(received.status === 402 ? 'Xiaomi HTTP 402; request held without automatic resubmission.' : 'Xiaomi response envelope was unreadable; no automatic resubmission.', received.status === 402 ? { code: 'BILLING_LIMIT' } : {});
-          }
-          const safe = redactXiaomiResponse(response, apiKey);
-          Object.assign(attempt, { response_sha256: hostedSha256(response), response: safe.value, usage: safe.findings.length ? null : response?.usage ?? null });
-          if (safe.findings.length) { Object.assign(attempt, { redacted: true, credentialFindings: safe.findings }); throw xiaomiHeld('Credential-like response held; private diagnostics were redacted.'); }
-          if (!received.ok) { attempt.outcome = [402, 429].includes(received.status) ? 'rejected' : 'unknown'; throw xiaomiHeld(`Xiaomi HTTP ${received.status}; request held without automatic resubmission.`, received.status === 402 ? { code: 'BILLING_LIMIT' } : {}); }
-          if (response.model !== configuration.model) throw xiaomiHeld('Xiaomi returned a different or missing model identity; response held without repair.');
-          if (response.choices?.length !== 1 || response.choices[0].finish_reason !== 'stop' || typeof response.choices[0].message?.content !== 'string') throw xiaomiHeld('Xiaomi did not return a complete single reply.');
-          const raw = response.choices[0].message.content; let json, issues;
-          try { json = JSON.parse(raw); attempt.jsonParsed = true; issues = deepinfraReplyIssues(json, filenames, options); } catch { attempt.jsonParsed = false; issues = ['JSON_PARSE']; }
-          attempt.contractValid = !issues.length;
-          if (issues.length) {
-            attempt.validationIssues = issues;
-            if (repair) throw xiaomiHeld('Xiaomi reply remained invalid after one repair.', { repairSuggestion: { type: 'repair_suggestion', patch: '--- a/private-reply.json\n+++ b/private-reply.json\n@@ -1 +1 @@\n-Invalid JSON or reply contract\n+Manually repair the private reply against its frozen phase schema before resuming\n' } });
-            record.repairRequested = true;
-            submitted = buildXiaomiRepairRequest({ request, raw, issues });
-            await this.persist(journal, key, record); continue;
-          }
-          const count = json.minutes?.length, minimum = options.minutesMin ?? 1, maximum = options.minutesMax ?? 32;
-          const warnings = count !== undefined && (count < minimum || count > maximum) ? [{ code: 'MINUTES_COUNT_OUTSIDE_TARGET', actual: count, min: minimum, max: maximum }] : [];
-          Object.assign(record, { status: 'completed', completedAt: new Date(this.now()).toISOString(), latencyMs: this.now() - Date.parse(record.createdAt), returnedModel: response.model, raw, json, submittedRequest: submitted, final_request_sha256: hostedSha256(submitted), model_sha256: hostedSha256(submitted), usage: response.usage ?? null, providerEstimatedCost: response.usage?.estimated_cost ?? null, normalizedUsage: normalizeXiaomiUsage(response.usage), retry_recovered: repair === 1, warnings });
-          Object.assign(record, deepinfraAttemptMetrics(record));
-          this.pending.set(key, record); await this.persist(journal, key, record);
-          if (repair) onProgress('retry_recovered'); onProgress('done'); return raw;
+          const result = await this.requestController.run(async () => {
+            const admittedAt = this.now();
+            attempt.admission = { admittedAt: new Date(admittedAt).toISOString(), snapshot: this.requestController.snapshot() };
+            const observe = outcome => {
+              const latencyMs = this.now() - admittedAt;
+              if (record.status !== 'completed') attempt.latencyMs = latencyMs;
+              this.requestController.observe({ status: attempt.status, latencyMs, retryAfterMs: attempt.retryAfterMs, outcome });
+            };
+            try {
+              await onProgress('request');
+              attempt.outcome = 'prepared'; await this.persist(journal, key, record);
+              if (verifyInputs) { try { await verifyInputs(); attempt.frozenInputsVerified = true; } catch { throw xiaomiHeld('Frozen context or prompt inputs changed; no further paid request was submitted.'); } }
+              try { await journal.verifyCodeIdentity(); } catch { throw xiaomiHeld('Repository code identity changed; no further paid request was submitted.'); }
+              await verifySources();
+              let received;
+              this.requestController.assertRunning();
+              attempt.submittedAt = new Date(this.now()).toISOString(); attempt.outcome = 'in-flight';
+              try { received = await this.fetch(`${configuration.endpoint}/chat/completions`, { method: 'POST', redirect: 'error', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(submitted), signal: AbortSignal.timeout(180000) }); }
+              catch { attempt.outcome = 'ambiguous'; attempt.completedAt = new Date(this.now()).toISOString(); throw xiaomiHeld('Ambiguous Xiaomi transport failure; no automatic resubmission.'); }
+              attempt.status = received.status; attempt.retryAfterMs = boundedRetryAfter(received.headers, this.now());
+              if (received.status === 402) this.requestController.stop(xiaomiHeld('Xiaomi HTTP 402; request held without automatic resubmission.', { code: 'BILLING_LIMIT' }));
+              let response;
+              try { response = await received.json(); }
+              catch {
+                attempt.outcome = received.ok ? 'invalid-envelope' : [402, 429].includes(received.status) ? 'rejected' : 'unknown';
+                attempt.responseBodyUnreadable = true;
+                throw xiaomiHeld(received.status === 402 ? 'Xiaomi HTTP 402; request held without automatic resubmission.' : 'Xiaomi response envelope was unreadable; no automatic resubmission.', received.status === 402 ? { code: 'BILLING_LIMIT' } : {});
+              }
+              attempt.completedAt = new Date(this.now()).toISOString();
+              const safe = redactXiaomiResponse(response, apiKey);
+              Object.assign(attempt, { response_sha256: hostedSha256(response), response: safe.value, usage: safe.findings.length ? null : response?.usage ?? null });
+              if (safe.findings.length) { Object.assign(attempt, { redacted: true, credentialFindings: safe.findings }); throw xiaomiHeld('Credential-like response held; private diagnostics were redacted.'); }
+              if (!received.ok) { attempt.outcome = [402, 429].includes(received.status) ? 'rejected' : 'unknown'; throw xiaomiHeld(`Xiaomi HTTP ${received.status}; request held without automatic resubmission.`, received.status === 402 ? { code: 'BILLING_LIMIT' } : {}); }
+              if (response.model !== configuration.model) throw xiaomiHeld('Xiaomi returned a different or missing model identity; response held without repair.');
+              if (response.choices?.length !== 1 || response.choices[0].finish_reason !== 'stop' || typeof response.choices[0].message?.content !== 'string') throw xiaomiHeld('Xiaomi did not return a complete single reply.');
+              const raw = response.choices[0].message.content; let json, issues;
+              try { json = JSON.parse(raw); attempt.jsonParsed = true; issues = deepinfraReplyIssues(json, filenames, options); } catch { attempt.jsonParsed = false; issues = ['JSON_PARSE']; }
+              attempt.contractValid = !issues.length;
+              if (issues.length) {
+                attempt.validationIssues = issues; attempt.outcome = 'invalid';
+                if (repair) throw xiaomiHeld('Xiaomi reply remained invalid after one repair.', { repairSuggestion: { type: 'repair_suggestion', patch: '--- a/private-reply.json\n+++ b/private-reply.json\n@@ -1 +1 @@\n-Invalid JSON or reply contract\n+Manually repair the private reply against its frozen phase schema before resuming\n' } });
+                record.repairRequested = true; await this.persist(journal, key, record); observe('invalid');
+                return { repair: buildXiaomiRepairRequest({ request, raw, issues }) };
+              }
+              attempt.outcome = 'valid'; attempt.latencyMs = this.now() - admittedAt;
+              const count = json.minutes?.length, minimum = options.minutesMin ?? 1, maximum = options.minutesMax ?? 32;
+              const warnings = count !== undefined && (count < minimum || count > maximum) ? [{ code: 'MINUTES_COUNT_OUTSIDE_TARGET', actual: count, min: minimum, max: maximum }] : [];
+              Object.assign(record, { status: 'completed', completedAt: new Date(this.now()).toISOString(), latencyMs: this.now() - Date.parse(record.createdAt), returnedModel: response.model, raw, json, submittedRequest: submitted, final_request_sha256: hostedSha256(submitted), model_sha256: hostedSha256(submitted), usage: response.usage ?? null, providerEstimatedCost: response.usage?.estimated_cost ?? null, normalizedUsage: normalizeXiaomiUsage(response.usage), retry_recovered: repair === 1, warnings });
+              Object.assign(record, deepinfraAttemptMetrics(record));
+              this.pending.set(key, record); await this.persist(journal, key, record);
+              if (repair) onProgress('retry_recovered'); onProgress('done'); observe('valid'); return { raw };
+            } catch (error) {
+              if (!attempt.submittedAt) attempt.outcome = 'not-submitted';
+              const held = isHold(error) ? error : xiaomiHeld('Xiaomi request held; inspect its private receipt before further paid work.');
+              observe(attempt.outcome); this.requestController.stop(held); throw held;
+            }
+          });
+          if (result.repair) { submitted = result.repair; continue; }
+          return result.raw;
         }
       } catch (error) {
         if (record.status !== 'completed') {

@@ -147,20 +147,48 @@ Repeated photo tags can append additional fictional curator lenses to a batch.
 
 This provider submits photographs to `https://api.xiaomimimo.com/v1` using only
 `MIMO_API_KEY`. It uses `json_object` with local validation and one repair;
-server-side JSON Schema enforcement is not requested. Initially it supports one
-worker, `auto` reasoning and the normal image/field-note workflow. GitHub tools,
-knowledge modes, adaptive workers and explicit verbosity are unsupported.
+server-side JSON Schema enforcement is not requested. It supports `auto`
+reasoning and the normal image/field-note workflow. GitHub tools, knowledge modes,
+automatic `--retry-needs-review` and explicit verbosity are unsupported.
 The journal and conservative resume holds described above apply, with separate
 provider identity. The earlier [private-harness pilot](evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json)
 remains historical compatibility evidence; it is not a live test of this CLI
 implementation. See the [Xiaomi runtime profile](evals/xiaomi-open-weights.json).
-A separate [normal-launcher test](evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
+A separate v2 [normal-launcher test](evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
 completed ten-photo triage and field notes with all 17 supplied names: two valid
 replies without repair, eight keeps and two asides. Working-copy moves, notebook
 links and the private audit commit were verified. An earlier candidate was held
 after two invalid replies; its receipt is preserved. This bounded test used a
 short test brief and one nonrecursive level; broader editorial acceptance remains
 pending.
+
+For parallel selection with an adaptive ceiling of 50 workers, omit `--field-notes`:
+
+```bash
+"/path/to/photo-select/photo-select-here.sh" --provider xiaomi --model mimo-v2.6-pro \
+  --batch-size 10 --workers 50 --adaptive-workers --adaptive-min-workers 1 \
+  --reasoning-effort auto --curators "$CURATORS" --target-level-size 10
+```
+
+Adaptive mode starts at the selected minimum and grows after two consecutive
+valid replies, up to `--workers`. Omit `--adaptive-workers` for a fixed ceiling.
+Worker bounds are 1–50. One shared admission pool covers every request, including
+repairs and Act II. These are local limits; actual Xiaomi account capacity at
+50 simultaneous requests has not been verified. Rate-limit, billing and ambiguous
+transport failures hold the run without automatic resubmission. Fatal holds stop
+queued requests while active requests finish preserving their receipts.
+
+With `--field-notes`, whole batch sessions run serially to preserve cumulative
+notebook updates. The CLI logs this constraint even when you request more workers.
+The earlier one-worker live test does not establish parallel reliability or
+capacity; parallel behavior is checked with substituted transport in local tests.
+
+A [bounded capacity test](evals/reports/xiaomi-parallel-capacity-pilot-2026-10-26.json)
+verified two overlapping hosted requests with ten images each and no repair.
+A separate adaptive run grew its target from one to two and recovered two
+contract repairs. These runs reused ten inspected derivatives as 20 and 40
+working copies, with 17 exact curator names and a short test brief. They do not
+verify a hosted quota of fifty or editorial reliability.
 
 Run `photo-select --help` to see all options.
 

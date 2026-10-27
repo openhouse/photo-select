@@ -5,11 +5,11 @@
   "inputSha256": {
     ".env.example": "b1e357d257c82e94394f391bb9c3a50ba3d521a1cd69f580894c1e8b08bc229b",
     "AGENTS.md": "4191930343fcddbaa1b8c7557cc72ae2ef1be26268d1e197c41529d9f0f15a4c",
-    "README.md": "bf2dfe215d5ce47d95cfde4c7ec58cb4229e2a68d07ffa7cbeaa65a207ae20e6",
-    "docs/rfcs/0013-hosted-open-weights.md": "3dd3ee069673d86f1e9d1c21b8cb8a37489723662f04e0db72a9da9d52b5d34f",
+    "README.md": "0b608dd9997132c88fa2b49062115bcd5893adf19b26b012799ef4925350cd75",
+    "docs/rfcs/0013-hosted-open-weights.md": "db5dad8809bddca83702570ac3e85f2552ae7eeb9f53a98b1928a73ed431a936",
     "evals/hosted-open-weights.json": "c45e1da58a7b3f7a38aad703b88c79c290effd64e389c443453c00ddd373a075",
     "evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json": "402d892a8e45af9e9a29e358ccd878565a84cd50ebfe4440746c440025a260d7",
-    "evals/xiaomi-open-weights.json": "f14b643c6a687f418b412e34fa3b7dd68b90ed9b818f6c58a97558978e6fe4ae",
+    "evals/xiaomi-open-weights.json": "a93e5e36822f609f75784405118177888924443a6a4a7599b7772f88ffa8ce94",
     "package-lock.json": "a67cad0265af8cfc0bbadb3ae02ed33fada7067fb6ee8667e589cb5200efdea5",
     "package.json": "a460311fdf379eef4e1423b80746ceea6a3c6c60be5d56c2be4390ae51bbd8cf",
     "prompts/default_prompt.hbs": "023f46922a720fa796b504bb682562fb5788457d0ebf2fac125f83a9f57963f2",
@@ -17,7 +17,7 @@
     "prompts/default_prompt_olympia.txt": "eae668be8281a775e39cacf992d5098e922d8753fbdfdbf4b01bac73d6fb7134",
     "prompts/github_prompt.hbs": "96268c149a6773fa44b6675bed8a1b254275c0f4ad749387f34ce81b2c3350d5",
     "prompts/knowledge_prompt.hbs": "8d53b86c6d2818385736f167048546497c292d299ee8312a9ff14bc0036495b6",
-    "scripts/eval-hosted-open-weights.mjs": "e1856cc0fd47f71d0673c04acab4c777d0d8c0c93bd9d7a71b2b665c3406137e",
+    "scripts/eval-hosted-open-weights.mjs": "0be241dd271e430af0efc13373cfaf822b56f2684ea89af0bbd7a72f74e51a4c",
     "src/archive/ensureArchiveLevel.js": "29f8f7309808f79616e3b12e9c912cec2c824c502c9bcd25e0577f69843672af",
     "src/archive/ensureClone.js": "f3590147a8c384b5ec58fa35674b91adfb247c931851f092e74644155f9fb7f9",
     "src/archive/manifest.js": "d13215734c49342384ceb0ce5049c1df83b6e1a85b0b3c1f0b5674260acfa5b3",
@@ -40,8 +40,9 @@
     "src/core/githubCuration.js": "fca5e21ba795eab25c330062aaef37667f4e89f76553e16f78617f176eaff399",
     "src/core/githubPromptCache.js": "917bcee3364b0c32c581385d6cb7e504596d647120c82c4f6874bc1d3260080c",
     "src/core/githubResponse.js": "da2f787cf27e40bf7286a1d9ce5847c3644e566d30709b4d5ba8401ec642af41",
+    "src/core/hostedConcurrency.js": "15573f64aaf71c9e8fccc767e41ff72d430179a5205f4369f8abde00eb493051",
     "src/core/hostedJournal.js": "17e05a2eb81b59b9795b328475354ab1c334e0f791fd4b42fecae61b5f3e8806",
-    "src/core/hostedOpenWeights.js": "ddecd94975170f31e867784bc9481d04ff53ee86da10091184b7a8d4f05fb1a5",
+    "src/core/hostedOpenWeights.js": "6901286c8b1c13ca06a748234ca5adfe994ecdb6a471bf1e572a49e1c907918f",
     "src/core/knowledgeContext.js": "11128a72500f345d0004f3ae9e09c0fcb3ceb1508796ed6405d249ac9bbdb9a5",
     "src/core/knowledgeLive.js": "a2b8f8f442a5fdfcfa4e0ae0a47a2485bbb8887e9dd0f72a289b37799afd1775",
     "src/core/parsePositiveInteger.js": "6f84f02fc3a9e1ee2835c614592f867285868effee7b58d316b0dc58d2435ca2",
@@ -50,7 +51,7 @@
     "src/core/promptCaching.js": "9c061faf950a80d9e714b7c6af7b8bd5aa7120c3b0ebb5b931394c309b7cd482",
     "src/core/providerErrors.js": "e0a845150aa8561d71105589d0ce2bd21b88f52611503c98b67c53517af5e920",
     "src/core/reconcileDecisionFilenames.js": "3bb359200b3fa6565577b15053300ecdb21bdd9a2bdc871e7c3616c951f62390",
-    "src/core/xiaomi.js": "79a84abc65bb068e21ba96d685a736f2272c96b007d54be667e82ea8ddc93972",
+    "src/core/xiaomi.js": "669cd81a5707ef628406c8c52f31a15a5d78a9c9d11549ed00901c4bb4b50416",
     "src/effortGuard 2.js": "fdf633e2a8a85068b0641529a03890a03ee5b9896dfdfe1bcf12930a3169d117",
     "src/effortGuard.js": "dae027923f01abc07256f1e71c75d030815557719d6f5b274ed653073535435b",
     "src/errorHandler.js": "423c866403036d2b1d2933e0645759dc45fc074ba071679e39d99352c007ad31",
@@ -66,7 +67,7 @@
     "src/hostedRun.js": "03632151724f88e15d892669d52e9ef53b2ea0024071dd074519d29e06e5daaf",
     "src/imagePreprocessor.js": "875263fff936e3e93f8c8a624b028ca503520c7c2b87f9bc8956c0eb3006b8a4",
     "src/imageSelector.js": "6fe9aacefce0e1f6dd05025e7467cc622fb2d07981a15d2609b501656024303f",
-    "src/index.js": "113cfa5be910baa012361d616215d5582f58006751bb42bc4429838ed0e693ca",
+    "src/index.js": "04145b8cea5e3e8601b1203c3d30b61aa6373809f7401b8824c2223f734899a1",
     "src/knowledgeGithub.js": "c7740f12319c04bc578362608d8ba381b8c74b58d4bc57b0bbe873a85fbdcf16",
     "src/knowledgeResearch.js": "eb880514fafbcaf171cc3f06c178e2d21e5d0d286a549d3fc1bbce8d76bb6961",
     "src/knowledgeRun.js": "4eb06cc5a9a35d7fc57920c661f4e2eba451e74389a168aaa1a653f3f062bd98",
@@ -74,7 +75,7 @@
     "src/lib/semaphore.js": "2699dd98bff0e5ab81e78a83953d744013ceaa520d3fe81d595623a4fab97933",
     "src/net 2.js": "3fd434986a6cf974b767f5c8adac99b664587a779118c53411ca00b0b6a8a7f3",
     "src/net.js": "02c1ecb637f6506865fc767878fdaf7d0a5f6ea48cf52fd5b3c1d9b2ef49d021",
-    "src/orchestrator.js": "ad468d3b05624aa4e92a00c38c0d74cf0ce149cd23a5a6b591b560dfae37959f",
+    "src/orchestrator.js": "5d3c411568763316261a3cfcd9893d35fa02060a215cc2b664b65cdb202a287c",
     "src/peoplePrefetch.js": "babc17f4846179dfe18a073ac0f6ff668e863e785b0a250cd5cc16a03ebfd501",
     "src/providers/deepinfra.js": "07359d91b1556f5d5c2c81fd7d9232da9362097ea6acd3ebb2e75ae3d060dc08",
     "src/providers/github.js": "59ae2b4ca6c55422b928bda126b37a8a9c896a14f91f8c72af4aed02943f1ca8",
@@ -83,7 +84,7 @@
     "src/providers/ollama.js": "a912ccee141356710e9ea38328637a476f59ff3c0ef6a71520796a16f5d932a5",
     "src/providers/openai-batch.js": "792260df07c7c6b0fc5ea964d56b1c3c117e68b0945f81545ca7973ccd1e90fc",
     "src/providers/openai.js": "f8ed9b4b523527220c1a5caf6de5d75d4041fff244455c296d982878da66fe78",
-    "src/providers/xiaomi.js": "0ba9f14c40d2c370c89519012a6726325e1a608e416b8300ea6e072a374d8950",
+    "src/providers/xiaomi.js": "9bb704ba2a1c48ef5ceda59be783b21ed34828c79f3e48fb002b486e5ee8598f",
     "src/replySchema.js": "f463f99166e48f7cf83a640eaa89a3197c9571947efae53219fcd477570c3ce0",
     "src/scheduler 2.js": "533dde08650c9f61a0b1d68232fcfc3fa27af33259d3f10cd1f32f169474eef5",
     "src/scheduler.js": "7d7a20361abfe54a7232646af7847f12da9cc407331c08881a0852024c9180cd",
@@ -94,15 +95,17 @@
     "tests/deepinfraErrors.test.js": "33528a23ca34230c874962510118876ec16fc65ab313633b899767ba26f6ac8b",
     "tests/deepinfraProvider.test.js": "2a681444ae47a9475e24567669f7bdc024218a0d21d857559ab0015c9fe46fbc",
     "tests/deepinfraWorkflow.test.js": "6e9123bd1a71a72ba1bbd25aea90f2f83f0ce0cdcd711f74d98f191e3cf40cf5",
+    "tests/hostedConcurrency.test.js": "acb0daaec588ffabb4660be21132959c720f350682ed14510f77686110944cf8",
     "tests/hostedEvalRunner.test.js": "7289d9053e7a4eb38f829dde17883a50b9c62b37fd943ff763439dd143fc14dc",
-    "tests/hostedOpenWeights.test.js": "25def68acb98c570ec010a76a8277b3bfaef48167b55a42c2a498fac8fae5a52",
+    "tests/hostedOpenWeights.test.js": "0157461f95bfc764eb0040cf7880ec16020f3988e13aeaaf90fa7796c4ea12d3",
     "tests/hostedRun.test.js": "b2a94e4f1d58a956a7d61408fb017d8784af6d2817828a558d036aebc166f11a",
-    "tests/xiaomiCli.test.js": "f3185e99fa73d298b35df3d30ba342a43de09dfc6f0c9899b2ea6d98b1b6fb73",
+    "tests/xiaomiCli.test.js": "266f6c6354264dfc369218152b056cc45695d4e8a4934b64d524884ac0227ebe",
     "tests/xiaomiLauncher.test.js": "dc2e3894121be2d487b10fd618ceea31415a1f55e09501168c925cb98e591bc5",
-    "tests/xiaomiProvider.test.js": "ffe3268813068994e9149726c511a6d28ab4d1872bca693d3f3a487c51ac8398",
-    "tests/xiaomiWorkflow.test.js": "baec1a49164fdc380d6b98f9ecfb60e419dc385d434e178dac024c22740e6ec6",
+    "tests/xiaomiParallelLauncher.test.js": "7ad731c1c7b1d661055152fff29a0da8f87c5dcd4ff316a19505cd2a802ebf39",
+    "tests/xiaomiProvider.test.js": "c28f5d1a0b1782c32ffe74386690578d54330a446ab83ae8706d3f4ff388e369",
+    "tests/xiaomiWorkflow.test.js": "e7b392b7548f7d8108087073670b13bccf8b0218de25e7217d0010cc83507362",
     "wiki/graph.json": "0e0a27281e3b13e61cf0c0a7f34e83771592716a03c3af1a8c09543e1ab59f20",
-    "wiki/hosted-open-weights.md": "783b464acaa5e2019def81c767b3c83122fee69fedb9d4307ca37ee17fad289c",
+    "wiki/hosted-open-weights.md": "8f4b6dfddc808a42b2aacce4c142e2b281c80dc709d87a71760e7313718896d0",
     "wiki/index.md": "1595142064047c8bb33e3c1b9cf44fa6a9a9f85ae3ab62de36efb6702728d5fa"
   },
   "graph": {
@@ -110,7 +113,7 @@
     "edges": 14
   },
   "tests": {
-    "passed": 280,
+    "passed": 330,
     "failed": 0,
     "skipped": 0
   },
@@ -133,6 +136,21 @@
     },
     "maxImages": 10,
     "responseMode": "json_object",
+    "concurrency": {
+      "minWorkers": 1,
+      "maxWorkers": 50,
+      "sharedRequestPool": true,
+      "phases": [
+        "triage",
+        "repair",
+        "actII"
+      ],
+      "adaptiveGrowthAfterValid": 2,
+      "fieldNotesSessions": "serial",
+      "fatalHold": "stop-queued-finish-active-receipts",
+      "transportRetries": 0,
+      "verifiedHostConcurrency": null
+    },
     "ready": false,
     "historicalPilot": {
       "path": "evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json",
@@ -169,13 +187,18 @@
       ]
     },
     {
+      "file": "tests/hostedConcurrency.test.js",
+      "passed": 15,
+      "jsonAndRepairCases": []
+    },
+    {
       "file": "tests/hostedEvalRunner.test.js",
       "passed": 3,
       "jsonAndRepairCases": []
     },
     {
       "file": "tests/hostedOpenWeights.test.js",
-      "passed": 93,
+      "passed": 103,
       "jsonAndRepairCases": []
     },
     {
@@ -185,7 +208,7 @@
     },
     {
       "file": "tests/xiaomiCli.test.js",
-      "passed": 23,
+      "passed": 31,
       "jsonAndRepairCases": []
     },
     {
@@ -194,8 +217,13 @@
       "jsonAndRepairCases": []
     },
     {
+      "file": "tests/xiaomiParallelLauncher.test.js",
+      "passed": 5,
+      "jsonAndRepairCases": []
+    },
+    {
       "file": "tests/xiaomiProvider.test.js",
-      "passed": 41,
+      "passed": 51,
       "jsonAndRepairCases": [
         " Xiaomi submission with real durable journal repairs a closing-question failure once and preserves the frozen original messages",
         " Xiaomi submission with real durable journal repairs mixed minutes/string output with the complete frozen phase schema and root-level decision directions",
@@ -204,12 +232,13 @@
         " Xiaomi submission with real durable journal holds returned model undefined without repair",
         " Xiaomi submission with real durable journal holds a truncated reply without repair",
         " Xiaomi submission with real durable journal rechecks image hashes before a repair rather than submitting changed source bytes",
-        " Xiaomi submission with real durable journal rechecks context/template inputs before the one permitted repair"
+        " Xiaomi submission with real durable journal rechecks context/template inputs before the one permitted repair",
+        " Xiaomi submission with real durable journal admits every paid repair through the shared request controller and records capacity provenance"
       ]
     },
     {
       "file": "tests/xiaomiWorkflow.test.js",
-      "passed": 9,
+      "passed": 11,
       "jsonAndRepairCases": []
     }
   ],
