@@ -15,7 +15,13 @@
     {"id":"source.deepinfra-reasoning","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/reasoning","title":"DeepInfra reasoning and billing","visibility":"public-safe","sensitivity":"low"},
     {"id":"source.deepinfra-retention","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/prompt-cache-retention","title":"DeepInfra explicit cache retention","visibility":"public-safe","sensitivity":"low"},
     {"id":"source.deepinfra-vision","kind":"source","status":"maintained","url":"https://docs.deepinfra.com/chat/vision","title":"DeepInfra image inputs","visibility":"public-safe","sensitivity":"low"},
-    {"id":"source.wiki-schema","kind":"source","status":"maintained","url":"https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md","title":"Pinned public record vocabulary","visibility":"public-safe","sensitivity":"low"}
+    {"id":"source.wiki-schema","kind":"source","status":"maintained","url":"https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md","title":"Pinned public record vocabulary","visibility":"public-safe","sensitivity":"low"},
+    {"id":"photo-select-rfc-0014","kind":"research-inquiry","status":"draft","path":"docs/rfcs/0014-xiaomi-batch.md","visibility":"public-safe","sensitivity":"low"},
+    {"id":"photo-select-xiaomi-batch","kind":"method","status":"draft","path":"wiki/xiaomi-batch.md","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.xiaomi-batch","kind":"source","status":"maintained","url":"https://mimo.mi.com/docs/en-US/quick-start/usage-guide/text-generation/batch-api","title":"Xiaomi asynchronous Batch lifecycle","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.xiaomi-pricing","kind":"source","status":"maintained","url":"https://mimo.mi.com/docs/en-US/price/pay-as-you-go","title":"Xiaomi synchronous and Batch tariffs","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.xiaomi-images","kind":"source","status":"maintained","url":"https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding","title":"Xiaomi general image input contract","visibility":"public-safe","sensitivity":"low"},
+    {"id":"source.xiaomi-account","kind":"source","status":"maintained","url":"https://mimo.mi.com/docs/en-US/quick-start/faq/account","title":"Xiaomi regional account and credential boundaries","visibility":"public-safe","sensitivity":"low"}
   ],
   "edges": [
     {"from":"photo-select-hosted-open-weights","type":"related_to","to":"photo-select-rfc-0013","layer":"semantic","href":"../docs/rfcs/0013-hosted-open-weights.md","context":"Inspect the MiMo and DeepInfra proposal."},
@@ -31,6 +37,17 @@
     {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.deepinfra-vision","layer":"evidence","href":"https://docs.deepinfra.com/chat/vision","context":"DeepInfra image inputs; checked 2026-10-26, not live inference evidence."},
     {"from":"photo-select-rfc-0013","type":"uses_source","to":"source.wiki-schema","layer":"evidence","href":"https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/docs/knowledge-bank/schema.md","context":"Pinned public record vocabulary; checked 2026-10-26, not live inference evidence."},
     {"from":"photo-select-wiki","type":"related_to","to":"photo-select-rfc-0013","layer":"semantic","href":"../docs/rfcs/0013-hosted-open-weights.md","context":"Read the first provider proposal."},
-    {"from":"photo-select-wiki","type":"uses_method","to":"photo-select-hosted-open-weights","layer":"semantic","href":"hosted-open-weights.md","context":"Start with the reusable method."}
+    {"from":"photo-select-wiki","type":"uses_method","to":"photo-select-hosted-open-weights","layer":"semantic","href":"hosted-open-weights.md","context":"Start with the reusable method."},
+    {"from":"photo-select-wiki","type":"related_to","to":"photo-select-rfc-0014","layer":"semantic","href":"../docs/rfcs/0014-xiaomi-batch.md","context":"Read the proposed asynchronous MiMo transport."},
+    {"from":"photo-select-wiki","type":"uses_method","to":"photo-select-xiaomi-batch","layer":"semantic","href":"xiaomi-batch.md","context":"Preserve curation through asynchronous job lifecycles."},
+    {"from":"photo-select-hosted-open-weights","type":"related_to","to":"photo-select-rfc-0014","layer":"semantic","href":"../docs/rfcs/0014-xiaomi-batch.md","context":"Extend the hosted-provider contract with a proposed Batch transport."},
+    {"from":"photo-select-xiaomi-batch","type":"related_to","to":"photo-select-rfc-0014","layer":"semantic","href":"../docs/rfcs/0014-xiaomi-batch.md","context":"Inspect the proposed implementation and acceptance gates."},
+    {"from":"photo-select-xiaomi-batch","type":"uses_method","to":"photo-select-hosted-open-weights","layer":"semantic","href":"hosted-open-weights.md","context":"Retain the hosted-provider provenance and editorial boundary."},
+    {"from":"photo-select-rfc-0014","type":"related_to","to":"photo-select-rfc-0013","layer":"semantic","href":"0013-hosted-open-weights.md","context":"Preserve the existing provider contract and historical synchronous evidence."},
+    {"from":"photo-select-rfc-0014","type":"uses_method","to":"photo-select-xiaomi-batch","layer":"semantic","href":"../../wiki/xiaomi-batch.md","context":"Apply durable job preparation and reconciliation."},
+    {"from":"photo-select-rfc-0014","type":"uses_source","to":"source.xiaomi-batch","layer":"evidence","href":"https://mimo.mi.com/docs/en-US/quick-start/usage-guide/text-generation/batch-api","context":"Xiaomi asynchronous Batch lifecycle; checked 2026-10-27, not live Batch acceptance evidence."},
+    {"from":"photo-select-rfc-0014","type":"uses_source","to":"source.xiaomi-pricing","layer":"evidence","href":"https://mimo.mi.com/docs/en-US/price/pay-as-you-go","context":"Xiaomi synchronous and Batch tariffs; checked 2026-10-27, not live Batch acceptance evidence."},
+    {"from":"photo-select-rfc-0014","type":"uses_source","to":"source.xiaomi-images","layer":"evidence","href":"https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding","context":"Xiaomi general image input contract; checked 2026-10-27, not live Batch acceptance evidence."},
+    {"from":"photo-select-rfc-0014","type":"uses_source","to":"source.xiaomi-account","layer":"evidence","href":"https://mimo.mi.com/docs/en-US/quick-start/faq/account","context":"Xiaomi regional account and credential boundaries; checked 2026-10-27, not live Batch acceptance evidence."}
   ]
 }

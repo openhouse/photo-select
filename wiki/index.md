@@ -5,10 +5,10 @@ kind: index
 status: maintained
 visibility: public-safe
 sensitivity: low
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-27
 canonical_path: wiki/index.md
 summary: Read proposals, methods and their bounded evidence without importing private curation records.
-relations: [{type: uses_method, target: photo-select-hosted-open-weights, href: hosted-open-weights.md, context: Hosted-provider method.}]
+relations: [{type: uses_method, target: photo-select-hosted-open-weights, href: hosted-open-weights.md, context: Hosted-provider method.}, {type: uses_method, target: photo-select-xiaomi-batch, href: xiaomi-batch.md, context: Proposed asynchronous curation method.}]
 ---
 
 # Photo Select Knowledge Wiki
@@ -18,6 +18,11 @@ Start with [hosted open weights](hosted-open-weights.md) and
 [private context](../docs/rfcs/0011-private-knowledge-context.md),
 [live GitHub exploration](../docs/rfcs/0012-live-knowledge-exploration.md), and
 [source-preserving palettes](../docs/curatorial-packets.md).
+
+For discounted asynchronous MiMo processing, read
+[RFC 0014 — Xiaomi Batch](../docs/rfcs/0014-xiaomi-batch.md) and its
+[durable Batch method](xiaomi-batch.md). Both are proposals; the existing Xiaomi
+provider remains synchronous.
 
 The [authored registry](graph.json) uses stable IDs and typed links. Semantic
 edges express relationships; evidence edges attach dated sources. Prose links

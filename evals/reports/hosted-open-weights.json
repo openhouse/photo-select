@@ -6,7 +6,8 @@
     ".env.example": "b1e357d257c82e94394f391bb9c3a50ba3d521a1cd69f580894c1e8b08bc229b",
     "AGENTS.md": "4191930343fcddbaa1b8c7557cc72ae2ef1be26268d1e197c41529d9f0f15a4c",
     "README.md": "0b608dd9997132c88fa2b49062115bcd5893adf19b26b012799ef4925350cd75",
-    "docs/rfcs/0013-hosted-open-weights.md": "db5dad8809bddca83702570ac3e85f2552ae7eeb9f53a98b1928a73ed431a936",
+    "docs/rfcs/0013-hosted-open-weights.md": "0b8380edc5de15aa55b7b8678da9819fbda40de584032cae26c4f7c0fcfa380b",
+    "docs/rfcs/0014-xiaomi-batch.md": "6dbbf094037226ab6f3c017870378097876cb704fe7d1e335fd57d5e081297e0",
     "evals/hosted-open-weights.json": "c45e1da58a7b3f7a38aad703b88c79c290effd64e389c443453c00ddd373a075",
     "evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json": "402d892a8e45af9e9a29e358ccd878565a84cd50ebfe4440746c440025a260d7",
     "evals/xiaomi-open-weights.json": "a93e5e36822f609f75784405118177888924443a6a4a7599b7772f88ffa8ce94",
@@ -104,13 +105,14 @@
     "tests/xiaomiParallelLauncher.test.js": "7ad731c1c7b1d661055152fff29a0da8f87c5dcd4ff316a19505cd2a802ebf39",
     "tests/xiaomiProvider.test.js": "c28f5d1a0b1782c32ffe74386690578d54330a446ab83ae8706d3f4ff388e369",
     "tests/xiaomiWorkflow.test.js": "e7b392b7548f7d8108087073670b13bccf8b0218de25e7217d0010cc83507362",
-    "wiki/graph.json": "0e0a27281e3b13e61cf0c0a7f34e83771592716a03c3af1a8c09543e1ab59f20",
-    "wiki/hosted-open-weights.md": "8f4b6dfddc808a42b2aacce4c142e2b281c80dc709d87a71760e7313718896d0",
-    "wiki/index.md": "1595142064047c8bb33e3c1b9cf44fa6a9a9f85ae3ab62de36efb6702728d5fa"
+    "wiki/graph.json": "ffb12cb0a3bc6af539f9ade7f84053290cd1fbbf416a754500fe61f1a2e6b5fe",
+    "wiki/hosted-open-weights.md": "5604198756590032da36f387ca8ffa56e31366a52c4fc13312933f670ab31fd9",
+    "wiki/index.md": "3d1b25051616a7f7f023260def64bd1c23f2d7af57699aabb18563817358b66a",
+    "wiki/xiaomi-batch.md": "3f01654fa618cf521bb2735bce721e2e5b8cf0817b5e03d5571782612cc5eca1"
   },
   "graph": {
-    "nodes": 13,
-    "edges": 14
+    "nodes": 19,
+    "edges": 25
   },
   "tests": {
     "passed": 330,

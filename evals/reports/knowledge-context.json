@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "scope": "offline-contract-and-implementation",
   "candidate": {
-    "sha256": "261952dc3f8487a2a738014735107c66a9f03620acc3fa7cf33846698e869a1b",
-    "files": 233
+    "sha256": "bd727c926aff7b00444716028d540cbd74fcd59a4089630b8431c4c5130e969e",
+    "files": 235
   },
   "behaviorPreservation": {
     "status": "passed",

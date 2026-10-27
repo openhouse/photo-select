@@ -5,7 +5,7 @@ kind: method
 status: draft
 visibility: public-safe
 sensitivity: low
-last_reviewed: 2026-10-26
+last_reviewed: 2026-10-27
 canonical_path: wiki/hosted-open-weights.md
 summary: Compare hosted models through explicit provider capabilities, private provenance and human editorial review.
 relations: [{type: related_to, target: photo-select-rfc-0013, href: ../docs/rfcs/0013-hosted-open-weights.md, context: First proposed provider contract.}]
@@ -88,3 +88,9 @@ but that run had no HTTP overlap. The tests reused the same ten derivatives as
 20 and 40 working copies. Reported-token estimates total $0.06392; billing is
 unreconciled. The local fifty-request ceiling is tested separately from the
 unverified hosted quota, and editorial usefulness remains unmeasured.
+
+[RFC 0014 — Xiaomi Batch](../docs/rfcs/0014-xiaomi-batch.md) proposes a separate
+asynchronous transport with durable job reconciliation, the same curatorial
+inputs, and explicit acceptance gates. Its [method](xiaomi-batch.md) covers partial
+results, restart, cancellation, and remote file custody. This proposal does not
+enable Batch or Flex in the synchronous provider.

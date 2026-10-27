@@ -44,6 +44,11 @@ and dated vendor sources. It is a local adaptation of the public, revision-pinne
 and [RFC stages](https://github.com/openhouse/jamieburk.art/blob/cf9415b4a93f336dbd0fa50ab6edf5442d113a96/rfcs/README.md).
 Merge preserves this proposal; it does not establish adoption or live readiness.
 
+[RFC 0014 — Xiaomi Batch](0014-xiaomi-batch.md) separately proposes discounted
+asynchronous processing. Its job lifecycle, regional access, and multimodal
+acceptance require their own evidence; the synchronous pilots below remain bound
+to their original transport.
+
 ## Why a provider boundary
 
 Jamie expects to use hosted open weights increasingly. An endpoint override can
