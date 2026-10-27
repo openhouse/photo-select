@@ -16,6 +16,7 @@ champion: Jamie Burkart
 decision_owner: Jamie Burkart
 review_areas: [provider compatibility, photographic usefulness, cost accounting, source custody]
 implementation: Dedicated DeepInfra provider implemented and mock-tested; live acceptance pending.
+xiaomi_implementation: Dedicated Xiaomi provider implemented and mock-tested; production live acceptance pending.
 supersedes: []
 superseded_by: []
 relations: [{type: uses_method, target: photo-select-hosted-open-weights, href: ../../wiki/hosted-open-weights.md, context: Reusable hosted-provider method.}]
@@ -113,6 +114,35 @@ host, not production Xiaomi CLI integration, unattended readiness, comparative
 savings or a reason to raise DeepInfra's four-image cap. An earlier HTTP 402
 request reported no usage or cost and remains a separate historical receipt.
 
+## Xiaomi runtime
+
+The `xiaomi` provider now implements ordinary photo curation and both field-note
+phases through `https://api.xiaomimimo.com/v1`, model `mimo-v2.6-pro`, using only
+`MIMO_API_KEY`. It shares the filename/phase validation and private journal while
+binding provider identity separately. Synthetic provider, CLI, workflow and
+launcher tests exercise the implementation. The predecessor harness report above
+remains historical and is not relabeled as a production CLI test.
+
+Xiaomi uses `json_object` and local validation; strict server-side schema
+enforcement is not requested. Its profile caps requests at ten independent images,
+including repairs and Act II. `--batch-size 10` selects this request size explicitly
+and does not depend on worker count. `--target-level-size` remains the completed
+level stopping target. Initially the provider supports one worker and `auto`
+reasoning. Explicit verbosity, knowledge/GitHub modes, adaptive workers and
+automatic review retries remain unsupported. Preserve the user's exact curator
+list, complete context, repeated-tag additions, ordering and frozen batch roster.
+
+The [Xiaomi profile](../../evals/xiaomi-open-weights.json) binds dated
+[API](https://mimo.mi.com/docs/en-US/api/chat/openai-api) and
+[pricing](https://mimo.mi.com/docs/en-US/price/pay-as-you-go) sources, the immutable
+harness receipt, and pending production acceptance. Current overseas realtime
+rates per million tokens are $0.435 uncached input, $0.0036 cached input and
+$0.87 output. Cache writes are temporarily free in the documentation; the profile
+keeps an unpublished durable cache-write tariff unknown. Image and reasoning
+breakdowns are included in input and output totals respectively, not added again.
+No production live result or comparative savings is established by these offline
+tests. See the [launcher command](../../README.md#mimo-v26-pro-directly-from-xiaomi).
+
 The model page embeds RL material while its Project link currently resolves to
 [MiMo-V2.6-Pro-MOPD](https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-MOPD).
 Neither establishes DeepInfra's deployed revision. Keep the served alias,
@@ -124,7 +154,7 @@ checkpoint or precision.
 
 1. **Identity and credentials:** bind provider ID, HTTPS origin, API transport,
    model alias, precision, requested settings, and capability-profile revision.
-   Use `DEEPINFRA_API_KEY` only at the DeepInfra destination. Never read keys from
+   Use `DEEPINFRA_API_KEY` only at DeepInfra and `MIMO_API_KEY` only at Xiaomi. Never read keys from
    OpenCode implicitly, place them in prompts, or fall back to an OpenAI credential.
 2. **Capabilities:** record `documented`, `mock-tested`, `live-tested`,
    `unsupported`, or `unknown` per feature. Distinguish requested, accepted,
@@ -133,9 +163,10 @@ checkpoint or precision.
    Never silently translate `xhigh` to `high` or lower effort to recover a failure.
 3. **Request construction:** render the same default/custom prompt and complete
    context. Preserve filename order, per-image metadata, repeated-tag curator
-   additions, identity policy, and the frozen per-batch roster. Use standard strict
-   JSON Schema wrapping and retain local validation. Limit each MiMo request to
-   four images, including repair and field-note passes. Treat source text as data.
+   additions, identity policy, and the frozen per-batch roster. DeepInfra uses strict
+   JSON Schema wrapping; Xiaomi uses JSON object mode. Retain local validation in
+   both. Limit DeepInfra to four images and Xiaomi to ten, including repair and
+   field-note passes. Treat source text as data.
 4. **Results and repair:** preserve phase-specific keys, exact filename coverage,
    the final question, and all valid minutes. Distinguish provider failure from a
    valid `aside`. Preserve the contract's single JSON repair, `retry_recovered`,
@@ -191,6 +222,30 @@ Compare the same frozen corpus against the selected OpenAI model and tier using
 each service's actual billed tokens. Separate cold cache, warm cache, writes,
 reasoning, retries and human correction. Report cost per accepted batch and per
 completed level. Cheaper tokens alone do not prove cheaper useful work.
+
+## Normal-launcher ten-photo evidence
+
+The [Xiaomi CLI test](../../evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
+completed ten-photo triage and Act II with all 17 supplied curator names, a short
+test brief, one worker and one nonrecursive level. Both HTTP 200 replies passed
+JSON and contract validation on arrival: 34 minutes, eight keeps and two asides,
+with no repair. Estimated token cost was $0.01519; billing is not reconciled.
+Private working-copy hashes, archives, sorting, notebook links and atomic Git
+provenance were verified. The original Photos library was unchanged.
+
+The predecessor candidate produced JSON with decision text nested inside minutes
+and omitted the required top-level decisions. Its one repair failed, so the run
+held without moving photos; estimated token cost was $0.01161. The successor
+repeats the complete schema in repair instructions and binds both phases to the
+same source hashes, context and template. Mutation checks hold changed inputs
+before another POST, notebook update or sorting. The Xiaomi cache/profile prefix
+advanced to v2; predecessor receipts remain historical.
+
+The live execution recorded its base revision and the candidate source digest,
+including uncommitted implementation changes. The report verifies those source
+bytes against the final candidate. This is bounded CLI compatibility evidence;
+the exhibition brief, broad editorial reliability, unattended use, adaptive
+capacity, comparative savings and large-library recursion remain unmeasured.
 
 ## Evaluation and hill climb
 

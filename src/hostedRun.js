@@ -29,14 +29,14 @@ async function privateDestination(directory) {
     const parent = path.dirname(current); if (parent === current) break; current = parent;
   }
 }
-async function codeIdentity(codeRevision, execute) {
-  if (!codeRevision) { try { codeRevision = (await execute('git', ['-C', codeRoot, 'rev-parse', 'HEAD'])).stdout.trim(); } catch { codeRevision = 'unavailable'; } }
+async function codeIdentity(codeRevision, execute, directory = codeRoot) {
+  if (!codeRevision) { try { codeRevision = (await execute('git', ['-C', directory, 'rev-parse', 'HEAD'])).stdout.trim(); } catch { codeRevision = 'unavailable'; } }
   const files = [];
   async function walk(directory) { for (const entry of await fs.readdir(directory, { withFileTypes: true })) { const file = path.join(directory, entry.name); if (entry.isDirectory()) await walk(file); else if (entry.isFile()) files.push(file); } }
-  await walk(path.join(codeRoot, 'src')); await walk(path.join(codeRoot, 'prompts'));
-  files.push(path.join(codeRoot, 'package.json'), path.join(codeRoot, 'package-lock.json'));
+  await walk(path.join(directory, 'src')); await walk(path.join(directory, 'prompts'));
+  files.push(path.join(directory, 'package.json'), path.join(directory, 'package-lock.json'));
   const hash = createHash('sha256');
-  for (const file of files.sort()) hash.update(path.relative(codeRoot, file)).update('\0').update(await fs.readFile(file)).update('\0');
+  for (const file of files.sort()) hash.update(path.relative(directory, file)).update('\0').update(await fs.readFile(file)).update('\0');
   return { codeRevision, codeSha256: hash.digest('hex') };
 }
 async function observeCorpus(source, previous) {
@@ -53,17 +53,27 @@ async function observeCorpus(source, previous) {
   }
   return { schemaVersion: 1, source, images };
 }
-export async function createHostedJournal({ source, base = process.env.PHOTO_SELECT_HOSTED_BASE, codeRevision, execute = executeDefault } = {}) {
+export async function createHostedJournal({ source, base = process.env.PHOTO_SELECT_HOSTED_BASE, provider = 'deepinfra', codeRevision, codeDirectory = codeRoot, execute = executeDefault } = {}) {
+  if (!['deepinfra', 'xiaomi'].includes(provider)) throw new Error('Unsupported hosted journal provider.');
   source = await fs.realpath(source);
   const volume = source.match(/^\/Volumes\/[^/]+/);
   base = path.resolve(base || path.join(volume ? volume[0] : os.homedir(), '.photo-select', 'hosted'));
   await privateDestination(base); await fs.mkdir(base, { recursive: true, mode: 0o700 });
-  const root = path.join(base, 'source-' + digest(source));
+  // Retain legacy DeepInfra paths while isolating every Xiaomi workflow and receipt.
+  const root = path.join(base, (provider === 'deepinfra' ? 'source-' : 'xiaomi-source-') + digest(source));
   await noSymlink(root);
   await fs.mkdir(root, { mode: 0o700, recursive: true }); await fs.chmod(root, 0o700);
   for (const name of ['requests', 'workflows', '.locks']) { await noSymlink(path.join(root, name)); await fs.mkdir(path.join(root, name), { recursive: true, mode: 0o700 }); }
   for (const name of ['.git', 'corpus.json', 'session.json']) await noSymlink(path.join(root, name));
-  const identity = await codeIdentity(codeRevision, execute);
+  const identity = await codeIdentity(codeRevision, execute, codeDirectory);
+  const verifyCodeIdentity = async () => {
+    let current;
+    try { current = await codeIdentity(codeRevision, execute, codeDirectory); } catch { /* A missing source file is code drift too. */ }
+    if (!current || current.codeRevision !== identity.codeRevision || current.codeSha256 !== identity.codeSha256) {
+      const error = new Error('Hosted source code changed after journal preparation; no new paid request is permitted.');
+      error.code = 'HOSTED_HELD'; throw error;
+    }
+  };
   const validKey = key => { if (typeof key !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(key)) throw new Error('Invalid hosted journal key.'); return key; };
   const recordPath = key => path.join(root, 'requests', validKey(key) + '.json');
   const safe = async (directory, file) => { await noSymlink(root); await noSymlink(path.join(root, directory)); if (file) await noSymlink(file); };
@@ -108,7 +118,7 @@ export async function createHostedJournal({ source, base = process.env.PHOTO_SEL
     await atomic(path.join(root, '.gitignore'), '/.locks/\n*.tmp\n');
     const corpus = await observeCorpus(source, await readJson(path.join(root, 'corpus.json')));
     await atomic(path.join(root, 'corpus.json'), corpus);
-    await atomic(path.join(root, 'session.json'), { schemaVersion: 1, source, provider: 'deepinfra', transport: 'chat-completions', identity });
+    await atomic(path.join(root, 'session.json'), { schemaVersion: 1, source, provider, transport: 'chat-completions', identity });
   });
-  return { root, identity, load, save, withLock, workflowSnapshot };
+  return { root, identity, load, save, withLock, workflowSnapshot, verifyCodeIdentity };
 }

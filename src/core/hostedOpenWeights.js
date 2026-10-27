@@ -1,6 +1,26 @@
 import path from 'node:path';
 const count = value => Number.isSafeInteger(value) && value >= 0;
 const rate = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+export function evaluateXiaomiProfile({ profile: p = {}, historicalPilot: prior = {}, historicalPilotSha256 } = {}) {
+  const failures = new Set(), fail = code => failures.add(code);
+  if (p.schemaVersion !== 1 || p.stage !== 'proposed' || p.ready !== false || p.modelRequests !== 0 ||
+      p.implementation?.status !== 'implemented' || p.implementation?.verification !== 'mock-tested' ||
+      p.implementation?.liveAcceptance !== 'pending') fail('xiaomi-acceptance-boundary');
+  if (p.provider !== 'xiaomi' || p.model !== 'mimo-v2.6-pro' || p.capabilityProfile !== 'xiaomi-mimo-v2.6-pro-2026-10-26-v2' || p.endpoint !== 'https://api.xiaomimimo.com/v1' ||
+      p.transport !== 'chat-completions' || p.apiKeyEnvironment !== 'MIMO_API_KEY' || p.precision !== null || p.checkpoint !== null) fail('xiaomi-identity');
+  if (p.maxImages !== 10 || p.responseMode !== 'json_object' || p.serverSchemaEnforcement !== 'not-requested' ||
+      JSON.stringify(p.reasoningEfforts) !== '["auto"]' || p.defaultWorkers !== 1 || p.githubTools !== 'unsupported') fail('xiaomi-capabilities');
+  if (p.evidence?.visualUsefulness !== 'unmeasured' || p.evidence?.jsonValidityRate !== null || p.evidence?.retryRecoveryRate !== null) fail('xiaomi-unmeasured-evidence');
+  if (p.historicalPilot?.path !== 'evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json' ||
+      !/^[a-f0-9]{64}$/.test(historicalPilotSha256 || '') || p.historicalPilot?.sha256 !== historicalPilotSha256 ||
+      prior.scope !== 'bounded-user-authorized-private-harness-compatibility-pilot' || prior.provider !== 'xiaomi-direct' ||
+      prior.model !== 'mimo-v2.6-pro' || prior.productionXiaomiCLIIntegration !== false || prior.readyForUnattendedCuration !== false) fail('xiaomi-historical-binding');
+  const sources = Array.isArray(p.sources) ? p.sources : [];
+  if (!sources.length || sources.some(s => !/^https:\/\//.test(s.url || '') || !/^\d{4}-\d{2}-\d{2}$/.test(s.checkedOn || '')) ||
+      !sources.some(s => s.url === p.rates?.source && s.checkedOn === p.rates?.observedAt) ||
+      estimateHostedCost({ ...p, usage: { inputTokens: 2, cachedInputTokens: 1, cacheWriteTokens: 0, outputTokens: 1, reasoningTokens: null, outputIncludesReasoning: true } }).usd === null) fail('xiaomi-tariff-binding');
+  return [...failures];
+}
 // inputTokens includes cache reads/writes. Output semantics must be supplied,
 // because providers differ on whether their output count includes reasoning.
 export function estimateHostedCost({ provider, model, rates = {}, usage = {} } = {}) {

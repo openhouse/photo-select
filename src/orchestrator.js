@@ -574,6 +574,7 @@ export async function triageDirectory(options) {
     verbose = false,
     saveIo = false,
     workers = 1,
+    batchSize: requestedBatchSize,
     verbosity,
     reasoningEffort,
     depth = 0,
@@ -595,11 +596,23 @@ export async function triageDirectory(options) {
     const m = await import('./providers/openai.js');
     provider = new m.default();
   }
-  const batchSize = provider.name === 'deepinfra' ? Math.min(BATCH_SIZE, DEEPINFRA_MAX_IMAGES) : BATCH_SIZE;
+  const hosted = provider.hostedCuration || (provider.name === 'deepinfra' ? {
+    provider: 'deepinfra', maxImages: DEEPINFRA_MAX_IMAGES, credentialEnv: 'DEEPINFRA_API_KEY', label: 'DeepInfra',
+  } : null);
+  if (requestedBatchSize !== undefined && (!Number.isInteger(requestedBatchSize) || requestedBatchSize < 1 || requestedBatchSize > BATCH_CAP)) {
+    throw new Error('--batch-size must be a positive integer at most 10.');
+  }
+  if (requestedBatchSize !== undefined && hosted && requestedBatchSize > hosted.maxImages) {
+    throw new Error(`${hosted.label} accepts at most ${hosted.maxImages} images per request.`);
+  }
+  const batchSize = requestedBatchSize ?? (hosted?.provider === 'xiaomi' ? hosted.maxImages : hosted ? Math.min(BATCH_SIZE, hosted.maxImages) : BATCH_SIZE);
+  const hostedCredential = hosted?.provider === 'xiaomi' ? process.env[hosted.credentialEnv]?.trim() : hosted ? process.env[hosted.credentialEnv] : undefined;
+  const hostedHoldCode = hosted?.provider === 'xiaomi' ? 'XIAOMI_HELD' : 'DEEPINFRA_HELD';
+  if (hosted?.provider === 'xiaomi' && workers !== 1) throw new Error('Xiaomi currently requires one worker.');
   if (provider.preventAutomaticResubmit && retryNeedsReview) {
     throw new Error('Hosted receipts require plain resume; omit --retry-needs-review.');
   }
-  if (provider.name === 'deepinfra' && curators.length === 0) curators = [...CURATORS];
+  if (hosted && curators.length === 0) curators = [...CURATORS];
   if (provider.knowledge) {
     curators = [...provider.curators];
     if (!provider.preservePrompt) promptPath = provider.promptPath;
@@ -671,7 +684,7 @@ export async function triageDirectory(options) {
     }
   }
 
-  if (fieldNotes && depth === 0 && provider.name !== 'deepinfra') {
+  if (fieldNotes && depth === 0 && !hosted) {
     await ensureGitRepo(gitRoot);
   }
 
@@ -857,24 +870,27 @@ export async function triageDirectory(options) {
     console.log(`${indent}📊  ${images.length} unclassified image(s) found`);
     let queue = pickRandom(images, images.length);
     let hostedPlanKey;
+    let hostedPlanBinding;
     if (provider.journal?.workflowSnapshot) {
       const archiveImages = (await listImages(levelDir)).sort();
       const corpus = await Promise.all(archiveImages.map(async file => ({
         filename: path.basename(file), sha256: crypto.createHash('sha256').update(await readFile(file)).digest('hex'),
       })));
       const binding = { levelDir, corpus, model, verbosity, reasoningEffort, fieldNotes, curators,
-        ...(provider.name === 'deepinfra' ? { batchSize } : {}),
+        ...(hosted ? { batchSize } : {}),
+        ...(hosted?.provider === 'xiaomi' ? { provider: 'xiaomi', capabilityProfile: hosted.profile } : {}),
         identityPolicy: process.env.PHOTO_SELECT_IDENTITY_POLICY || 'passthrough',
         prompt: await readFile(promptPath, 'utf8'), context: contextPath ? await readFile(contextPath, 'utf8') : '',
         code: provider.journal.identity };
-      const bindingText = JSON.stringify(binding), key = process.env.DEEPINFRA_API_KEY;
+      const bindingText = JSON.stringify(binding), key = hostedCredential;
       if (credentialLike(binding) || (key && bindingText.includes(key))) {
-        throw Object.assign(new Error('Credential-like workflow input held before private persistence.'), { code: 'DEEPINFRA_HELD' });
+        throw Object.assign(new Error('Credential-like workflow input held before private persistence.'), { code: hostedHoldCode });
       }
       hostedPlanKey = crypto.createHash('sha256').update(bindingText).digest('hex');
       const batches = [];
       for (let i = 0; i < queue.length; i += batchSize) batches.push(queue.slice(i, i + batchSize));
       const plan = await provider.journal.workflowSnapshot(`plan-${hostedPlanKey}`, { batches, binding });
+      if (hosted?.provider === 'xiaomi') hostedPlanBinding = plan.binding;
       const eligible = new Set(images);
       const pending = plan.batches.filter(batch => batch.some(file => eligible.has(file)));
       if (pending.some(batch => batch.some(file => !eligible.has(file)))) {
@@ -973,6 +989,20 @@ export async function triageDirectory(options) {
                 let photos = [];
                 let preparedRequest;
                 let fieldNotesText;
+                let frozenInputs;
+                const verifyInputs = async () => {
+                  if (hosted?.provider !== 'xiaomi') return;
+                  try {
+                    if (!frozenInputs || frozenInputs.expectedSourceHashes.length !== batch.length) throw new Error('Missing frozen source hashes.');
+                    const actual = await Promise.all(batch.map(async file => ({ filename: path.basename(file), sha256: crypto.createHash('sha256').update(await readFile(file)).digest('hex') })));
+                    if (actual.some((entry, index) => entry.filename !== frozenInputs.expectedSourceHashes[index].filename || entry.sha256 !== frozenInputs.expectedSourceHashes[index].sha256)) throw new Error('Image changed.');
+                    const currentContext = contextPath ? await readFile(contextPath, 'utf8') : '';
+                    const currentTemplate = await readFile(promptPath, 'utf8');
+                    if (crypto.createHash('sha256').update(currentContext).digest('hex') !== frozenInputs.contextSha256 || crypto.createHash('sha256').update(currentTemplate).digest('hex') !== frozenInputs.templateSha256) throw new Error('Context or template changed.');
+                  } catch {
+                    throw Object.assign(new Error('Frozen Xiaomi image, context or template inputs changed; review the completed receipt before resuming.'), { code: hostedHoldCode });
+                  }
+                };
                 const prepareFirstRequest = async () => {
                   const names = batch.map((file) => path.basename(file));
                   const peopleLists = await Promise.all(
@@ -983,21 +1013,34 @@ export async function triageDirectory(options) {
                     people: sanitizePeople(peopleLists[i]),
                   }));
                   const finalized = finalizeCurators(curators, photos);
+                  let inputBinding;
+                  if (hosted?.provider === 'xiaomi') {
+                    const contextText = hostedPlanBinding?.context ?? (contextPath ? await readFile(contextPath, 'utf8') : '');
+                    const templateText = hostedPlanBinding?.prompt ?? await readFile(promptPath, 'utf8');
+                    const expectedSourceHashes = await Promise.all(batch.map(async file => {
+                      const filename = path.basename(file), archived = hostedPlanBinding?.corpus.find(entry => entry.filename === filename);
+                      if (hostedPlanBinding && !archived) throw Object.assign(new Error('Xiaomi source is absent from the frozen archive.'), { code: hostedHoldCode });
+                      return { filename, sha256: archived?.sha256 ?? crypto.createHash('sha256').update(await readFile(file)).digest('hex') };
+                    }));
+                    inputBinding = { expectedSourceHashes, contextText, contextSha256: crypto.createHash('sha256').update(contextText).digest('hex'), templateSha256: crypto.createHash('sha256').update(templateText).digest('hex') };
+                  }
                   const initial = { photos, finalCurators: finalized.finalCurators, added: finalized.added,
-                    fieldNotesText: provider.name === 'deepinfra' && fieldNotes ? await notesWriter.read() : undefined };
-                  if (provider.name === 'deepinfra' && (credentialLike(initial) || (process.env.DEEPINFRA_API_KEY && JSON.stringify(initial).includes(process.env.DEEPINFRA_API_KEY)))) {
-                    throw Object.assign(new Error('Credential-like batch input held before private persistence.'), { code: 'DEEPINFRA_HELD' });
+                    fieldNotesText: hosted && fieldNotes ? await notesWriter.read() : undefined,
+                    ...(inputBinding ? { inputBinding } : {}) };
+                  if (hosted && (credentialLike(initial) || (hostedCredential && JSON.stringify(initial).includes(hostedCredential)))) {
+                    throw Object.assign(new Error('Credential-like batch input held before private persistence.'), { code: hostedHoldCode });
                   }
                   const batchKey = crypto.createHash('sha256').update(JSON.stringify({ hostedPlanKey, names })).digest('hex');
                   const frozen = provider.journal?.workflowSnapshot
                     ? await provider.journal.workflowSnapshot(`batch-${batchKey}`, initial) : initial;
-                  if (provider.name === 'deepinfra' && (credentialLike(frozen) || (process.env.DEEPINFRA_API_KEY && JSON.stringify(frozen).includes(process.env.DEEPINFRA_API_KEY)))) {
-                    throw Object.assign(new Error('Credential-like saved workflow input held before submission.'), { code: 'DEEPINFRA_HELD' });
+                  if (hosted && (credentialLike(frozen) || (hostedCredential && JSON.stringify(frozen).includes(hostedCredential)))) {
+                    throw Object.assign(new Error('Credential-like saved workflow input held before submission.'), { code: hostedHoldCode });
                   }
                   photos = frozen.photos;
                   finalCurators = frozen.finalCurators;
                   added = frozen.added;
                   fieldNotesText = frozen.fieldNotesText;
+                  if (hosted?.provider === 'xiaomi') { frozenInputs = frozen.inputBinding; await verifyInputs(); }
                   if (added.length) {
                     log(
                       `👥  Batch ${idx} additional curators from tags: ${added.join(', ')}`
@@ -1006,9 +1049,9 @@ export async function triageDirectory(options) {
                   const first = await buildPrompt(promptPath, {
                     curators: finalCurators,
                     contextPath,
-                    contextText: provider.preservePrompt ? provider.brief : undefined,
+                    contextText: provider.preservePrompt ? provider.brief : hosted?.provider === 'xiaomi' ? frozenInputs.contextText : undefined,
                     images: batch,
-                    hasFieldNotes: provider.name === 'deepinfra' && fieldNotes,
+                    hasFieldNotes: hosted && fieldNotes,
                     fieldNotes: fieldNotesText,
                     isSecondPass: false,
                   });
@@ -1030,7 +1073,8 @@ export async function triageDirectory(options) {
                       bar.update(stageMap[stage] || 0, { stage });
                     },
                     stream: true,
-                    ...(provider.name === 'deepinfra' ? { expectFieldNotesDiff: Boolean(fieldNotes), fieldNotesText } : {}),
+                    ...(hosted ? { expectFieldNotesDiff: Boolean(fieldNotes), fieldNotesText } : {}),
+                    ...(hosted?.provider === 'xiaomi' ? { expectedSourceHashes: frozenInputs.expectedSourceHashes, verifyInputs } : {}),
                   };
                   return preparedRequest;
                 };
@@ -1117,11 +1161,13 @@ export async function triageDirectory(options) {
                   batch,
                   requireComplete: Boolean(firstResult?.json),
                 });
-                if (provider.name === 'deepinfra' && fieldNotes) {
+                if (hosted && fieldNotes) {
                   const triageJson = firstResult.json || extractJsonBlock(reply);
                   if (typeof triageJson?.field_notes_diff === 'string' && triageJson.field_notes_diff.trim()) {
+                    await verifyInputs();
                     const second = await buildPrompt(promptPath, {
                       curators: finalCurators, contextPath, images: batch,
+                      ...(hosted?.provider === 'xiaomi' ? { contextText: frozenInputs.contextText } : {}),
                       hasFieldNotes: true, fieldNotes: fieldNotesText, isSecondPass: true,
                     });
                     const notesResult = await runSession({ ...preparedRequest, prompt: second.prompt,
@@ -1132,9 +1178,11 @@ export async function triageDirectory(options) {
                     if (typeof notesJson?.field_notes_md !== 'string') {
                       throw Object.assign(new Error('Act II did not return field_notes_md.'), { code: 'INVALID_FIELD_NOTES' });
                     }
+                    await verifyInputs();
                     await notesWriter.writeFull(notesJson.field_notes_md);
                   }
                 }
+                await verifyInputs();
                 const ms = Date.now() - batchStart;
                 bar.update(4, { stage: "done" });
                 bar.stop();
@@ -1192,6 +1240,7 @@ export async function triageDirectory(options) {
                 }
                 const keepDir = path.join(dir, "_keep");
                 const asideDir = path.join(dir, "_aside");
+                await verifyInputs();
                 await Promise.all([
                   moveFiles(keep, keepDir, notes),
                   moveFiles(aside, asideDir, notes),
@@ -1280,7 +1329,7 @@ export async function triageDirectory(options) {
           if (failure.reason?.code !== "BILLING_LIMIT" && !isBillingLimitError(failure.reason)) throw failure.reason;
           const pause = await writeBillingPause(failure.reason);
           log(
-            `${indent}⏸️  ${provider.name === "deepinfra" ? "DeepInfra" : "OpenAI"} API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
+            `${indent}⏸️  ${hosted?.label || "OpenAI"} API credits exhausted; paused level ${pause.level} with ${pause.remainingImages} image(s) remaining.`
           );
           log(`${indent}   Add credits, then rerun the same command to resume.`);
           throw createBillingLimitError(failure.reason, {
@@ -1360,6 +1409,7 @@ export async function triageDirectory(options) {
         verbose,
         saveIo,
         workers,
+        batchSize: requestedBatchSize,
         verbosity,
         reasoningEffort,
         depth: depth + 1,

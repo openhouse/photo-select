@@ -112,3 +112,40 @@ it('binds previously uncommitted completed responses to the next notebook commit
   const notes = execFileSync('git', ['-C', journal.root, 'show', 'HEAD:field-notes.md'], { encoding: 'utf8' });
   expect(notes).toContain('**Reader:**'); expect(notes).toContain('**Second reader:**');
 });
+
+it('separates Xiaomi receipts and frozen workflows from the legacy DeepInfra journal', async () => {
+  const { args, journal } = await fixture();
+  await journal.save('same-request', completed());
+  await journal.workflowSnapshot('same-level', { provider: 'deepinfra', images: ['a.jpg'] });
+  const xiaomi = await createHostedJournal({ ...args, provider: 'xiaomi' });
+  expect(xiaomi.root).not.toBe(journal.root);
+  expect(path.basename(journal.root)).toMatch(/^source-/);
+  expect(await xiaomi.load('same-request')).toBeNull();
+  expect(await xiaomi.workflowSnapshot('same-level', { provider: 'xiaomi', images: ['b.jpg'] })).toEqual({ provider: 'xiaomi', images: ['b.jpg'] });
+  expect(JSON.parse(await fs.readFile(path.join(xiaomi.root, 'session.json'), 'utf8')).provider).toBe('xiaomi');
+  expect(JSON.parse(await fs.readFile(path.join(journal.root, 'session.json'), 'utf8')).provider).toBe('deepinfra');
+});
+
+it('holds before paid work when source code or the recorded revision changes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hosted-code-')); roots.push(root);
+  const codeDirectory = path.join(root, 'code');
+  await fs.mkdir(path.join(codeDirectory, 'src'), { recursive: true });
+  await fs.mkdir(path.join(codeDirectory, 'prompts'));
+  for (const [name, bytes] of [['src/main.js', 'original'], ['prompts/main.hbs', 'prompt'], ['package.json', '{}'], ['package-lock.json', '{}']]) await fs.writeFile(path.join(codeDirectory, name), bytes);
+  let revision = 'first-revision';
+  const execute = async (file, args, options) => args.includes('rev-parse') ? { stdout: revision } : { stdout: execFileSync(file, args, { ...options, encoding: 'utf8' }) };
+  const { journal } = await fixture({ codeDirectory, codeRevision: undefined, execute, provider: 'xiaomi' });
+  await expect(journal.verifyCodeIdentity()).resolves.toBeUndefined();
+  revision = 'second-revision';
+  await expect(journal.verifyCodeIdentity()).rejects.toMatchObject({ code: 'HOSTED_HELD' });
+  revision = 'first-revision';
+  await fs.writeFile(path.join(codeDirectory, 'src/main.js'), 'changed');
+  await expect(journal.verifyCodeIdentity()).rejects.toMatchObject({ code: 'HOSTED_HELD' });
+});
+
+it('rejects an unknown provider before creating a private journal directory', async () => {
+  const { args } = await fixture();
+  const base = path.join(path.dirname(args.source), 'uncreated');
+  await expect(createHostedJournal({ ...args, provider: '../unknown', base })).rejects.toThrow(/provider/i);
+  await expect(fs.stat(base)).rejects.toMatchObject({ code: 'ENOENT' });
+});

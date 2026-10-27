@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateHostedCost, evaluateHostedProposal } from '../src/core/hostedOpenWeights.js';
+import { estimateHostedCost, evaluateHostedProposal, evaluateXiaomiProfile } from '../src/core/hostedOpenWeights.js';
 
 const rates = { provider: 'deepinfra', model: 'XiaomiMiMo/MiMo-V2.6-Pro', unit: 'USD_per_million_tokens',
   input: 0.43, cachedInput: 0.004, output: 0.87, cacheWrite: null };
@@ -49,6 +49,55 @@ describe('hosted inference cost accounting', () => {
     const input = structuredClone(base);
     Object.assign(input.usage, { inputTokens: 0, outputTokens: 0 });
     expect(estimateHostedCost(input)).toEqual({ usd: 0, unknown: [] });
+  });
+});
+
+const xiaomi = { schemaVersion: 1, provider: 'xiaomi', model: 'mimo-v2.6-pro',
+  capabilityProfile: 'xiaomi-mimo-v2.6-pro-2026-10-26-v2',
+  endpoint: 'https://api.xiaomimimo.com/v1', transport: 'chat-completions', apiKeyEnvironment: 'MIMO_API_KEY',
+  maxImages: 10, responseMode: 'json_object', serverSchemaEnforcement: 'not-requested', precision: null, checkpoint: null,
+  stage: 'proposed', ready: false, modelRequests: 0,
+  implementation: { status: 'implemented', verification: 'mock-tested', liveAcceptance: 'pending' },
+  reasoningEfforts: ['auto'], defaultWorkers: 1, githubTools: 'unsupported',
+  evidence: { visualUsefulness: 'unmeasured', jsonValidityRate: null, retryRecoveryRate: null },
+  historicalPilot: { path: 'evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json', sha256: 'a'.repeat(64) },
+  rates: { provider: 'xiaomi', model: 'mimo-v2.6-pro', unit: 'USD_per_million_tokens', input: 0.435,
+    cachedInput: 0.0036, output: 0.87, cacheWrite: null, source: 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go', observedAt: '2026-10-26' },
+  sources: [{ url: 'https://mimo.mi.com/docs/en-US/price/pay-as-you-go', checkedOn: '2026-10-26' }] };
+const historicalPilot = { scope: 'bounded-user-authorized-private-harness-compatibility-pilot',
+  provider: 'xiaomi-direct', model: 'mimo-v2.6-pro', productionXiaomiCLIIntegration: false, readyForUnattendedCuration: false };
+const xiaomiInput = () => structuredClone({ profile: xiaomi, historicalPilot, historicalPilotSha256: 'a'.repeat(64) });
+describe('Xiaomi runtime profile and historical evidence boundary', () => {
+  it('accepts a source-bound runtime profile without promoting historical harness evidence', () => {
+    expect(evaluateXiaomiProfile(xiaomiInput())).toEqual([]);
+  });
+  it.each([
+    ['readiness inflation', x => { x.profile.ready = true; }],
+    ['invented live verification', x => { x.profile.implementation.verification = 'live-tested'; }],
+    ['invented acceptance', x => { x.profile.implementation.liveAcceptance = 'passed'; }],
+    ['credential cross-routing', x => { x.profile.apiKeyEnvironment = 'OPENAI_API_KEY'; }],
+    ['different endpoint', x => { x.profile.endpoint = 'https://example.com/v1'; }],
+    ['different model', x => { x.profile.model = 'mimo-v2.6-flash'; }],
+    ['wrong provider', x => { x.profile.provider = 'deepinfra'; }],
+    ['wrong capability revision', x => { x.profile.capabilityProfile = 'unreviewed-profile'; }],
+    ['invented model requests', x => { x.profile.modelRequests = 1; }],
+    ['parallel default', x => { x.profile.defaultWorkers = 4; }],
+    ['image limit expansion', x => { x.profile.maxImages = 11; }],
+    ['invented strict schema', x => { x.profile.serverSchemaEnforcement = 'verified'; }],
+    ['changed response mode', x => { x.profile.responseMode = 'json_schema'; }],
+    ['unverified effort', x => { x.profile.reasoningEfforts.push('xhigh'); }],
+    ['invented tool integration', x => { x.profile.githubTools = 'supported'; }],
+    ['invented visual usefulness', x => { x.profile.evidence.visualUsefulness = 'measured'; }],
+    ['historical report replacement', x => { x.historicalPilotSha256 = 'b'.repeat(64); }],
+    ['historical report promoted to production', x => { x.historicalPilot.productionXiaomiCLIIntegration = true; }],
+    ['historical unattended readiness', x => { x.historicalPilot.readyForUnattendedCuration = true; }],
+    ['unbound rate source', x => { x.profile.rates.source = 'https://example.com'; }],
+    ['stale rate join', x => { x.profile.rates.observedAt = '2026-10-25'; }],
+    ['different provider tariff', x => { x.profile.rates.provider = 'deepinfra'; }],
+    ['different model tariff', x => { x.profile.rates.model = 'other'; }],
+  ])('rejects %s', (_, mutate) => {
+    const input = xiaomiInput(); mutate(input);
+    expect(evaluateXiaomiProfile(input).length).toBeGreaterThan(0);
   });
 });
 

@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "stage": "proposed",
+  "provider": "xiaomi",
+  "model": "mimo-v2.6-pro",
+  "capabilityProfile": "xiaomi-mimo-v2.6-pro-2026-10-26-v2",
+  "endpoint": "https://api.xiaomimimo.com/v1",
+  "transport": "chat-completions",
+  "apiKeyEnvironment": "MIMO_API_KEY",
+  "maxImages": 10,
+  "responseMode": "json_object",
+  "serverSchemaEnforcement": "not-requested",
+  "reasoningEfforts": ["auto"],
+  "defaultWorkers": 1,
+  "githubTools": "unsupported",
+  "precision": null,
+  "checkpoint": null,
+  "ready": false,
+  "modelRequests": 0,
+  "implementation": {
+    "status": "implemented",
+    "verification": "mock-tested",
+    "liveAcceptance": "pending"
+  },
+  "evidence": {
+    "visualUsefulness": "unmeasured",
+    "jsonValidityRate": null,
+    "retryRecoveryRate": null
+  },
+  "historicalPilot": {
+    "path": "evals/reports/xiaomi-direct-compatibility-pilot-2026-10-26.json",
+    "sha256": "402d892a8e45af9e9a29e358ccd878565a84cd50ebfe4440746c440025a260d7"
+  },
+  "rates": {
+    "provider": "xiaomi",
+    "model": "mimo-v2.6-pro",
+    "unit": "USD_per_million_tokens",
+    "input": 0.435,
+    "cachedInput": 0.0036,
+    "output": 0.87,
+    "cacheWrite": null,
+    "observedAt": "2026-10-26",
+    "source": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
+  },
+  "sources": [
+    {"url": "https://mimo.mi.com/docs/en-US/api/chat/openai-api", "checkedOn": "2026-10-26"},
+    {"url": "https://mimo.mi.com/docs/en-US/quick-start/usage-guide/text-generation/structured-output", "checkedOn": "2026-10-26"},
+    {"url": "https://mimo.mi.com/docs/en-US/quick-start/usage-guide/multimodal-understanding/image-understanding", "checkedOn": "2026-10-26"},
+    {"url": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go", "checkedOn": "2026-10-26"}
+  ],
+  "limitations": [
+    "This offline runtime profile makes no inference requests and does not establish production live acceptance.",
+    "The predecessor private-harness pilot remains historical compatibility evidence; it is not a production CLI test.",
+    "JSON object mode uses local contract validation and one repair; server-side JSON Schema enforcement is not requested.",
+    "A ten-image request cap is distinct from workers and the recursive target-level-size stopping rule.",
+    "Image and reasoning token breakdowns are included in their parent input/output counts, not added again.",
+    "Dated overseas realtime rates are estimates; comparative savings, billed totals and editorial agreement remain unmeasured."
+  ]
+}

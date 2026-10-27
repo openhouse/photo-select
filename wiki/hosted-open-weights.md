@@ -47,6 +47,22 @@ production Xiaomi CLI provider or change DeepInfra's four-image cap. Keep its
 JSON-mode/local-validation result separate from strict server-side schema support,
 unattended readiness and comparative savings.
 
+The separate `xiaomi` CLI provider now supports the ordinary photo workflow,
+including field notes, with its own credentials, endpoint, request identity and
+private journal binding. Its [runtime profile](../evals/xiaomi-open-weights.json)
+keeps synthetic implementation checks separate from the predecessor harness and
+pending broader live acceptance. Use `--provider xiaomi --batch-size 10
+--workers 1 --reasoning-effort auto` with the same curator list and context.
+Batch size controls images per request; `--target-level-size` still controls
+when recursive refinement stops. DeepInfra retains its four-image limit.
+A [normal-launcher ten-photo test](../evals/reports/xiaomi-cli-real-photo-pilot-2026-10-26.json)
+then completed both phases with 17 exact curator names and two contract-valid
+replies without repair. Working-copy sorting, notebook links, frozen input hashes
+and private Git provenance were verified; estimated token cost was $0.01519.
+An earlier candidate omitted decisions and was held after its one repair failed.
+Both receipts remain distinct. The successful bounded test does not measure
+large-library recursion, the exhibition brief, editorial agreement or savings.
+
 The [evaluation profile](../evals/hosted-open-weights.json) retains dated sources
 and unknown measurements. Run `npm run evals:hosted-open-weights` for graph
 integrity, cost scenarios and synthetic provider checks, then `npm run hillclimb`

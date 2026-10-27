@@ -38,7 +38,7 @@ program
   .option("-p, --prompt <file>", "Custom prompt file", DEFAULT_PROMPT_PATH)
   .option(
     "--provider <name>",
-    "openai, openai-batch, deepinfra or ollama",
+    "openai, openai-batch, deepinfra, xiaomi or ollama",
     process.env.PHOTO_SELECT_PROVIDER || "openai"
   )
   .option(
@@ -123,6 +123,7 @@ program
     "Maximum concurrent archive clones",
     (v) => Math.max(1, parseInt(v, 10))
   )
+  .option("--batch-size <n>", "Images per model request (1-10; DeepInfra at most 4)", parsePositiveInteger)
   .option(
     "--workers <n>",
     "Number of worker processes (each runs batches sequentially)",
@@ -175,6 +176,7 @@ let {
   forceRebuild,
   stageConcurrency,
   workers,
+  batchSize,
   verbosity,
   reasoningEffort,
   ollamaBaseUrl,
@@ -188,6 +190,13 @@ let {
   refreshPeopleIndex,
   knowledgeLive, knowledgeDiscover, knowledgeResearchOnly, knowledgeBrief, githubAll,
 } = program.opts();
+const hostedSpec = {
+  deepinfra: { label: 'DeepInfra', credentialEnv: 'DEEPINFRA_API_KEY', endpointEnv: 'DEEPINFRA_BASE_URL', model: 'XiaomiMiMo/MiMo-V2.6-Pro', maxImages: 4, module: './core/deepinfra.js', validator: 'validateDeepInfraConfiguration', endpointExport: 'DEEPINFRA_BASE_URL' },
+  xiaomi: { label: 'Xiaomi', credentialEnv: 'MIMO_API_KEY', endpointEnv: 'MIMO_BASE_URL', model: 'mimo-v2.6-pro', maxImages: 10, module: './core/xiaomi.js', validator: 'validateXiaomiConfiguration', endpointExport: 'XIAOMI_BASE_URL' },
+}[providerName];
+if (batchSize > 10) program.error('--batch-size must be at most 10 images.');
+if (hostedSpec && batchSize > hostedSpec.maxImages) program.error(`${hostedSpec.label} accepts at most ${hostedSpec.maxImages} images per request.`);
+if (batchSize === undefined && providerName === 'xiaomi') batchSize = 10;
 const liveEnabled = Boolean(knowledgeLive || knowledgeDiscover || knowledgeResearchOnly);
 const privateEnabled = liveEnabled || githubAll;
 const liveAbort = new AbortController();
@@ -203,8 +212,8 @@ if (program.getOptionValueSource && program.getOptionValueSource('parallel')) {
   console.warn('[DEPRECATION] --parallel is deprecated; using --workers=%d\n', workers);
 }
 if (!workers) workers = 1;
-if (providerName === 'deepinfra' && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
-  program.error('DeepInfra currently requires one worker, fixed concurrency and plain resume; omit --adaptive-workers and --retry-needs-review.');
+if (hostedSpec && (workers > 1 || adaptiveWorkers || retryNeedsReview || concurrencyFlag > 1)) {
+  program.error(`${hostedSpec.label} currently requires one worker, fixed concurrency and plain resume; omit --adaptive-workers and --retry-needs-review.`);
 }
 if (adaptiveWorkers && adaptiveMinWorkers > workers) {
   program.error("--adaptive-min-workers cannot exceed --workers");
@@ -239,7 +248,7 @@ process.env.PHOTO_SELECT_FREE_SOCKET_TIMEOUT_MS = "60000";
 process.env.PHOTO_SELECT_RETRY_BASE_MS = String(500 + 50 * workers);
 process.env.UV_THREADPOOL_SIZE = String(Math.min(64, 8 + 4 * workers));
 process.env.PHOTO_SELECT_BATCH_SIZE = String(
-  clamp(8 + Math.floor(workers / 2), 8, 10)
+  batchSize ?? clamp(8 + Math.floor(workers / 2), 8, 10)
 );
 process.env.PHOTO_SELECT_PEOPLE_CONCURRENCY = String(
   clamp(2 * workers, 2, 16)
@@ -284,13 +293,13 @@ if (verbose) {
   process.env.PHOTO_SELECT_VERBOSE = '1';
 }
 
-if (providerName === 'deepinfra') {
+if (hostedSpec) {
   if (program.getOptionValueSource('apiKey') === 'cli') {
-    program.error('--api-key is OpenAI-only; set DEEPINFRA_API_KEY in your environment.');
+    program.error(`--api-key is OpenAI-only; set ${hostedSpec.credentialEnv} in your environment.`);
   }
-  if (!process.env.DEEPINFRA_API_KEY) program.error('DEEPINFRA_API_KEY is missing.');
+  if (!process.env[hostedSpec.credentialEnv]) program.error(`${hostedSpec.credentialEnv} is missing.`);
   if (program.getOptionValueSource('verbosity') === 'cli' || process.env.PHOTO_SELECT_VERBOSITY) {
-    program.error('DeepInfra does not support the requested verbosity setting.');
+    program.error(`${hostedSpec.label} does not support the requested verbosity setting.`);
   }
   verbosity = undefined;
 } else if (apiKey) {
@@ -306,18 +315,18 @@ if (disablePhotoFilter) {
 const provider = providerName || 'openai';
 let finalModel = model;
 if (!finalModel) {
-  finalModel = provider === 'deepinfra' ? 'XiaomiMiMo/MiMo-V2.6-Pro' : provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o';
+  finalModel = hostedSpec?.model ?? (provider === 'ollama' ? 'qwen2.5vl:32b' : 'gpt-4o');
 }
 
 let finalReasoningEffort = reasoningEffort?.toLowerCase();
 if (!finalReasoningEffort) {
-  finalReasoningEffort = provider === 'deepinfra' ? 'auto' : /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
+  finalReasoningEffort = hostedSpec ? 'auto' : /^gpt-5/.test(finalModel) ? 'low' : 'minimal';
 }
-if (provider === 'deepinfra') {
-  const { validateDeepInfraConfiguration, DEEPINFRA_BASE_URL } = await import('./core/deepinfra.js');
+if (hostedSpec) {
+  const configuration = await import(hostedSpec.module);
   try {
-    validateDeepInfraConfiguration({ endpoint: process.env.DEEPINFRA_BASE_URL || DEEPINFRA_BASE_URL,
-      model: finalModel, reasoningEffort: finalReasoningEffort, apiKey: process.env.DEEPINFRA_API_KEY });
+    configuration[hostedSpec.validator]({ endpoint: process.env[hostedSpec.endpointEnv] || configuration[hostedSpec.endpointExport],
+      model: finalModel, reasoningEffort: finalReasoningEffort, apiKey: process.env[hostedSpec.credentialEnv] });
   } catch (error) { program.error(error.message); }
 }
 process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
@@ -370,10 +379,10 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     const { triageDirectory } = await import('./orchestrator.js');
     const { getProvider } = await import('./providers/index.js');
     let journal;
-    if (provider === 'deepinfra') {
+    if (hostedSpec) {
       const { createHostedJournal } = await import('./hostedRun.js');
-      journal = await createHostedJournal({ source: absDir, base: process.env.PHOTO_SELECT_HOSTED_BASE });
-      console.log(`deepinfra: private audit saved in ${journal.root}`);
+      journal = await createHostedJournal({ source: absDir, base: process.env.PHOTO_SELECT_HOSTED_BASE, ...(provider === 'xiaomi' ? { provider } : {}) });
+      console.log(`${provider}: private audit saved in ${journal.root}`);
     }
     const driver = liveRun?.provider || await getProvider(provider, { journal });
     await triageDirectory({
@@ -391,6 +400,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
       forceRebuild,
       stageConcurrency,
       workers,
+      batchSize,
       verbosity,
       reasoningEffort: finalReasoningEffort,
       retryNeedsReview,
@@ -404,7 +414,7 @@ process.env.PHOTO_SELECT_USER_EFFORT = finalReasoningEffort;
     if (privateEnabled) { console.error("knowledge: held — " + (err?.code === "KNOWLEDGE_HELD" ? err.message : "Check the private run and your input configuration.")); process.exitCode = liveAbort.signal.aborted ? 130 : 1; return; }
     if (err?.code === "BILLING_LIMIT") {
       console.error(
-        `⏸️  ${provider === 'deepinfra' ? 'DeepInfra' : 'OpenAI'} API credits exhausted. Run paused${
+        `⏸️  ${hostedSpec?.label || 'OpenAI'} API credits exhausted. Run paused${
           Number.isInteger(err?.remainingImages)
             ? ` with ${err.remainingImages} image(s) remaining`
             : ""

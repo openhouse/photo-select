@@ -15,6 +15,10 @@ const FACTORIES = {
     const m = await import('./deepinfra.js');
     return new m.default(options);
   },
+  async xiaomi(options) {
+    const m = await import('./xiaomi.js');
+    return new m.default(options);
+  },
   async ollama() {
     const m = await import('./ollama.js');
     return new m.default();
